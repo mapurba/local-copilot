@@ -1,0 +1,50 @@
+{
+  "name": "local-copilot",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "src/main/index.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "vite build",
+    "build:electron": "electron-builder",
+    "preview": "vite preview",
+    "lint": "eslint ."
+  },
+  "build": {
+    "appId": "com.local.copilot",
+    "productName": "Local Copilot",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "src/main/**/*", "src/preload/**/*", "node_modules/**/*"],
+    "mac": { "target": "dmg" },
+    "win": { "target": "nsis" },
+    "linux": { "target": "AppImage" }
+  },
+  "dependencies": {
+    "@github/copilot-language-server": "^1.439.0",
+    "@monaco-editor/react": "^4.7.0",
+    "monaco-editor": "^0.55.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@tailwindcss/typography": "^0.5.19",
+    "@vitejs/plugin-react": "^5.1.1",
+    "autoprefixer": "^10.4.27",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^40.6.1",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.5.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.19",
+    "vite": "^7.3.1",
+    "wait-on": "^9.0.4"
+  }
+}
