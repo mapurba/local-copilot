@@ -13,6 +13,7 @@ const App: React.FC = () => {
   const [authStatus, setAuthStatus] = useState<string>('Unknown');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [user, setUser] = useState<string | undefined>();
+  const [authStatusChanged, setAuthStatusChanged] = useState(0);
 
   useEffect(() => {
     checkAuth();
@@ -36,6 +37,8 @@ const App: React.FC = () => {
     setUser(username);
     if (status === 'OK' || status === 'AlreadySignedIn') {
       setShowAuthModal(false);
+      // Trigger a models refresh after successful authentication
+      setAuthStatusChanged(prev => prev + 1);
     }
   };
 
@@ -63,7 +66,7 @@ const App: React.FC = () => {
 
       {/* Chat Pane - 30% */}
       <div className="w-[30%] flex flex-col">
-        <ChatPane />
+        <ChatPane key={authStatusChanged} />
       </div>
 
       {/* Auth Modal */}

@@ -17,6 +17,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ onComplete, onClose }) => {
     setError('');
     try {
       const result = await window.copilot.signIn();
+      if (result.status === 'AlreadySignedIn') {
+        setStep('done');
+        onComplete(result.status, result.user);
+        return;
+      }
       setUserCode(result.userCode);
       setVerificationUri(result.verificationUri);
       setStep('confirming');
@@ -30,7 +35,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onComplete, onClose }) => {
     setError('');
     setStatusMessage('Waiting for GitHub authorization...');
     try {
-      const result = await window.copilot.signInConfirm(userCode);
+      const result = await window.copilot.signInConfirm();
       if (result.status === 'OK' || result.status === 'AlreadySignedIn') {
         setStep('done');
         onComplete(result.status, result.user);

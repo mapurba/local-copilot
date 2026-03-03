@@ -22,11 +22,16 @@ class LspClient extends EventEmitter {
 
     this.process = cp.spawn(process.execPath, [serverPath, '--stdio'], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+      },
     });
 
     this.process.stdout?.on('data', (data: Buffer) => this.handleData(data.toString()));
     this.process.stderr?.on('data', (data: Buffer) => console.error('[LSP stderr]', data.toString()));
     this.process.on('exit', (code) => console.log('[LSP] exited with code', code));
+    this.process.on('error', (err) => console.error('[LSP] process error:', err));
 
     console.log('[LSP] Started copilot-language-server');
   }
@@ -107,10 +112,24 @@ class LspClient extends EventEmitter {
       clientInfo: { name: 'local-copilot', version: '1.0.0' },
       capabilities: {},
       rootUri: null,
+      initializationOptions: {
+        editorInfo: { name: 'local-copilot', version: '1.0.0' },
+        editorPluginInfo: { name: 'local-copilot', version: '1.0.0' },
+      },
     });
 
     this.sendNotification('initialized', {});
     this.initialized = true;
+
+    try {
+      await this.sendRequest('setEditorInfo', {
+        editorInfo: { name: 'local-copilot', version: '1.0.0' },
+        editorPluginInfo: { name: 'local-copilot', version: '1.0.0' },
+      });
+    } catch (e) {
+      console.warn('[LSP] setEditorInfo failed:', e);
+    }
+
     console.log('[LSP] Initialized:', JSON.stringify(result)?.substring(0, 200));
     return result;
   }
@@ -120,13 +139,13 @@ class LspClient extends EventEmitter {
     return result;
   }
 
-  async signInConfirm(userCode: string): Promise<{ status: string; user?: string }> {
-    const result = await this.sendRequest('signInConfirm', { userCode }) as { status: string; user?: string };
+  async signInConfirm(): Promise<{ status: string; user?: string }> {
+    const result = await this.sendRequest('signInConfirm', {}) as { status: string; user?: string };
     return result;
   }
 
   async checkStatus(): Promise<{ status: string; user?: string }> {
-    const result = await this.sendRequest('checkStatus', { options: {} }) as { status: string; user?: string };
+    const result = await this.sendRequest('checkStatus', {}) as { status: string; user?: string };
     return result;
   }
 

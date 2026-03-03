@@ -1,7 +1,7 @@
 export interface CopilotAPI {
   status: () => Promise<{ status: string; user?: string }>;
   signIn: () => Promise<{ userCode: string; verificationUri: string; status: string }>;
-  signInConfirm: (userCode: string) => Promise<{ status: string; user?: string }>;
+  signInConfirm: () => Promise<{ status: string; user?: string }>;
   signOut: () => Promise<{ success: boolean }>;
   getModels: () => Promise<string[]>;
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;

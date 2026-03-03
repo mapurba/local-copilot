@@ -12,14 +12,24 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelCha
   onModelChangeRef.current = onModelChange;
 
   useEffect(() => {
-    window.copilot.getModels().then((list: string[]) => {
-      setModels(list);
-      if (list.length > 0 && !selectedModel) {
-        onModelChangeRef.current(list[0]);
+    const fetchModels = async () => {
+      try {
+        setLoading(true);
+        const list = await window.copilot.getModels();
+        setModels(list);
+        if (list.length > 0 && !selectedModel) {
+          onModelChangeRef.current(list[0]);
+        }
+      } catch (err) {
+        console.warn('[ModelSelector] Failed to fetch models, using fallback list:', err);
+        // Use a more comprehensive fallback list
+        setModels(['gpt-4', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'claude-3-opus', 'o1', 'o1-preview']);
+      } finally {
+        setLoading(false);
       }
-    }).catch(() => {
-      setModels(['gpt-4', 'gpt-4o', 'claude-3.5-sonnet']);
-    }).finally(() => setLoading(false));
+    };
+    
+    fetchModels();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

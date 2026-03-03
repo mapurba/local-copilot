@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 export interface CopilotAPI {
   status: () => Promise<{ status: string; user?: string }>;
   signIn: () => Promise<{ userCode: string; verificationUri: string; status: string }>;
-  signInConfirm: (userCode: string) => Promise<{ status: string; user?: string }>;
+  signInConfirm: () => Promise<{ status: string; user?: string }>;
   signOut: () => Promise<{ success: boolean }>;
   getModels: () => Promise<string[]>;
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
@@ -15,7 +15,7 @@ export interface CopilotAPI {
 contextBridge.exposeInMainWorld('copilot', {
   status: () => ipcRenderer.invoke('copilot:status'),
   signIn: () => ipcRenderer.invoke('copilot:signIn'),
-  signInConfirm: (userCode: string) => ipcRenderer.invoke('copilot:signInConfirm', userCode),
+  signInConfirm: () => ipcRenderer.invoke('copilot:signInConfirm'),
   signOut: () => ipcRenderer.invoke('copilot:signOut'),
   getModels: () => ipcRenderer.invoke('copilot:getModels'),
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) =>
