@@ -1,12 +1,7 @@
 import React, { useState } from 'react';
 
-interface AuthModalProps {
-  onComplete: (status: string, user?: string) => void;
-  onClose: () => void;
-}
-
-const AuthModal: React.FC<AuthModalProps> = ({ onComplete, onClose }) => {
-  const [step, setStep] = useState<'idle' | 'pending' | 'confirming' | 'done'>('idle');
+const AuthModal = ({ onComplete, onClose }) => {
+  const [step, setStep] = useState('idle');
   const [userCode, setUserCode] = useState('');
   const [verificationUri, setVerificationUri] = useState('');
   const [error, setError] = useState('');

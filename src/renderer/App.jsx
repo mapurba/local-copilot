@@ -1,18 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import EditorPane from './components/EditorPane';
-import ChatPane from './components/ChatPane';
-import AuthModal from './components/AuthModal';
+import EditorPane from './components/EditorPane.jsx';
+import ChatPane from './components/ChatPane.jsx';
+import AuthModal from './components/AuthModal.jsx';
 
-declare global {
-  interface Window {
-    copilot: import('./types').CopilotAPI;
-  }
-}
-
-const App: React.FC = () => {
-  const [authStatus, setAuthStatus] = useState<string>('Unknown');
+const App = () => {
+  const [authStatus, setAuthStatus] = useState('Unknown');
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [user, setUser] = useState<string | undefined>();
+  const [user, setUser] = useState(undefined);
 
   useEffect(() => {
     checkAuth();
@@ -31,7 +25,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAuthComplete = (status: string, username?: string) => {
+  const handleAuthComplete = (status, username) => {
     setAuthStatus(status);
     setUser(username);
     if (status === 'OK' || status === 'AlreadySignedIn') {

@@ -1,9 +1,9 @@
-import { BrowserWindow, ipcMain } from 'electron';
-import { lspClient } from './lspClient';
-import { tokenManager } from './tokenManager';
-import { getModels, streamChatCompletion, ChatMessage } from './copilotChatApi';
+import { ipcMain } from 'electron';
+import { lspClient } from './lspClient.js';
+import { tokenManager } from './tokenManager.js';
+import { getModels, streamChatCompletion } from './copilotChatApi.js';
 
-export function registerIpcHandlers(mainWindow: BrowserWindow) {
+export function registerIpcHandlers(mainWindow) {
   // Initialize LSP on startup
   lspClient.start();
   lspClient.initialize().catch((e) => console.error('[IPC] LSP init error:', e));
@@ -29,7 +29,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   // Auth: Confirm sign-in (user entered code in browser)
-  ipcMain.handle('copilot:signInConfirm', async (_event, userCode: string) => {
+  ipcMain.handle('copilot:signInConfirm', async (_event, userCode) => {
     try {
       const result = await lspClient.signInConfirm(userCode);
       return result;
@@ -55,7 +55,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   // Chat: Send message and stream response
-  ipcMain.handle('copilot:sendChatMessage', async (_event, modelId: string, messages: ChatMessage[]) => {
+  ipcMain.handle('copilot:sendChatMessage', async (_event, modelId, messages) => {
     streamChatCompletion(
       modelId,
       messages,

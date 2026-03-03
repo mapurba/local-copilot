@@ -1,21 +1,18 @@
 import * as cp from 'child_process';
 import { EventEmitter } from 'events';
+import { createRequire } from 'module';
 
-interface JsonRpcMessage {
-  jsonrpc: string;
-  id?: number | string;
-  method?: string;
-  params?: unknown;
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-}
+const require = createRequire(import.meta.url);
 
 class LspClient extends EventEmitter {
-  private process: cp.ChildProcess | null = null;
-  private buffer = '';
-  private requestId = 0;
-  private pendingRequests = new Map<number | string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
-  private initialized = false;
+  constructor() {
+    super();
+    this.process = null;
+    this.buffer = '';
+    this.requestId = 0;
+    this.pendingRequests = new Map();
+    this.initialized = false;
+  }
 
   start() {
     const serverPath = require.resolve('@github/copilot-language-server/dist/language-server.js');
@@ -24,14 +21,14 @@ class LspClient extends EventEmitter {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    this.process.stdout?.on('data', (data: Buffer) => this.handleData(data.toString()));
-    this.process.stderr?.on('data', (data: Buffer) => console.error('[LSP stderr]', data.toString()));
+    this.process.stdout?.on('data', (data) => this.handleData(data.toString()));
+    this.process.stderr?.on('data', (data) => console.error('[LSP stderr]', data.toString()));
     this.process.on('exit', (code) => console.log('[LSP] exited with code', code));
 
     console.log('[LSP] Started copilot-language-server');
   }
 
-  private handleData(data: string) {
+  handleData(data) {
     this.buffer += data;
 
     while (true) {
@@ -51,7 +48,7 @@ class LspClient extends EventEmitter {
       this.buffer = this.buffer.substring(bodyStart + contentLength);
 
       try {
-        const msg: JsonRpcMessage = JSON.parse(body);
+        const msg = JSON.parse(body);
         this.handleMessage(msg);
       } catch (e) {
         console.error('[LSP] Failed to parse message:', e);
@@ -59,7 +56,7 @@ class LspClient extends EventEmitter {
     }
   }
 
-  private handleMessage(msg: JsonRpcMessage) {
+  handleMessage(msg) {
     if (msg.id !== undefined && !msg.method) {
       // Response
       const pending = this.pendingRequests.get(msg.id);
@@ -79,21 +76,21 @@ class LspClient extends EventEmitter {
     }
   }
 
-  sendRequest(method: string, params: unknown): Promise<unknown> {
+  sendRequest(method, params) {
     return new Promise((resolve, reject) => {
       const id = ++this.requestId;
-      const msg: JsonRpcMessage = { jsonrpc: '2.0', id, method, params };
+      const msg = { jsonrpc: '2.0', id, method, params };
       this.pendingRequests.set(id, { resolve, reject });
       this.sendRaw(msg);
     });
   }
 
-  sendNotification(method: string, params: unknown) {
-    const msg: JsonRpcMessage = { jsonrpc: '2.0', method, params };
+  sendNotification(method, params) {
+    const msg = { jsonrpc: '2.0', method, params };
     this.sendRaw(msg);
   }
 
-  private sendRaw(msg: JsonRpcMessage) {
+  sendRaw(msg) {
     const body = JSON.stringify(msg);
     const header = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n`;
     this.process?.stdin?.write(header + body);
@@ -115,22 +112,19 @@ class LspClient extends EventEmitter {
     return result;
   }
 
-  async signInInitiate(): Promise<{ userCode: string; verificationUri: string; status: string }> {
-    const result = await this.sendRequest('signInInitiate', {}) as { userCode: string; verificationUri: string; status: string };
-    return result;
+  async signInInitiate() {
+    return this.sendRequest('signInInitiate', {});
   }
 
-  async signInConfirm(userCode: string): Promise<{ status: string; user?: string }> {
-    const result = await this.sendRequest('signInConfirm', { userCode }) as { status: string; user?: string };
-    return result;
+  async signInConfirm(userCode) {
+    return this.sendRequest('signInConfirm', { userCode });
   }
 
-  async checkStatus(): Promise<{ status: string; user?: string }> {
-    const result = await this.sendRequest('checkStatus', { options: {} }) as { status: string; user?: string };
-    return result;
+  async checkStatus() {
+    return this.sendRequest('checkStatus', { options: {} });
   }
 
-  async signOut(): Promise<void> {
+  async signOut() {
     await this.sendRequest('signOut', {});
   }
 

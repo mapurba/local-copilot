@@ -1,18 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-interface ModelSelectorProps {
-  selectedModel: string;
-  onModelChange: (model: string) => void;
-}
-
-const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelChange }) => {
-  const [models, setModels] = useState<string[]>([]);
+const ModelSelector = ({ selectedModel, onModelChange }) => {
+  const [models, setModels] = useState([]);
   const [loading, setLoading] = useState(true);
   const onModelChangeRef = useRef(onModelChange);
   onModelChangeRef.current = onModelChange;
 
   useEffect(() => {
-    window.copilot.getModels().then((list: string[]) => {
+    window.copilot.getModels().then((list) => {
       setModels(list);
       if (list.length > 0 && !selectedModel) {
         onModelChangeRef.current(list[0]);

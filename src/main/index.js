@@ -1,18 +1,20 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
-import { registerIpcHandlers } from './ipcHandlers';
-import { lspClient } from './lspClient';
+import { fileURLToPath } from 'url';
+import { registerIpcHandlers } from './ipcHandlers.js';
+import { lspClient } from './lspClient.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV !== 'production';
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindow = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.js'),
+      preload: path.join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -32,7 +34,7 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   createWindow();
-  registerIpcHandlers(mainWindow!);
+  registerIpcHandlers(mainWindow);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

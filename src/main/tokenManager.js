@@ -1,37 +1,24 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { lspClient } from './lspClient';
-
-interface CopilotToken {
-  token: string;
-  tid?: string;
-  expiresAt?: number;
-}
-
-interface HostsJson {
-  [host: string]: {
-    oauth_token?: string;
-    user?: string;
-  };
-}
+import { lspClient } from './lspClient.js';
 
 class TokenManager {
-  private tokenData: CopilotToken | null = null;
-
   constructor() {
+    this.tokenData = null;
+
     // Listen for token notifications from LSP
-    lspClient.on('notification', (msg: { method?: string; params?: unknown }) => {
+    lspClient.on('notification', (msg) => {
       if (msg.method === 'statusNotification' || msg.method === '$/copilot/tokenUpdate') {
-        const params = msg.params as Record<string, unknown> | undefined;
+        const params = msg.params;
         if (params?.token && typeof params.token === 'string') {
-          this.storeToken(params.token as string, params.tid as string | undefined);
+          this.storeToken(params.token, params.tid);
         }
       }
     });
   }
 
-  storeToken(token: string, tid?: string) {
+  storeToken(token, tid) {
     this.tokenData = {
       token,
       tid,
@@ -40,7 +27,7 @@ class TokenManager {
     console.log('[TokenManager] Token stored, tid:', tid);
   }
 
-  getToken(): string | null {
+  getToken() {
     if (this.tokenData && this.tokenData.expiresAt && Date.now() < this.tokenData.expiresAt) {
       return this.tokenData.token;
     }
@@ -51,13 +38,13 @@ class TokenManager {
    * Read oauth_token from the GitHub Copilot config file.
    * This is the fallback method used after successful sign-in.
    */
-  readOAuthTokenFromDisk(): string | null {
+  readOAuthTokenFromDisk() {
     try {
       const configPath = this.getHostsJsonPath();
       if (!fs.existsSync(configPath)) return null;
 
       const raw = fs.readFileSync(configPath, 'utf-8');
-      const hosts: HostsJson = JSON.parse(raw);
+      const hosts = JSON.parse(raw);
 
       // Look for github.com entry
       const githubEntry = hosts['github.com'] || hosts['api.github.com'];
@@ -71,7 +58,7 @@ class TokenManager {
     return null;
   }
 
-  private getHostsJsonPath(): string {
+  getHostsJsonPath() {
     if (process.platform === 'win32') {
       return path.join(process.env.LOCALAPPDATA || os.homedir(), 'github-copilot', 'hosts.json');
     }
@@ -81,7 +68,7 @@ class TokenManager {
   /**
    * Get the best available token: memory first, then disk, then force LSP refresh.
    */
-  async getBestToken(): Promise<string | null> {
+  async getBestToken() {
     // 1. Check in-memory token
     const memToken = this.getToken();
     if (memToken) return memToken;

@@ -1,23 +1,17 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
-import ModelSelector from './ModelSelector';
+import ModelSelector from './ModelSelector.jsx';
 
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  streaming?: boolean;
-}
-
-const ChatPane: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+const ChatPane = () => {
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gpt-4o');
   const [isStreaming, setIsStreaming] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const cleanupRef = useRef<(() => void)[]>([]);
+  const messagesEndRef = useRef(null);
+  const cleanupRef = useRef([]);
 
   useEffect(() => {
-    const unsubChunk = window.copilot.onChatStream((_event: unknown, chunk: string) => {
+    const unsubChunk = window.copilot.onChatStream((_event, chunk) => {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last && last.role === 'assistant' && last.streaming) {
@@ -41,7 +35,7 @@ const ChatPane: React.FC = () => {
       });
     });
 
-    const unsubError = window.copilot.onChatError((_event: unknown, message: string) => {
+    const unsubError = window.copilot.onChatError((_event, message) => {
       setIsStreaming(false);
       setMessages((prev) => [
         ...prev,
@@ -61,7 +55,7 @@ const ChatPane: React.FC = () => {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
 
-    const userMsg: Message = { role: 'user', content: trimmed };
+    const userMsg = { role: 'user', content: trimmed };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setIsStreaming(true);
@@ -73,7 +67,7 @@ const ChatPane: React.FC = () => {
     await window.copilot.sendChatMessage(selectedModel, historyForApi);
   }, [input, isStreaming, messages, selectedModel]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();

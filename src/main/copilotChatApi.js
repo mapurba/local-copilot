@@ -1,15 +1,10 @@
 import https from 'https';
-import { tokenManager } from './tokenManager';
-import { lspClient } from './lspClient';
+import { tokenManager } from './tokenManager.js';
+import { lspClient } from './lspClient.js';
 
 const CHAT_API_BASE = 'api.githubcopilot.com';
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-function getHeaders(token: string): Record<string, string> {
+function getHeaders(token) {
   return {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
@@ -21,7 +16,7 @@ function getHeaders(token: string): Record<string, string> {
   };
 }
 
-async function getValidToken(): Promise<string> {
+async function getValidToken() {
   const token = await tokenManager.getBestToken();
   if (!token) {
     throw new Error('No valid Copilot token available. Please sign in.');
@@ -29,7 +24,7 @@ async function getValidToken(): Promise<string> {
   return token;
 }
 
-async function httpsGet(urlPath: string, headers: Record<string, string>): Promise<unknown> {
+function httpsGet(urlPath, headers) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: CHAT_API_BASE,
@@ -55,10 +50,10 @@ async function httpsGet(urlPath: string, headers: Record<string, string>): Promi
   });
 }
 
-export async function getModels(): Promise<string[]> {
+export async function getModels() {
   try {
     const token = await getValidToken();
-    const response = await httpsGet('/models', getHeaders(token)) as { data?: Array<{ id: string }> };
+    const response = await httpsGet('/models', getHeaders(token));
 
     if (response?.data && Array.isArray(response.data)) {
       return response.data.map((m) => m.id);
@@ -72,13 +67,7 @@ export async function getModels(): Promise<string[]> {
   }
 }
 
-export function streamChatCompletion(
-  modelId: string,
-  messages: ChatMessage[],
-  onChunk: (chunk: string) => void,
-  onEnd: () => void,
-  onError: (err: Error) => void
-): void {
+export function streamChatCompletion(modelId, messages, onChunk, onEnd, onError) {
   getValidToken()
     .then((token) => {
       const body = JSON.stringify({
@@ -113,7 +102,7 @@ export function streamChatCompletion(
 
         let sseBuffer = '';
 
-        res.on('data', (chunk: Buffer) => {
+        res.on('data', (chunk) => {
           sseBuffer += chunk.toString();
           const lines = sseBuffer.split('\n');
           sseBuffer = lines.pop() || '';
@@ -145,5 +134,5 @@ export function streamChatCompletion(
       req.write(body);
       req.end();
     })
-    .catch((err: Error) => onError(err));
+    .catch((err) => onError(err));
 }
