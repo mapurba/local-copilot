@@ -3,8 +3,6 @@ import path from 'path';
 import { registerIpcHandlers } from './ipcHandlers';
 import { lspClient } from './lspClient';
 
-const isDev = process.env.NODE_ENV !== 'production';
-
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
@@ -18,10 +16,12 @@ function createWindow() {
     },
   });
 
-  if (isDev) {
+  // Use app.isPackaged to reliably detect production builds
+  if (!app.isPackaged) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
+    // In production, load the built files
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
 
