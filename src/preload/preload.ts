@@ -7,7 +7,8 @@ export interface CopilotAPI {
   signOut: () => Promise<{ success: boolean }>;
   getModels: () => Promise<string[]>;
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
-  onChatStream: (callback: (event: Electron.IpcRendererEvent, text: string) => void) => () => void;
+  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
+  onChatStream: (callback: (event: Electron.IpcRendererEvent, text: string, type?: string) => void) => () => void;
   onChatEnd: (callback: (event: Electron.IpcRendererEvent) => void) => () => void;
   onChatError: (callback: (event: Electron.IpcRendererEvent, message: string) => void) => () => void;
 }
@@ -20,7 +21,9 @@ contextBridge.exposeInMainWorld('copilot', {
   getModels: () => ipcRenderer.invoke('copilot:getModels'),
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) =>
     ipcRenderer.invoke('copilot:sendChatMessage', modelId, messages),
-  onChatStream: (callback: (event: Electron.IpcRendererEvent, text: string) => void) => {
+  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>) =>
+    ipcRenderer.invoke('copilot:sendChatMessageWithTools', modelId, messages),
+  onChatStream: (callback: (event: Electron.IpcRendererEvent, text: string, type?: string) => void) => {
     ipcRenderer.on('chat:stream-chunk', callback);
     return () => ipcRenderer.removeListener('chat:stream-chunk', callback);
   },

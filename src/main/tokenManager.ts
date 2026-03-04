@@ -120,6 +120,7 @@ class TokenManager {
     try {
       // First, try to read from apps.json (newer format used by copilot-language-server)
       const appsJsonPath = this.getAppsJsonPath();
+      console.log('[TokenManager] Checking for apps.json at:', appsJsonPath);
       if (fs.existsSync(appsJsonPath)) {
         const raw = fs.readFileSync(appsJsonPath, 'utf-8');
         const apps: Record<string, { oauth_token?: string; user?: string }> = JSON.parse(raw);
@@ -127,7 +128,7 @@ class TokenManager {
         // Look for any app entry with an oauth_token
         for (const [, appData] of Object.entries(apps)) {
           if (appData?.oauth_token) {
-            console.log('[TokenManager] Read oauth_token from apps.json');
+            console.log('[TokenManager] Read oauth_token from apps.json', appsJsonPath);
             return appData.oauth_token;
           }
         }

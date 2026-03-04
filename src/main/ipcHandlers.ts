@@ -1,7 +1,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { lspClient } from './lspClient';
 import { tokenManager } from './tokenManager';
-import { getModels, streamChatCompletion, ChatMessage } from './copilotChatApi';
+import { getModels, streamChatCompletion, chatWithTools, ChatMessage } from './copilotChatApi';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -111,5 +111,29 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       }
     );
     return { started: true };
+  });
+
+  // Chat: Send message with tool calling support
+  ipcMain.handle('copilot:sendChatMessageWithTools', async (_event, modelId: string, messages: ChatMessage[]) => {
+    try {
+      await chatWithTools(
+        modelId,
+        messages,
+        (chunk, type) => {
+          mainWindow.webContents.send('chat:stream-chunk', chunk, type);
+        },
+        () => {
+          mainWindow.webContents.send('chat:stream-end');
+        },
+        (err) => {
+          mainWindow.webContents.send('chat:stream-error', err.message);
+        }
+      );
+      return { started: true };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      mainWindow.webContents.send('chat:stream-error', errorMsg);
+      return { started: false, error: errorMsg };
+    }
   });
 }

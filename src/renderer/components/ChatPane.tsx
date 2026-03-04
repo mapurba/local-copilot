@@ -6,6 +6,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   streaming?: boolean;
+  type?: 'text' | 'tool-call' | 'tool-result';
 }
 
 const ChatPane: React.FC = () => {
@@ -13,20 +14,22 @@ const ChatPane: React.FC = () => {
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gpt-4o');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [useTools, setUseTools] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void)[]>([]);
 
   useEffect(() => {
-    const unsubChunk = window.copilot.onChatStream((_event: unknown, chunk: string) => {
+    const unsubChunk = window.copilot.onChatStream((_event: unknown, chunk: string, type?: string) => {
+      const messageType = (type as 'text' | 'tool-call' | 'tool-result' | undefined) || 'text';
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last && last.role === 'assistant' && last.streaming) {
           return [
             ...prev.slice(0, -1),
-            { ...last, content: last.content + chunk },
+            { ...last, content: last.content + chunk, type: messageType },
           ];
         }
-        return [...prev, { role: 'assistant', content: chunk, streaming: true }];
+        return [...prev, { role: 'assistant', content: chunk, streaming: true, type: messageType }];
       });
     });
 
@@ -70,8 +73,12 @@ const ChatPane: React.FC = () => {
       .filter((m) => !m.streaming)
       .map((m) => ({ role: m.role, content: m.content }));
 
-    await window.copilot.sendChatMessage(selectedModel, historyForApi);
-  }, [input, isStreaming, messages, selectedModel]);
+    if (useTools) {
+      await window.copilot.sendChatMessageWithTools(selectedModel, historyForApi);
+    } else {
+      await window.copilot.sendChatMessage(selectedModel, historyForApi);
+    }
+  }, [input, isStreaming, messages, selectedModel, useTools]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -80,12 +87,39 @@ const ChatPane: React.FC = () => {
     }
   };
 
+  const getMessageColor = (message: Message) => {
+    if (message.role === 'user') {
+      return 'bg-blue-600 text-white';
+    }
+    
+    switch (message.type) {
+      case 'tool-call':
+        return 'bg-purple-700 text-purple-100';
+      case 'tool-result':
+        return 'bg-green-700 text-green-100';
+      default:
+        return 'bg-gray-700 text-gray-100';
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-gray-900">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-200">Copilot Chat</span>
-        <ModelSelector selectedModel={selectedModel} onModelChange={setSelectedModel} />
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm text-gray-300 hover:text-gray-100 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={useTools}
+              onChange={(e) => setUseTools(e.target.checked)}
+              disabled={isStreaming}
+              className="w-4 h-4"
+            />
+            <span>Enable Tools</span>
+          </label>
+          <ModelSelector selectedModel={selectedModel} onModelChange={setSelectedModel} />
+        </div>
       </div>
 
       {/* Messages */}
@@ -94,6 +128,11 @@ const ChatPane: React.FC = () => {
           <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm space-y-2">
             <span className="text-4xl">🤖</span>
             <p>Ask Copilot anything about your code</p>
+            {useTools && (
+              <p className="text-xs text-gray-400">
+                💡 Tools enabled: Try asking for calculations!
+              </p>
+            )}
           </div>
         )}
         {messages.map((msg, idx) => (
@@ -102,11 +141,7 @@ const ChatPane: React.FC = () => {
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[85%] rounded-xl px-4 py-3 text-sm ${
-                msg.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-100'
-              }`}
+              className={`max-w-[85%] rounded-xl px-4 py-3 text-sm ${getMessageColor(msg)}`}
             >
               {msg.role === 'assistant' ? (
                 <div className="prose prose-invert prose-sm max-w-none">
