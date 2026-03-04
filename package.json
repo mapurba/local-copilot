@@ -45,6 +45,9 @@
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "vscode-languageclient": "^9.0.1",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
+    "node-pty": "^1.0.0",
     "zod": "^3.25.67"
   },
   "devDependencies": {

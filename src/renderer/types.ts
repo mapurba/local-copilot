@@ -20,4 +20,9 @@ export interface CopilotAPI {
   vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdStatus: () => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdSignOut: () => Promise<{ connected: boolean }>;
+  terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) => Promise<{ success: boolean; terminalId?: string; error?: string }>;
+  terminalInput: (options: { terminalId: string; data: string }) => Promise<{ success: boolean; error?: string }>;
+  terminalResize: (options: { terminalId: string; cols: number; rows: number }) => Promise<{ success: boolean; error?: string }>;
+  terminalClose: (options: { terminalId: string }) => Promise<{ success: boolean; error?: string }>;
+  onTerminalData: (callback: (event: unknown, data: { terminalId: string; data: string }) => void) => () => void;
 }

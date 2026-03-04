@@ -14,7 +14,7 @@ interface VM {
 }
 
 interface VmSidebarProps {
-  onOpenTerminal?: (vm: VM) => void;
+  onOpenTerminal?: (vm: VM, user?: string, command?: string) => void;
   statusMessage?: string;
 }
 
@@ -35,7 +35,7 @@ const VmSidebar: React.FC<VmSidebarProps> = ({ onOpenTerminal, statusMessage }) 
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 border-r border-gray-700">
+    <div className="flex flex-col h-full min-h-0 bg-gray-900 border-r border-gray-700">
       {/* Sidebar Tabs */}
       <div className="flex gap-0 px-0 py-0 bg-gray-800 border-b border-gray-700">
         <button
@@ -76,7 +76,7 @@ const VmSidebar: React.FC<VmSidebarProps> = ({ onOpenTerminal, statusMessage }) 
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden">
         {activeTab === 'vms' ? (
           <VmListPane onOpenTerminal={onOpenTerminal} />
         ) : (

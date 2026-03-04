@@ -63,14 +63,14 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col h-full bg-gray-900">
+    <form onSubmit={handleSubmit} className="flex flex-col h-full min-h-0 bg-gray-900">
       {/* Header */}
       <div className="px-4 py-3 bg-gray-800 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-200">New Virtual Machine</span>
       </div>
 
       {/* Form Fields */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
         <div>
           <label className="block text-xs font-medium text-gray-300 mb-1.5">VM Name *</label>
           <input

@@ -6,6 +6,10 @@
   box-sizing: border-box;
 }
 
+html, body, #root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -21,7 +25,7 @@ body {
 .theme-light .bg-gray-900 { background-color: #f9fafb; }
 .theme-light .bg-gray-850 { background-color: #f3f4f6; }
 .theme-light .bg-gray-800 { background-color: #ffffff; }
-.theme-light .bg-gray-750 { background-color: #f3f4f6; }
+.theme-light .bg-gray-750 { background-color: #f9fafb; }
 .theme-light .bg-gray-700 { background-color: #f3f4f6; }
 .theme-light .bg-gray-600 { background-color: #e5e7eb; }
 
@@ -140,17 +144,193 @@ body {
 
 .theme-light .msg-assistant {
   background-color: #f3f4f6;
-  color: #111827;
+  color: #1e293b;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px 0 #e5e7eb;
 }
 
 .theme-light .msg-tool-call {
   background-color: #f3e8ff;
   color: #6b21a8;
   border: 1px solid #d8b4fe;
+  border-radius: 8px;
 }
 
 .theme-light .msg-tool-result {
   background-color: #f0fdf4;
   color: #15803d;
   border: 1px solid #bbf7d0;
+  border-radius: 8px;
+}
+
+/* Terminal styles */
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  background-color: #1a1a1a;
+  padding: 0;
+  overflow: hidden;
+}
+
+.theme-light .terminal-container {
+  background-color: #f8fafc;
+  border-radius: 0 0 8px 8px;
+}
+
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.xterm {
+  padding: 8px;
+  height: 100% !important;
+}
+
+/* --- Improved Light Theme for Chat, VM List, and Terminal Tabs --- */
+.theme-light .bg-gray-800, .theme-light .bg-gray-850, .theme-light .bg-gray-750 {
+  background-color: #f8fafc;
+}
+.theme-light .border-gray-700, .theme-light .border-gray-600 {
+  border-color: #e5e7eb;
+}
+.theme-light .msg-user {
+  background-color: #2563eb;
+  color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px 0 #e5e7eb;
+}
+.theme-light .msg-assistant {
+  background-color: #f3f4f6;
+  color: #1e293b;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px 0 #e5e7eb;
+}
+.theme-light .msg-tool-call {
+  background-color: #f3e8ff;
+  color: #6b21a8;
+  border: 1px solid #d8b4fe;
+  border-radius: 8px;
+}
+.theme-light .msg-tool-result {
+  background-color: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+}
+.theme-light .vm-card {
+  background-color: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px 0 #e5e7eb;
+  transition: background 0.2s;
+}
+.theme-light .vm-card:hover {
+  background-color: #f1f5f9;
+}
+.theme-light .vm-action {
+  background-color: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  transition: background 0.2s, color 0.2s;
+}
+.theme-light .vm-action:hover {
+  background-color: #e0e7ef;
+  color: #1d4ed8;
+}
+.theme-light .vm-action-terminal {
+  background-color: #e0e7ef;
+  color: #2563eb;
+  border-color: #bfdbfe;
+}
+.theme-light .vm-action-start {
+  background-color: #ecfdf3;
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+.theme-light .vm-action-stop {
+  background-color: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.theme-light .vm-action-delete {
+  background-color: #f8fafc;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+/* Terminal tab bar improvements */
+.theme-light .tab-bar {
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+}
+.theme-light .tab-bar .tab {
+  background: #f8fafc;
+  color: #64748b;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  transition: color 0.2s, border 0.2s, background 0.2s;
+}
+.theme-light .tab-bar .tab.active {
+  color: #2563eb;
+  border-bottom: 2px solid #2563eb;
+  background: #ffffff; /* subtle blue tint */
+  font-weight: 500;
+}
+.theme-light .tab-bar .tab:not(.active):hover {
+  color: #1d4ed8;
+  background: #f1f5f9;
+}
+.theme-light .tab-bar .tab .close-btn {
+  color: #64748b;
+  opacity: 0.7;
+}
+.theme-light .tab-bar .tab .close-btn:hover {
+  color: #b91c1c;
+  opacity: 1;
+}
+
+/* --- Markdown Light Theme Fixes --- */
+.theme-light .prose,
+.theme-light .markdown-body {
+  color: #1e293b;
+  background: transparent;
+}
+.theme-light .prose h1,
+.theme-light .prose h2,
+.theme-light .prose h3,
+.theme-light .prose h4,
+.theme-light .prose h5,
+.theme-light .prose h6,
+.theme-light .markdown-body h1,
+.theme-light .markdown-body h2,
+.theme-light .markdown-body h3,
+.theme-light .markdown-body h4,
+.theme-light .markdown-body h5,
+.theme-light .markdown-body h6 {
+  color: #0f172a;
+}
+.theme-light .prose strong,
+.theme-light .markdown-body strong {
+  color: #0f172a;
+}
+.theme-light .prose code,
+.theme-light .markdown-body code {
+  color: #be185d;
+  background: #f3f4f6;
+}
+.theme-light .prose pre,
+.theme-light .markdown-body pre {
+  background: #f3f4f6;
+  color: #334155;
+}
+.theme-light .prose a,
+.theme-light .markdown-body a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.theme-light .prose blockquote,
+.theme-light .markdown-body blockquote {
+  color: #64748b;
+  border-left: 4px solid #e5e7eb;
+  background: #f1f5f9;
 }

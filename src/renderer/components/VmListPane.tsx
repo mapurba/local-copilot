@@ -13,7 +13,7 @@ interface VM {
 }
 
 interface VmListPaneProps {
-  onOpenTerminal?: (vm: VM) => void;
+  onOpenTerminal?: (vm: VM, user?: string, command?: string) => void;
   onRefresh?: () => void;
 }
 
@@ -24,6 +24,9 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<{ href: string; action: 'start' | 'stop' | 'delete' } | null>(null);
+  const [terminalVm, setTerminalVm] = useState<VM | null>(null);
+  const [terminalUser, setTerminalUser] = useState<string>('');
+  const [terminalCommand, setTerminalCommand] = useState<string>('');
 
   useEffect(() => {
     loadVms();
@@ -100,8 +103,21 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
     }
   };
 
+  const handleTerminalClick = (vm: VM) => {
+    setTerminalVm(vm);
+    setTerminalUser('');
+    setTerminalCommand('');
+  };
+
+  const handleTerminalSubmit = () => {
+    if (!terminalVm) return;
+    const command = terminalCommand || (terminalUser ? `ssh ${terminalUser}@${terminalVm.ip}` : `ssh ${terminalVm.ip}`);
+    onOpenTerminal?.(terminalVm, terminalUser, command);
+    setTerminalVm(null);
+  };
+
   return (
-    <div className="flex flex-col h-full bg-gray-900">
+    <div className="flex flex-col h-full min-h-0 bg-gray-900">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-200">Virtual Machines</span>
@@ -140,7 +156,7 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
       </div>
 
       {/* VM List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {error && (
           <div className="px-4 py-3 text-sm text-red-400 bg-red-900/20 border-b border-red-800">
             {error}
@@ -237,7 +253,7 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
               )}
               {vm.powered_on && (
                 <button
-                  onClick={() => onOpenTerminal?.(vm)}
+                  onClick={() => handleTerminalClick(vm)}
                   className="vm-action vm-action-terminal text-xs px-2 py-1 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 transition-colors"
                   title="Open Terminal"
                 >
@@ -256,6 +272,54 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
           </div>
         ))}
       </div>
+
+      {/* Terminal Input Dialog */}
+      {terminalVm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 rounded">
+          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 w-96 shadow-lg">
+            <h3 className="text-lg font-semibold text-gray-200 mb-4">SSH Terminal: {terminalVm.name}</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Username (optional)</label>
+                <input
+                  type="text"
+                  value={terminalUser}
+                  onChange={(e) => setTerminalUser(e.target.value)}
+                  placeholder="e.g., root, ubuntu"
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Custom Command (optional)</label>
+                <input
+                  type="text"
+                  value={terminalCommand}
+                  onChange={(e) => setTerminalCommand(e.target.value)}
+                  placeholder={`e.g., ssh ${terminalVm.ip}`}
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                {terminalCommand ? `Will run: ${terminalCommand}` : terminalUser ? `Will run: ssh ${terminalUser}@${terminalVm.ip}` : `Will run: ssh ${terminalVm.ip}`}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setTerminalVm(null)}
+                  className="px-4 py-2 bg-gray-700 text-gray-300 rounded text-sm hover:bg-gray-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleTerminalSubmit}
+                  className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors"
+                >
+                  Open Terminal
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

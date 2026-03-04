@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { registerIpcHandlers } from './ipcHandlers';
 import { lspClient } from './lspClient';
+import { registerTerminalHandlers } from './terminalManager';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -33,6 +34,7 @@ function createWindow() {
 app.whenReady().then(async () => {
   createWindow();
   registerIpcHandlers(mainWindow!);
+  registerTerminalHandlers(mainWindow!);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

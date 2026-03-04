@@ -185,7 +185,7 @@ const ChatPane: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-900">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-gray-900">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-200">Copilot Chat</span>
@@ -205,7 +205,7 @@ const ChatPane: React.FC = () => {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && !pendingForm && (
           <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm space-y-2">
             <span className="text-4xl">:)</span>
