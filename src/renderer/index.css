@@ -11,3 +11,146 @@ body {
   padding: 0;
   overflow: hidden;
 }
+
+/* Theme overrides: default light theme with optional dark fallback. */
+.theme-light {
+  color: #111827;
+  background-color: #f9fafb;
+}
+
+.theme-light .bg-gray-900 { background-color: #f9fafb; }
+.theme-light .bg-gray-850 { background-color: #f3f4f6; }
+.theme-light .bg-gray-800 { background-color: #ffffff; }
+.theme-light .bg-gray-750 { background-color: #f3f4f6; }
+.theme-light .bg-gray-700 { background-color: #f3f4f6; }
+.theme-light .bg-gray-600 { background-color: #e5e7eb; }
+
+.theme-light .text-gray-100 { color: #111827; }
+.theme-light .text-gray-200 { color: #1f2937; }
+.theme-light .text-gray-300 { color: #374151; }
+.theme-light .text-gray-400 { color: #4b5563; }
+.theme-light .text-gray-500 { color: #6b7280; }
+
+.theme-light .border-gray-700 { border-color: #e5e7eb; }
+.theme-light .border-gray-600 { border-color: #e5e7eb; }
+
+/* Form controls in light theme */
+.theme-light input,
+.theme-light select,
+.theme-light textarea {
+  background-color: #ffffff;
+  color: #111827;
+}
+
+.theme-light select option {
+  background-color: #ffffff;
+  color: #111827;
+}
+
+.theme-light .bg-blue-600 { background-color: #2563eb; }
+.theme-light .bg-blue-700 { background-color: #1d4ed8; }
+.theme-light .text-blue-400 { color: #2563eb; }
+.theme-light .text-blue-300 { color: #1d4ed8; }
+
+.theme-light .bg-green-900 { background-color: #e6f7ed; }
+.theme-light .bg-green-900\/30 { background-color: #e6f7ed; }
+.theme-light .text-green-400 { color: #15803d; }
+
+.theme-light .bg-red-900 { background-color: #fee2e2; }
+.theme-light .bg-red-900\/30 { background-color: #fee2e2; }
+.theme-light .text-red-400 { color: #b91c1c; }
+
+.theme-light .bg-purple-700 { background-color: #ede9fe; }
+.theme-light .text-purple-100 { color: #5b21b6; }
+
+.theme-light .bg-gray-700\/50 { background-color: #f3f4f6; }
+.theme-light .bg-gray-800\/50 { background-color: #f3f4f6; }
+.theme-light .bg-gray-900\/50 { background-color: #f3f4f6; }
+.theme-light .bg-gray-900\/30 { background-color: #f3f4f6; }
+
+/* VM list styling in light theme */
+.theme-light .vm-card {
+  background-color: #ffffff;
+}
+
+.theme-light .vm-card:hover {
+  background-color: #f3f4f6;
+}
+
+.theme-light .vm-name { color: #111827; }
+.theme-light .vm-status { background-color: #e5e7eb; color: #374151; }
+.theme-light .vm-dot { box-shadow: 0 0 0 2px #ffffff; }
+
+.theme-light .vm-action {
+  background-color: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.theme-light .vm-action-start {
+  background-color: #ecfdf3;
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+
+.theme-light .vm-action-stop {
+  background-color: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.theme-light .vm-action-terminal {
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.theme-light .vm-action-delete {
+  background-color: #f8fafc;
+  color: #6b7280;
+  border-color: #e5e7eb;
+}
+
+/* Chat message colors - Default (dark theme) */
+.msg-user {
+  background-color: #2563eb;
+  color: #ffffff;
+}
+
+.msg-assistant {
+  background-color: #374151;
+  color: #e5e7eb;
+}
+
+.msg-tool-call {
+  background-color: #6b21a8;
+  color: #e9d5ff;
+}
+
+.msg-tool-result {
+  background-color: #15803d;
+  color: #d1fae5;
+}
+
+/* Chat message colors - Light theme */
+.theme-light .msg-user {
+  background-color: #2563eb;
+  color: #ffffff;
+}
+
+.theme-light .msg-assistant {
+  background-color: #f3f4f6;
+  color: #111827;
+}
+
+.theme-light .msg-tool-call {
+  background-color: #f3e8ff;
+  color: #6b21a8;
+  border: 1px solid #d8b4fe;
+}
+
+.theme-light .msg-tool-result {
+  background-color: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}

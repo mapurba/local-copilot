@@ -44,19 +44,21 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
   };
 
   const handleFetchFreeIp = async () => {
-    // Placeholder for IP allocation endpoint
     try {
-      // const response = await fetch('/api/proxy/res-ip/allocate', {
-      //   method: 'POST',
-      //   body: JSON.stringify({ hostname: '' }),
-      //   headers: { 'Content-Type': 'application/json' },
-      // });
-      // const data = await response.json();
-      // if (data.status === 'success') {
-      //   setFormData((prev) => ({ ...prev, ip_address: data.ip }));
-      // }
+      const result = await window.copilot.allocateFreeIp();
+      if (result.success && result.ip) {
+        setFormData((prev) => ({
+          ...prev,
+          ip_address: result.ip,
+          ip_allocation_mode: 'MANUAL',
+        }));
+      } else {
+        console.error('[CreateVmForm] Failed to allocate IP:', result.error);
+        alert(`Failed to allocate IP: ${result.error || 'Unknown error'}`);
+      }
     } catch (err) {
-      console.error('Failed to fetch free IP:', err);
+      console.error('[CreateVmForm] Error allocating IP:', err);
+      alert(`Error allocating IP: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 

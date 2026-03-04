@@ -5,6 +5,8 @@ import { getModels, streamChatCompletion, chatWithTools, ChatMessage } from './c
 import http from 'http';
 import https from 'https';
 import { vcdSignIn, vcdStatus, vcdSignOut } from './vcdAuth';
+import { createVmFromTemplate, powerOnVm, powerOffVm, deleteVm, getVmDetails, allocateFreeIp } from './vcdApi';
+import { getVcdContext } from './vcdStore';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -129,6 +131,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   // Chat: Send message with tool calling support
   ipcMain.handle('copilot:sendChatMessageWithTools', async (_event, modelId: string, messages: ChatMessage[]) => {
     try {
+      console.log('[IPC] sendChatMessageWithTools called');
       await chatWithTools(
         modelId,
         messages,
@@ -140,6 +143,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         },
         (err) => {
           mainWindow.webContents.send('chat:stream-error', err.message);
+        },
+        (form) => {
+          console.log('[IPC] onVmDraft callback triggered, emitting chat:vm-draft event');
+          console.log('[IPC] Form data:', JSON.stringify(form, null, 2));
+          mainWindow.webContents.send('chat:vm-draft', form);
         }
       );
       return { started: true };
@@ -147,6 +155,53 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       mainWindow.webContents.send('chat:stream-error', errorMsg);
       return { started: false, error: errorMsg };
+    }
+  });
+
+  // Deploy VM directly from the reviewed form (no LLM involved)
+  ipcMain.handle('vcd:deployVm', async (_event, form: {
+    vm_name: string;
+    template_id: string;
+    template_name?: string;
+    network_name?: string;
+    ip_address?: string;
+    ip_allocation_mode?: string;
+    gateway?: string;
+    dns_servers?: string;
+    power_on?: boolean;
+    storage_profile_id?: string;
+    compute_policy_id?: string;
+    setup_ilm?: boolean;
+    ilm_version?: string;
+  }) => {
+    try {
+      const ctx = getVcdContext();
+      if (!ctx.vdcId) throw new Error('Missing VDC ID in context.');
+      const dnsList = form.dns_servers
+        ? form.dns_servers.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : ctx.dnsServers || ['15.122.222.53'];
+      const result = await createVmFromTemplate({
+        vdc_id: ctx.vdcId,
+        template_vm_id: form.template_id,
+        vm_name: form.vm_name,
+        template_name: form.template_name || '',
+        org_name: ctx.orgName,
+        org_uuid: ctx.orgUuid,
+        network_name: form.network_name || ctx.networkName || '',
+        ip_address: form.ip_address || '',
+        gateway: form.gateway || ctx.gateway || '',
+        dns_servers: dnsList,
+        power_on: form.power_on ?? true,
+        ip_allocation_mode: form.ip_allocation_mode || 'DHCP',
+        network_adapter_type: 'VMXNET3',
+        storage_profile_id: form.storage_profile_id || ctx.storageProfileId || '',
+        compute_policy_id: form.compute_policy_id || ctx.computePolicyId || '',
+        setup_ilm: form.setup_ilm,
+        ilm_version: form.ilm_version,
+      });
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
@@ -189,5 +244,66 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       if (body) req.write(body);
       req.end();
     });
+  });
+
+  // VCD: Power on VM (direct API)
+  ipcMain.handle('vcd:powerOnVm', async (_event, vmHref: string) => {
+    try {
+      const result = await powerOnVm(vmHref);
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: Power off VM (direct API)
+  ipcMain.handle('vcd:powerOffVm', async (_event, vmHref: string) => {
+    try {
+      const result = await powerOffVm(vmHref);
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: Delete VM (stop first, then delete)
+  ipcMain.handle('vcd:deleteVm', async (_event, input: { href: string; powered_on?: boolean }) => {
+    try {
+      const vmHref = input?.href;
+      if (!vmHref) throw new Error('Missing VM href for delete');
+
+      if (input.powered_on) {
+        await powerOffVm(vmHref);
+      }
+
+      // Wait until VM is powered off before delete (best effort)
+      try {
+        const vmId = vmHref.includes('/vm-') ? vmHref.split('/vm-')[1] : '';
+        if (vmId) {
+          for (let i = 0; i < 20; i += 1) {
+            const details = await getVmDetails(vmId);
+            if (details.status === 8 || details.status === '8') break;
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+        }
+      } catch {
+        // Ignore status polling errors; delete may still succeed
+      }
+
+      const result = await deleteVm(vmHref);
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: Allocate free IP from registrar
+  ipcMain.handle('vcd:allocateFreeIp', async () => {
+    try {
+      const result = await allocateFreeIp();
+      return result;
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 }

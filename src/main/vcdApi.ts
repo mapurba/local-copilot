@@ -1,4 +1,5 @@
 import https from 'https';
+import http from 'http';
 import { URL } from 'url';
 import { getVcdContext, setPendingForm, getPendingForm, VcdCreateForm } from './vcdStore';
 
@@ -191,6 +192,16 @@ export async function powerOffVm(vmHref: string): Promise<Record<string, unknown
     throw new Error(`power_off failed: HTTP ${result.status}`);
   }
   return { status: 'success', action: 'powerOff', vm_href: vmHref };
+}
+
+export async function deleteVm(vmHref: string): Promise<Record<string, unknown>> {
+  const ctx = getVcdContext();
+  const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`);
+  const result = await httpsRequest(vmHref, 'DELETE', headers, undefined, 30000, ctx.rejectUnauthorized);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`delete_vm failed: HTTP ${result.status}`);
+  }
+  return { status: 'success', action: 'delete', vm_href: vmHref };
 }
 
 export async function listTemplates(nameFilter = ''): Promise<Record<string, unknown>> {
@@ -936,12 +947,15 @@ export async function createVmFromTemplate(params: {
 }
 
 export async function createVmDraft(form: VcdCreateForm): Promise<Record<string, unknown>> {
+  console.log('[createVmDraft] Called with form:', JSON.stringify(form, null, 2));
   setPendingForm(form);
-  return {
+  const response = {
     type: 'vm_create_form',
     message: 'Review the VM details and confirm to create the VM.',
     form,
   };
+  console.log('[createVmDraft] Returning response:', JSON.stringify(response, null, 2));
+  return response;
 }
 
 export async function createVmConfirmed(): Promise<Record<string, unknown>> {
@@ -1067,4 +1081,93 @@ export function buildCreateFormFromInput(form: Partial<VcdCreateForm>): VcdCreat
 
 export function shouldUseSlesScript(templateName?: string): boolean {
   return isSlesTemplate(templateName);
+}
+
+/**
+ * Allocate a free IP from the IP registrar service
+ * @returns Allocated IP address or error
+ */
+export async function allocateFreeIp(): Promise<{ success: boolean; ip?: string; error?: string }> {
+  const REMOTE_URL = 'http://164.99.91.31:5100/api/res-ip/allocate';
+  
+  return new Promise((resolve) => {
+    const parsed = new URL(REMOTE_URL);
+    const payload = JSON.stringify({});
+    
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || 5100,
+      path: parsed.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+      timeout: 15000,
+    };
+
+    console.log('[IP Allocator] Requesting free IP from:', REMOTE_URL);
+    
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk.toString();
+      });
+      
+      res.on('end', () => {
+        console.log('[IP Allocator] Response status:', res.statusCode);
+        console.log('[IP Allocator] Response body:', data.substring(0, 500));
+        
+        if (res.statusCode !== 200 && res.statusCode !== 201) {
+          resolve({
+            success: false,
+            error: `IP allocation failed with status ${res.statusCode}: ${data}`,
+          });
+          return;
+        }
+        
+        try {
+          const parsed = JSON.parse(data) as Record<string, unknown>;
+          
+          // Check various response formats
+          if (parsed.ip && typeof parsed.ip === 'string') {
+            resolve({ success: true, ip: parsed.ip });
+          } else if (parsed.allocated_ip && typeof parsed.allocated_ip === 'string') {
+            resolve({ success: true, ip: parsed.allocated_ip });
+          } else if (parsed.address && typeof parsed.address === 'string') {
+            resolve({ success: true, ip: parsed.address });
+          } else {
+            resolve({
+              success: false,
+              error: 'No IP address found in response',
+            });
+          }
+        } catch (e) {
+          resolve({
+            success: false,
+            error: `Failed to parse response: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      console.error('[IP Allocator] Request error:', err);
+      resolve({
+        success: false,
+        error: `Cannot reach IP allocation service: ${err.message}`,
+      });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({
+        success: false,
+        error: 'IP allocation service timed out',
+      });
+    });
+
+    req.write(payload);
+    req.end();
+  });
 }

@@ -17,6 +17,10 @@ const App: React.FC = () => {
   const [authStatusChanged, setAuthStatusChanged] = useState(0);
   const [vcdStatus, setVcdStatus] = useState<{ connected: boolean; user?: string; org?: string; host?: string }>({ connected: false });
   const [showVcdModal, setShowVcdModal] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    return saved === 'dark' ? 'dark' : 'light';
+  });
 
   useEffect(() => {
     checkAuth();
@@ -74,8 +78,16 @@ const App: React.FC = () => {
     setShowAuthModal(true);
   };
 
+  const toggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === 'light' ? 'dark' : 'light';
+      localStorage.setItem('theme', next);
+      return next;
+    });
+  };
+
   return (
-    <div className="flex h-screen w-screen bg-gray-900 text-gray-100 overflow-hidden">
+    <div className={`flex h-screen w-screen bg-gray-900 text-gray-100 overflow-hidden ${theme === 'light' ? 'theme-light' : 'theme-dark'}`}>
       {/* Sidebar - 25% */}
       <div className="w-[25%] flex flex-col">
         {/* Auth Bar (always visible) */}
@@ -145,6 +157,13 @@ const App: React.FC = () => {
         <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
           <span className="text-sm font-semibold text-gray-200">Local Copilot</span>
           <div className="flex items-center gap-4">
+            <button
+              className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+              onClick={toggleTheme}
+              title="Toggle theme"
+            >
+              Theme: {theme === 'light' ? 'Light' : 'Dark'}
+            </button>
             {user && <span className="text-xs text-gray-400">Copilot: {user}</span>}
             <div className={`w-2 h-2 rounded-full ${authStatus === 'OK' || authStatus === 'AlreadySignedIn' ? 'bg-green-400' : 'bg-yellow-400'}`} />
             {authStatus !== 'OK' && authStatus !== 'AlreadySignedIn' && (

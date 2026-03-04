@@ -10,7 +10,7 @@ import {
   powerOffVm,
   updateVmResources,
   createVmDraft,
-  createVmConfirmed,
+  // createVmConfirmed,
   listTasks,
   normalizeVmStatus,
   buildCreateFormFromInput,
@@ -300,7 +300,7 @@ const LC_TOOLS = [
   stopVmTool,
   resizeVmTool,
   createVmDraftTool,
-  createVmConfirmedTool,
+  // createVmConfirmedTool,
   listTasksTool,
 ];
 
@@ -313,6 +313,7 @@ function getCopilotHeaders(): Record<string, string> {
     'Copilot-Integration-Id': 'vscode-chat',
     'User-Agent': 'GitHubCopilot/1.1.0',
     'X-GitHub-Api-Version': '2023-07-07',
+    'OpenAI-Intent': 'conversation-panel',
   };
 }
 
@@ -325,12 +326,26 @@ function getHeaders(token: string): Record<string, string> {
 }
 
 async function getValidToken(): Promise<string> {
+  const looksLikeOAuthToken = (value: string) => value.length < 100;
+
   let token = await tokenManager.getBestToken();
-  if (token) return token;
+  if (token) {
+    if (looksLikeOAuthToken(token)) {
+      console.warn('[ChatAPI] Rejecting short OAuth-like token from getBestToken; forcing refresh');
+    } else {
+      return token;
+    }
+  }
 
   // Second-chance refresh before failing hard.
   token = await tokenManager.refreshToken();
-  if (token) return token;
+  if (token) {
+    if (looksLikeOAuthToken(token)) {
+      console.warn('[ChatAPI] refreshToken returned OAuth-like token; rejecting for chat API');
+    } else {
+      return token;
+    }
+  }
 
   throw new Error('No valid Copilot token available. Please sign in (or reconnect Copilot).');
 }
@@ -374,10 +389,17 @@ function toLcMessages(messages: ChatMessage[]): BaseMessage[] {
 
 // Build a ChatOpenAI instance pointed at the Copilot API
 function buildCopilotLlm(token: string, modelId: string): ChatOpenAI {
+  console.log('[ChatAPI] Building LLM with model:', modelId);
+  console.log('[ChatAPI] Token available:', !!token, 'length:', token?.length || 0);
+  console.log('[ChatAPI] Base URL:', `https://${CHAT_API_BASE}`);
+  
   return new ChatOpenAI({
     model: modelId,
-    openAIApiKey: token,
+    apiKey: token,
+    baseURL: `https://${CHAT_API_BASE}`,
+    defaultHeaders: getCopilotHeaders(),
     configuration: {
+      apiKey: token,
       baseURL: `https://${CHAT_API_BASE}`,
       defaultHeaders: getCopilotHeaders(),
     },
@@ -411,8 +433,10 @@ export function streamChatCompletion(
   onEnd: () => void,
   onError: (err: Error) => void
 ): void {
+  console.log('[ChatAPI] streamChatCompletion starting - model:', modelId);
   getValidToken()
     .then(async (token) => {
+      console.log('[ChatAPI] Token obtained for streaming');
       const llm = buildCopilotLlm(token, modelId);
       const lcMessages: BaseMessage[] = [
         new SystemMessage(TOOL_SYSTEM_PROMPT),
@@ -425,7 +449,14 @@ export function streamChatCompletion(
       }
       onEnd();
     })
-    .catch((err: Error) => onError(err));
+    .catch((err: Error) => {
+      console.error('[ChatAPI] streamChatCompletion error:', err);
+      let errorMessage = err.message;
+      if (errorMessage.includes('403')) {
+        errorMessage += '\n\nThis usually means your GitHub Copilot token has expired or is invalid. Try signing out and signing back in.';
+      }
+      onError(new Error(errorMessage));
+    });
 }
 
 // Agentic tool-calling loop — powered by LangChain (ChatOpenAI + bindTools)
@@ -434,10 +465,13 @@ export async function chatWithTools(
   messages: ChatMessage[],
   onChunk: (chunk: string, type: 'text' | 'tool-call' | 'tool-result') => void,
   onEnd: () => void,
-  onError: (err: Error) => void
+  onError: (err: Error) => void,
+  onVmDraft?: (form: Record<string, unknown>) => void
 ): Promise<void> {
   try {
+    console.log('[ChatAPI] chatWithTools starting - model:', modelId, 'messages:', messages.length);
     const token = await getValidToken();
+    console.log('[ChatAPI] Token obtained, building LLM with', LC_TOOLS.length, 'tools');
     const llm = buildCopilotLlm(token, modelId).bindTools(LC_TOOLS);
 
     const lcMessages: BaseMessage[] = [
@@ -507,10 +541,10 @@ export async function chatWithTools(
 
       for (const tc of resolvedToolCalls) {
         console.log(`[LANGCHAIN] Tool call: ${tc.name}`, tc.args);
-        onChunk(
-          `🔧 **Tool Call**: \`${tc.name}(${JSON.stringify(tc.args)})\`\n`,
-          'tool-call'
-        );
+        // onChunk(
+        //   `🔧 **Tool Call**: \`${tc.name}(${JSON.stringify(tc.args)})\`\n`,
+        //   'tool-call'
+        // );
 
         let result: string;
         try {
@@ -528,6 +562,28 @@ export async function chatWithTools(
         onChunk(`${formattedResult}\n\n`, 'tool-result');
 
         toolMessages.push(new ToolMessage({ content: result, tool_call_id: tc.id }));
+
+        // If create_vm_draft succeeded, emit form to renderer and stop the loop
+        if (tc.name === 'create_vm_draft' && onVmDraft) {
+          console.log('[VM DRAFT] Detected create_vm_draft tool call');
+          console.log('[VM DRAFT] Raw result:', result.substring(0, 500));
+          try {
+            const parsed = JSON.parse(result) as { type?: string; form?: Record<string, unknown> };
+            console.log('[VM DRAFT] Parsed type:', parsed?.type);
+            console.log('[VM DRAFT] Has form:', !!parsed?.form);
+            if (parsed?.type === 'vm_create_form' && parsed.form) {
+              console.log('[VM DRAFT] ✓ Emitting form via onVmDraft callback');
+              onVmDraft(parsed.form);
+              lcMessages.push(...toolMessages);
+              onEnd();
+              return;
+            } else {
+              console.log('[VM DRAFT] ✗ Type or form missing, not emitting');
+            }
+          } catch (err) {
+            console.error('[VM DRAFT] Parse error:', err);
+          }
+        }
       }
 
       lcMessages.push(...toolMessages);
@@ -535,6 +591,27 @@ export async function chatWithTools(
 
     onEnd();
   } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)));
+    console.error('[ChatAPI] chatWithTools error:', err);
+    
+    // Enhanced error logging for debugging
+    if (err && typeof err === 'object') {
+      const errObj = err as Record<string, unknown>;
+      console.error('[ChatAPI] Error details:', {
+        message: errObj.message,
+        name: errObj.name,
+        status: errObj.status,
+        statusCode: errObj.statusCode,
+        code: errObj.code,
+        response: errObj.response ? JSON.stringify(errObj.response).substring(0, 500) : undefined,
+      });
+    }
+    
+    // Provide more helpful error message for 403
+    let errorMessage = err instanceof Error ? err.message : String(err);
+    if (errorMessage.includes('403')) {
+      errorMessage += '\n\nThis usually means your GitHub Copilot token has expired or is invalid. Try signing out and signing back in.';
+    }
+    
+    onError(err instanceof Error ? new Error(errorMessage) : new Error(String(err)));
   }
 }

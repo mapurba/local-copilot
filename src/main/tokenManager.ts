@@ -54,6 +54,9 @@ class TokenManager {
   }
 
   storeToken(token: string, tid?: string, expiresAt?: number) {
+    if (this.isOAuthToken(token)) {
+      console.warn('[TokenManager] Stored token looks like OAuth token; it will be exchanged before chat usage');
+    }
     this.tokenData = {
       token,
       tid,
@@ -63,55 +66,88 @@ class TokenManager {
   }
 
   private async fetchCopilotToken(oauthToken: string): Promise<CopilotToken | null> {
-    return new Promise((resolve) => {
-      const req = https.request(
-        {
-          hostname: 'api.githubcopilot.com',
-          path: '/token',
-          method: 'GET',
-          headers: {
-            Authorization: `token ${oauthToken}`,
-            Accept: 'application/json',
-            'Editor-Version': 'vscode/1.85.0',
-            'Editor-Plugin-Version': 'copilot-chat/0.12.0',
-            'Copilot-Integration-Id': 'vscode-chat',
-            'User-Agent': 'local-copilot/1.0.0',
-            'X-GitHub-Api-Version': '2023-07-07',
+    console.log('[TokenManager] Attempting to exchange OAuth token for Copilot token');
+
+    const tryEndpoint = async (hostname: string, pathName: string): Promise<CopilotToken | null> => {
+      return new Promise((resolve) => {
+        const req = https.request(
+          {
+            hostname,
+            path: pathName,
+            method: 'GET',
+            headers: {
+              Authorization: `token ${oauthToken}`,
+              Accept: 'application/json',
+              'Editor-Version': 'vscode/1.85.0',
+              'Editor-Plugin-Version': 'copilot-chat/0.12.0',
+              'Copilot-Integration-Id': 'vscode-chat',
+              'User-Agent': 'local-copilot/1.0.0',
+              'X-GitHub-Api-Version': '2023-07-07',
+            },
           },
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => {
-            if (res.statusCode !== 200) {
-              // 404 or other errors are expected in offline/restricted environments
-              // Fall back to in-memory token instead
-              console.debug(`[TokenManager] Token exchange unavailable (HTTP ${res.statusCode}), using cached token`);
-              resolve(null);
-              return;
-            }
-            try {
-              const parsed = JSON.parse(data) as { token?: string; expires_at?: number };
-              if (!parsed?.token) {
-                console.debug('[TokenManager] Token response missing token field');
+          (res) => {
+            let data = '';
+            res.on('data', (chunk) => (data += chunk));
+            res.on('end', () => {
+              console.log(`[TokenManager] Token exchange response (${hostname}${pathName}) - Status: ${res.statusCode}`);
+              if (res.statusCode !== 200) {
+                console.warn(`[TokenManager] Token exchange failed at ${hostname}${pathName} (HTTP ${res.statusCode})`);
+                console.warn(`[TokenManager] Response body: ${data.substring(0, 500)}`);
                 resolve(null);
                 return;
               }
-              const expiresAtMs = parsed.expires_at ? parsed.expires_at * 1000 : Date.now() + 29 * 60 * 1000;
-              resolve({ token: parsed.token, expiresAt: expiresAtMs });
-            } catch (e) {
-              console.debug('[TokenManager] Failed to parse token response:', e instanceof Error ? e.message : e);
-              resolve(null);
-            }
-          });
-        }
-      );
-      req.on('error', (err) => {
-        console.debug('[TokenManager] Token exchange request error (expected in offline mode):', err instanceof Error ? err.message : err);
-        resolve(null);
+
+              try {
+                const parsed = JSON.parse(data) as { token?: string; expires_at?: number; expires_in?: number };
+                if (!parsed?.token) {
+                  console.warn(`[TokenManager] Token response missing token field from ${hostname}${pathName}`);
+                  resolve(null);
+                  return;
+                }
+
+                const expiresAtMs = parsed.expires_at
+                  ? parsed.expires_at * 1000
+                  : Date.now() + ((parsed.expires_in ?? 29 * 60) * 1000);
+
+                console.log(`[TokenManager] Successfully exchanged OAuth token via ${hostname}${pathName}`);
+                console.log('[TokenManager] Token expires at:', new Date(expiresAtMs).toISOString());
+                resolve({ token: parsed.token, expiresAt: expiresAtMs });
+              } catch (e) {
+                console.error(`[TokenManager] Failed to parse token response from ${hostname}${pathName}:`, e instanceof Error ? e.message : e);
+                console.error('[TokenManager] Response body:', data.substring(0, 500));
+                resolve(null);
+              }
+            });
+          }
+        );
+
+        req.on('error', (err) => {
+          console.error(`[TokenManager] Token exchange request error (${hostname}${pathName}):`, err instanceof Error ? err.message : err);
+          resolve(null);
+        });
+
+        req.end();
       });
-      req.end();
-    });
+    };
+
+    // Endpoint order matters: api.github.com is broadly available; keep legacy fallback(s).
+    const candidates: Array<{ hostname: string; path: string }> = [
+      { hostname: 'api.github.com', path: '/copilot_internal/v2/token' },
+      { hostname: 'api.githubcopilot.com', path: '/token' },
+      { hostname: 'api.githubcopilot.com', path: '/v2/token' },
+    ];
+
+    for (const candidate of candidates) {
+      const token = await tryEndpoint(candidate.hostname, candidate.path);
+      if (token?.token) return token;
+    }
+
+    if (this.tokenData?.token && this.isOAuthToken(this.tokenData.token)) {
+      console.warn('[TokenManager] Exchange failed for OAuth-like in-memory token, clearing cached token');
+      this.clear();
+    }
+
+    return null;
   }
 
   getToken(): string | null {
@@ -119,6 +155,14 @@ class TokenManager {
       return this.tokenData.token;
     }
     return null;
+  }
+
+  /**
+   * Check if a token looks like an OAuth token (not a proper Copilot API token)
+   * OAuth tokens are typically 40 characters, Copilot tokens are JWT format (much longer)
+   */
+  private isOAuthToken(token: string): boolean {
+    return token.length < 100; // OAuth tokens are ~40 chars, JWT tokens are 200+ chars
   }
 
   /**
@@ -218,16 +262,21 @@ class TokenManager {
   }
 
   /**
-   * Refresh token by reading from disk (app.json)
+   * Refresh token by reading from disk (app.json) and exchanging for Copilot token
    */
   async refreshToken(): Promise<string | null> {
     try {
       const oauthToken = this.readOAuthTokenFromDisk();
       if (oauthToken) {
-        // Store the token from disk directly without exchange
-        this.storeToken(oauthToken, undefined, Date.now() + 29 * 60 * 1000);
-        console.log('[TokenManager] Token refreshed from app.json');
-        return oauthToken;
+        // Always exchange OAuth token for Copilot token
+        const copilotToken = await this.fetchCopilotToken(oauthToken);
+        if (copilotToken?.token) {
+          this.storeToken(copilotToken.token, copilotToken.tid, copilotToken.expiresAt);
+          console.log('[TokenManager] Token refreshed and exchanged from app.json');
+          return copilotToken.token;
+        }
+        console.error('[TokenManager] Token exchange failed during refresh');
+        return null;
       }
     } catch (e) {
       console.error('[TokenManager] refreshToken failed:', e);
@@ -242,8 +291,22 @@ class TokenManager {
     // 1. Check in-memory token
     const memToken = this.getToken();
     if (memToken) {
-      console.log('[TokenManager] Using in-memory token');
-      return memToken;
+      // If it looks like an OAuth token, try to exchange it for a Copilot token
+      if (this.isOAuthToken(memToken)) {
+        console.log('[TokenManager] In-memory token looks like OAuth token, attempting exchange');
+        const copilotToken = await this.fetchCopilotToken(memToken);
+        if (copilotToken?.token) {
+          console.log('[TokenManager] Successfully exchanged OAuth token for Copilot token');
+          this.storeToken(copilotToken.token, copilotToken.tid, copilotToken.expiresAt);
+          return copilotToken.token;
+        }
+        console.warn('[TokenManager] Exchange failed, clearing invalid token');
+        this.clear();
+        // Fall through to try disk
+      } else {
+        console.log('[TokenManager] Using valid in-memory Copilot token');
+        return memToken;
+      }
     }
 
     // 2. Check disk (apps.json or hosts.json), then exchange oauth -> copilot token
@@ -255,10 +318,9 @@ class TokenManager {
         this.storeToken(copilotToken.token, copilotToken.tid, copilotToken.expiresAt);
         return copilotToken.token;
       }
-      console.warn('[TokenManager] OAuth token found but /token exchange failed');
-      // Last-resort fallback: some environments still accept oauth token directly.
-      this.storeToken(oauthToken, undefined, Date.now() + 10 * 60 * 1000);
-      return oauthToken;
+      console.error('[TokenManager] OAuth token found but /token exchange failed - cannot proceed');
+      // Don't store raw OAuth tokens - they don't work for chat API
+      return null;
     }
 
     // 3. Try refreshing via LSP checkStatus (in case LSP has updated the token)
@@ -277,9 +339,8 @@ class TokenManager {
             this.storeToken(refreshedCopilotToken.token, refreshedCopilotToken.tid, refreshedCopilotToken.expiresAt);
             return refreshedCopilotToken.token;
           }
-          // Last-resort fallback after refresh as well.
-          this.storeToken(refreshedOauthToken, undefined, Date.now() + 10 * 60 * 1000);
-          return refreshedOauthToken;
+          console.error('[TokenManager] Token exchange failed after LSP refresh');
+          return null;
         }
       }
     } catch (e) {

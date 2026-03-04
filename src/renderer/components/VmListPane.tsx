@@ -23,6 +23,7 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
   const [filter, setFilter] = useState<'all' | 'on' | 'off'>('all');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ href: string; action: 'start' | 'stop' | 'delete' } | null>(null);
 
   useEffect(() => {
     loadVms();
@@ -59,12 +60,43 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
   };
 
   const handlePowerToggle = async (vm: VM, action: 'start' | 'stop') => {
+    setError(null);
+    setPendingAction({ href: vm.href, action });
     try {
-      const toolName = action === 'start' ? 'start_vm' : 'stop_vm';
-      // This would be executed via the chat interface
-      console.log(`${action} VM: ${vm.name}`);
+      const result = action === 'start'
+        ? await window.copilot.powerOnVm(vm.href)
+        : await window.copilot.powerOffVm(vm.href);
+
+      if (!result.success) {
+        throw new Error(result.error || `Failed to ${action} VM`);
+      }
+
+      await loadVms();
     } catch (err) {
-      console.error(`Failed to ${action} VM:`, err);
+      const message = err instanceof Error ? err.message : `Failed to ${action} VM`;
+      setError(message);
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handleDeleteVm = async (vm: VM) => {
+    setError(null);
+    const confirmed = window.confirm(`Delete VM "${vm.name}"? This will power it off first.`);
+    if (!confirmed) return;
+
+    setPendingAction({ href: vm.href, action: 'delete' });
+    try {
+      const result = await window.copilot.deleteVm({ href: vm.href, powered_on: vm.powered_on });
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to delete VM');
+      }
+      await loadVms();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete VM';
+      setError(message);
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -139,19 +171,19 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
         {!loading && vms.map((vm) => (
           <div
             key={vm.href}
-            className="border-b border-gray-700 px-4 py-3 hover:bg-gray-800/50 transition-colors group"
+            className="vm-card border-b border-gray-700 px-4 py-3 hover:bg-gray-800/50 transition-colors group"
           >
             {/* VM Name and Status Badge */}
             <div className="flex items-start justify-between mb-2">
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <div
-                  className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                  className={`vm-dot w-2.5 h-2.5 rounded-full flex-shrink-0 ${
                     vm.powered_on ? 'bg-green-500' : 'bg-gray-500'
                   }`}
                 />
-                <span className="text-sm font-medium text-gray-100 truncate">{vm.name}</span>
+                <span className="vm-name text-sm font-medium text-gray-100 truncate">{vm.name}</span>
               </div>
-              <span className={`text-xs px-2 py-0.5 rounded whitespace-nowrap ml-2 flex-shrink-0 ${
+              <span className={`vm-status text-xs px-2 py-0.5 rounded whitespace-nowrap ml-2 flex-shrink-0 ${
                 vm.powered_on
                   ? 'bg-green-900/30 text-green-400'
                   : 'bg-gray-700 text-gray-400'
@@ -183,33 +215,43 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
             </div>
 
             {/* Action Buttons */}
-            <div className="flex gap-2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="vm-actions flex gap-2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
               {vm.powered_on ? (
                 <button
                   onClick={() => handlePowerToggle(vm, 'stop')}
-                  className="text-xs px-2 py-1 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 transition-colors"
+                  disabled={pendingAction?.href === vm.href}
+                  className="vm-action vm-action-stop text-xs px-2 py-1 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 transition-colors disabled:opacity-50"
                   title="Stop VM"
                 >
-                  Stop
+                  {pendingAction?.href === vm.href && pendingAction.action === 'stop' ? 'Stopping...' : 'Stop'}
                 </button>
               ) : (
                 <button
                   onClick={() => handlePowerToggle(vm, 'start')}
-                  className="text-xs px-2 py-1 rounded bg-green-900/30 text-green-400 hover:bg-green-900/50 transition-colors"
+                  disabled={pendingAction?.href === vm.href}
+                  className="vm-action vm-action-start text-xs px-2 py-1 rounded bg-green-900/30 text-green-400 hover:bg-green-900/50 transition-colors disabled:opacity-50"
                   title="Start VM"
                 >
-                  Start
+                  {pendingAction?.href === vm.href && pendingAction.action === 'start' ? 'Starting...' : 'Start'}
                 </button>
               )}
               {vm.powered_on && (
                 <button
                   onClick={() => onOpenTerminal?.(vm)}
-                  className="text-xs px-2 py-1 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 transition-colors"
+                  className="vm-action vm-action-terminal text-xs px-2 py-1 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 transition-colors"
                   title="Open Terminal"
                 >
                   Terminal
                 </button>
               )}
+              <button
+                onClick={() => handleDeleteVm(vm)}
+                disabled={pendingAction?.href === vm.href}
+                className="vm-action vm-action-delete text-xs px-2 py-1 rounded bg-gray-800 text-gray-300 hover:bg-red-900/40 hover:text-red-300 transition-colors disabled:opacity-50"
+                title="Delete VM"
+              >
+                {pendingAction?.href === vm.href && pendingAction.action === 'delete' ? 'Deleting...' : 'Delete'}
+              </button>
             </div>
           </div>
         ))}

@@ -1,5 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import ReactMarkdown from 'react-markdown';
+﻿import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ModelSelector from './ModelSelector';
 import ResponseRenderer from './ResponseRenderer';
 
@@ -10,15 +9,16 @@ interface Message {
   type?: 'text' | 'tool-call' | 'tool-result';
 }
 
-interface VmCreateFormData {
+interface VmDraftForm {
   vm_name: string;
   template_id: string;
   template_name?: string;
   network_name?: string;
+  ip_allocation_mode?: string;
   ip_address?: string;
   gateway?: string;
   dns_servers?: string;
-  power_on: boolean;
+  power_on?: boolean;
   storage_profile_id?: string;
   compute_policy_id?: string;
   setup_ilm?: boolean;
@@ -31,7 +31,9 @@ const ChatPane: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState('gpt-4');
   const [isStreaming, setIsStreaming] = useState(false);
   const [useTools, setUseTools] = useState(true);
-  const [pendingForm, setPendingForm] = useState<VmCreateFormData | null>(null);
+  const [pendingForm, setPendingForm] = useState<VmDraftForm | null>(null);
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [fetchingIp, setFetchingIp] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void)[]>([]);
 
@@ -41,10 +43,7 @@ const ChatPane: React.FC = () => {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last && last.role === 'assistant' && last.streaming) {
-          return [
-            ...prev.slice(0, -1),
-            { ...last, content: last.content + chunk, type: messageType },
-          ];
+          return [...prev.slice(0, -1), { ...last, content: last.content + chunk, type: messageType }];
         }
         return [...prev, { role: 'assistant', content: chunk, streaming: true, type: messageType }];
       });
@@ -54,28 +53,46 @@ const ChatPane: React.FC = () => {
       setIsStreaming(false);
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        if (last && last.streaming) {
-          return [...prev.slice(0, -1), { ...last, streaming: false }];
-        }
+        if (last && last.streaming) return [...prev.slice(0, -1), { ...last, streaming: false }];
         return prev;
       });
     });
 
     const unsubError = window.copilot.onChatError((_event: unknown, message: string) => {
       setIsStreaming(false);
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: `Error: ${message}` },
-      ]);
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${message}` }]);
     });
 
-    cleanupRef.current = [unsubChunk, unsubEnd, unsubError];
+    // Listen for VM draft form emitted by the backend after create_vm_draft tool
+    const unsubDraft = window.copilot.onVmDraft((_event: unknown, form: Record<string, unknown>) => {
+      console.log('[ChatPane] onVmDraft event received');
+      console.log('[ChatPane] Form data:', form);
+      setIsStreaming(false);
+      setPendingForm({
+        vm_name: String(form.vm_name || ''),
+        template_id: String(form.template_id || ''),
+        template_name: form.template_name ? String(form.template_name) : undefined,
+        network_name: form.network_name ? String(form.network_name) : undefined,
+        ip_allocation_mode: form.ip_allocation_mode ? String(form.ip_allocation_mode) : 'DHCP',
+        ip_address: form.ip_address ? String(form.ip_address) : '',
+        gateway: form.gateway ? String(form.gateway) : undefined,
+        dns_servers: form.dns_servers ? String(form.dns_servers) : undefined,
+        power_on: form.power_on !== undefined ? Boolean(form.power_on) : true,
+        storage_profile_id: form.storage_profile_id ? String(form.storage_profile_id) : undefined,
+        compute_policy_id: form.compute_policy_id ? String(form.compute_policy_id) : undefined,
+        setup_ilm: form.setup_ilm !== undefined ? Boolean(form.setup_ilm) : false,
+        ilm_version: form.ilm_version ? String(form.ilm_version) : undefined,
+      });
+      console.log('[ChatPane] Pending form state updated');
+    });
+
+    cleanupRef.current = [unsubChunk, unsubEnd, unsubError, unsubDraft];
     return () => cleanupRef.current.forEach((fn) => fn());
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, pendingForm]);
 
   const sendMessage = useCallback(async () => {
     const trimmed = input.trim();
@@ -104,45 +121,67 @@ const ChatPane: React.FC = () => {
     }
   };
 
-  const getMessageColor = (message: Message) => {
-    if (message.role === 'user') {
-      return 'bg-blue-600 text-white';
-    }
-    
-    switch (message.type) {
-      case 'tool-call':
-        return 'bg-purple-700 text-purple-100';
-      case 'tool-result':
-        return 'bg-green-700 text-green-100';
-      default:
-        return 'bg-gray-700 text-gray-100';
+  const updateForm = (key: keyof VmDraftForm, value: string | boolean) => {
+    setPendingForm((prev) => prev ? { ...prev, [key]: value } : null);
+  };
+
+  const handleFetchFreeIp = async () => {
+    if (!pendingForm) return;
+    setFetchingIp(true);
+    try {
+      const result = await window.copilot.allocateFreeIp();
+      if (result.success && result.ip) {
+        updateForm('ip_address', result.ip);
+        updateForm('ip_allocation_mode', 'MANUAL');
+      } else {
+        console.error('[ChatPane] Failed to allocate IP:', result.error);
+        alert(`Failed to allocate IP: ${result.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('[ChatPane] Error allocating IP:', err);
+      alert(`Error allocating IP: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setFetchingIp(false);
     }
   };
 
-  const handleDeployVm = async (formData: VmCreateFormData) => {
+  const handleDeployVm = async () => {
+    if (!pendingForm) return;
+    setIsDeploying(true);
     try {
-      // In a real scenario, this would call create_vm_confirmed via the chat API
-      console.log('Deploying VM:', formData);
+      const result = await window.copilot.deployVm(pendingForm as unknown as Record<string, unknown>);
       setPendingForm(null);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `VM creation confirmed! Deploying **${formData.vm_name}**...`,
-        },
-      ]);
+      if (result.success) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `OK: VM **${pendingForm.vm_name}** creation started successfully!` },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `Error: VM creation failed: ${result.error}` },
+        ]);
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Deployment failed';
-      setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${message}` }]);
+      const msg = err instanceof Error ? err.message : 'Deployment failed';
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${msg}` }]);
+    } finally {
+      setIsDeploying(false);
     }
   };
 
   const handleCancelReview = () => {
     setPendingForm(null);
-    setMessages((prev) => [
-      ...prev,
-      { role: 'assistant', content: 'VM creation cancelled.' },
-    ]);
+    setMessages((prev) => [...prev, { role: 'assistant', content: 'VM creation cancelled.' }]);
+  };
+
+  const getMessageColor = (message: Message) => {
+    if (message.role === 'user') return 'msg-user';
+    switch (message.type) {
+      case 'tool-call': return 'msg-tool-call';
+      case 'tool-result': return 'msg-tool-result';
+      default: return 'msg-assistant';
+    }
   };
 
   return (
@@ -169,23 +208,17 @@ const ChatPane: React.FC = () => {
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && !pendingForm && (
           <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm space-y-2">
-            <span className="text-4xl">🤖</span>
+            <span className="text-4xl">:)</span>
             <p>Ask about your VMs or create new ones</p>
             {useTools && (
-              <p className="text-xs text-gray-400">
-                💡 Tools enabled: Try "list my VMs" or "create a new VM"
-              </p>
+              <p className="text-xs text-gray-400">Tip: Tools enabled. Try "list my VMs" or "create a new VM"</p>
             )}
           </div>
         )}
+
         {messages.map((msg, idx) => (
-          <div
-            key={idx}
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[85%] rounded-xl px-4 py-3 text-sm ${getMessageColor(msg)}`}
-            >
+          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[85%] rounded-xl px-4 py-3 text-sm ${getMessageColor(msg)}`}>
               {msg.role === 'assistant' ? (
                 <div>
                   <ResponseRenderer content={msg.content} />
@@ -200,72 +233,169 @@ const ChatPane: React.FC = () => {
           </div>
         ))}
 
-        {/* VM Review Form */}
+        {/* VM Review & Deploy Form */}
         {pendingForm && (
           <div className="flex justify-start">
-            <div className="w-full max-w-2xl bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <div className="bg-gray-750 px-6 py-4 border-b border-gray-700 flex items-center gap-2">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
+            <div className="w-full max-w-lg bg-gray-800 rounded-xl border border-blue-500/40 overflow-hidden shadow-lg">
+              {/* Form header */}
+              <div className="px-5 py-3 bg-gray-750 border-b border-gray-700 flex items-center gap-2">
+                <svg className="text-blue-400" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                <span className="font-semibold text-gray-200">Review &amp; Deploy VM</span>
+                <span className="text-sm font-semibold text-gray-200">Review &amp; edit VM details before deploying</span>
               </div>
 
-              <div className="p-6 space-y-4 max-h-96 overflow-y-auto">
-                {[
-                  ['vm_name', 'VM Name'],
-                  ['template_id', 'Template ID'],
-                  ['network_name', 'Network'],
-                  ['ip_address', 'IP Address'],
-                  ['gateway', 'Gateway'],
-                  ['dns_servers', 'DNS Servers'],
-                  ['power_on', 'Power On'],
-                  ['storage_profile_id', 'Storage Profile'],
-                  ['compute_policy_id', 'Compute Policy'],
-                  ['setup_ilm', 'Setup ILM'],
-                  ['ilm_version', 'ILM Version'],
-                ].map(([key, label]) => (
-                  <div key={key} className="grid grid-cols-3 gap-4 items-center">
-                    <label className="text-xs font-medium text-gray-400">{label}</label>
-                    <div className="col-span-2">
-                      {key === 'power_on' || key === 'setup_ilm' ? (
-                        <input
-                          type="text"
-                          value={String(pendingForm[key as keyof VmCreateFormData])}
-                          readOnly
-                          className="w-full bg-gray-700 text-gray-300 text-xs rounded px-2 py-1.5 border border-gray-600"
-                        />
-                      ) : (
-                        <input
-                          type="text"
-                          value={String(pendingForm[key as keyof VmCreateFormData] || '')}
-                          onChange={(e) => {
-                            setPendingForm((prev) =>
-                              prev ? { ...prev, [key]: e.target.value } : null
-                            );
-                          }}
-                          className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      )}
+              <div className="p-5 space-y-3">
+                {/* VM Name + Template ID */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">VM NAME</label>
+                    <input
+                      type="text"
+                      value={pendingForm.vm_name}
+                      onChange={(e) => updateForm('vm_name', e.target.value)}
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">TEMPLATE ID</label>
+                    <input
+                      type="text"
+                      value={pendingForm.template_id}
+                      onChange={(e) => updateForm('template_id', e.target.value)}
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Network + IP Address */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">NETWORK</label>
+                    <input
+                      type="text"
+                      value={pendingForm.network_name || ''}
+                      onChange={(e) => updateForm('network_name', e.target.value)}
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">IP ADDRESS</label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={pendingForm.ip_address || ''}
+                        onChange={(e) => updateForm('ip_address', e.target.value)}
+                        placeholder="Auto (DHCP)"
+                        className="flex-1 bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-0"
+                      />
+                      <button
+                        onClick={handleFetchFreeIp}
+                        disabled={fetchingIp}
+                        className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-medium px-2 py-1.5 rounded whitespace-nowrap"
+                      >
+                        {fetchingIp ? '...' : 'Fetch Free IP'}
+                      </button>
                     </div>
                   </div>
-                ))}
+                </div>
+
+                {/* Gateway + DNS */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">GATEWAY</label>
+                    <input
+                      type="text"
+                      value={pendingForm.gateway || ''}
+                      onChange={(e) => updateForm('gateway', e.target.value)}
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">DNS SERVERS</label>
+                    <input
+                      type="text"
+                      value={pendingForm.dns_servers || ''}
+                      onChange={(e) => updateForm('dns_servers', e.target.value)}
+                      placeholder="e.g. 8.8.8.8,8.8.4.4"
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Power On + Storage Profile */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">POWER ON</label>
+                    <select
+                      value={pendingForm.power_on ? 'Yes' : 'No'}
+                      onChange={(e) => updateForm('power_on', e.target.value === 'Yes')}
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option>Yes</option>
+                      <option>No</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">STORAGE PROFILE</label>
+                    <input
+                      type="text"
+                      value={pendingForm.storage_profile_id || ''}
+                      onChange={(e) => updateForm('storage_profile_id', e.target.value)}
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Compute Policy */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">COMPUTE POLICY</label>
+                  <input
+                    type="text"
+                    value={pendingForm.compute_policy_id || ''}
+                    onChange={(e) => updateForm('compute_policy_id', e.target.value)}
+                    className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                  />
+                </div>
+
+                {/* Setup ILM */}
+                {pendingForm.setup_ilm && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="flex items-center gap-2 text-xs font-medium text-gray-400 cursor-pointer">
+                        <input type="checkbox" checked={pendingForm.setup_ilm} onChange={(e) => updateForm('setup_ilm', e.target.checked)} className="w-3.5 h-3.5" />
+                        SETUP ILM
+                      </label>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">ILM VERSION</label>
+                      <input
+                        type="text"
+                        value={pendingForm.ilm_version || 'latest'}
+                        onChange={(e) => updateForm('ilm_version', e.target.value)}
+                        className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="bg-gray-750 px-6 py-4 border-t border-gray-700 flex gap-3 justify-end">
+              {/* Actions */}
+              <div className="px-5 py-3 bg-gray-750 border-t border-gray-700 flex gap-3 justify-end">
                 <button
                   onClick={handleCancelReview}
-                  className="px-4 py-2 rounded text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+                  disabled={isDeploying}
+                  className="px-4 py-1.5 rounded text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={() => handleDeployVm(pendingForm)}
-                  className="px-4 py-2 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                  onClick={handleDeployVm}
+                  disabled={isDeploying}
+                  className="px-4 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60 flex items-center gap-2"
                 >
-                  Deploy VM
+                  {isDeploying && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {isDeploying ? 'Deploying...' : 'Deploy VM'}
                 </button>
               </div>
             </div>
@@ -294,9 +424,7 @@ const ChatPane: React.FC = () => {
           >
             {isStreaming ? (
               <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-            ) : (
-              '↑ Send'
-            )}
+            ) : 'Send'}
           </button>
         </div>
       </div>
