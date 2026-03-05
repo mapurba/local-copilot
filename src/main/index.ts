@@ -1,8 +1,10 @@
 import { app, BrowserWindow } from 'electron';
+import { checkForUpdates } from './autoUpdater';
 import path from 'path';
 import { registerIpcHandlers } from './ipcHandlers';
 import { lspClient } from './lspClient';
 import { registerTerminalHandlers } from './terminalManager';
+process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -31,10 +33,16 @@ function createWindow() {
   });
 }
 
+
 app.whenReady().then(async () => {
   createWindow();
   registerIpcHandlers(mainWindow!);
   registerTerminalHandlers(mainWindow!);
+
+  // Check for updates on startup (one-click)
+  setTimeout(() => {
+    if (mainWindow) checkForUpdates(mainWindow);
+  }, 3000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

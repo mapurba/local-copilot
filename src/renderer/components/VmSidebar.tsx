@@ -14,7 +14,7 @@ interface VM {
 }
 
 interface VmSidebarProps {
-  onOpenTerminal?: (vm: VM, user?: string, command?: string) => void;
+  onOpenTerminal?: (vm: VM, user?: string, password?: string, command?: string) => void;
   statusMessage?: string;
 }
 

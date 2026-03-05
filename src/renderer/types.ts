@@ -24,5 +24,20 @@ export interface CopilotAPI {
   terminalInput: (options: { terminalId: string; data: string }) => Promise<{ success: boolean; error?: string }>;
   terminalResize: (options: { terminalId: string; cols: number; rows: number }) => Promise<{ success: boolean; error?: string }>;
   terminalClose: (options: { terminalId: string }) => Promise<{ success: boolean; error?: string }>;
+  terminalQueryCwd: (options: { terminalId: string }) => Promise<{ success: boolean; cwd?: string; error?: string }>;
+  terminalQuerySshContext: (options: { terminalId: string }) => Promise<{ success: boolean; connected?: boolean; username?: string; host?: string; port?: number; error?: string }>;
   onTerminalData: (callback: (event: unknown, data: { terminalId: string; data: string }) => void) => () => void;
+  listSavedTerminalSessions: () => Promise<{ success: boolean; sessions: Array<{ id: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: string; createdAt: number; lastUsedAt?: number }>; error?: string }>;
+  saveTerminalSession: (input: { id?: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: 'vm' | 'manual' }) => Promise<{ success: boolean; session?: { id: string }; error?: string }>;
+  deleteTerminalSession: (input: { id: string }) => Promise<{ success: boolean; error?: string }>;
+  fileConnect: (options: { terminalId: string; command: string; password?: string }) => Promise<{ connected: boolean; currentDirectory?: string; error?: string; authRequired?: boolean }>;
+  fileDisconnect: (options: { terminalId: string }) => Promise<{ success: boolean; error?: string }>;
+  fileGetDirectory: (options: { terminalId: string }) => Promise<{ success: boolean; currentDirectory?: string; error?: string }>;
+  fileSetDirectory: (options: { terminalId: string; directory: string }) => Promise<{ success: boolean; currentDirectory?: string; error?: string }>;
+  fileList: (options: { terminalId: string; path?: string }) => Promise<{ success: boolean; path?: string; entries?: Array<{ name: string; path: string; isDirectory: boolean; size: number; modifiedAt?: number }>; error?: string }>;
+  fileRead: (options: { terminalId: string; path: string }) => Promise<{ success: boolean; path?: string; content?: string; error?: string }>;
+  fileWrite: (options: { terminalId: string; path: string; content: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
+  fileDelete: (options: { terminalId: string; path: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
+  fileRename: (options: { terminalId: string; oldPath: string; newPath: string }) => Promise<{ success: boolean; oldPath?: string; newPath?: string; error?: string }>;
+  fileMkdir: (options: { terminalId: string; path: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
 }

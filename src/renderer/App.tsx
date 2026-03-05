@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import VmSidebar from './components/VmSidebar';
+import UpdateToast from './components/UpdateToast';
+import { checkForAppUpdate } from './autoUpdate';
+import Sidebar from './components/Sidebar';
 import ChatPane from './components/ChatPane';
 import TerminalPane from './components/TerminalPane';
 import AuthModal from './components/AuthModal';
 import VcdAuthModal from './components/VcdAuthModal';
+import ResizablePanels from './components/ResizablePanels';
 
 declare global {
   interface Window {
@@ -12,6 +15,34 @@ declare global {
 }
 
 const App: React.FC = () => {
+  // Update download progress state (must be inside the component)
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [showUpdateToast, setShowUpdateToast] = useState(false);
+
+  useEffect(() => {
+    // Listen for update progress and cancellation events from main process
+    if (window.electron && window.electron.ipcRenderer) {
+      const progressHandler = (_event: any, progress: number) => {
+        setUpdateProgress(progress);
+        setShowUpdateToast(progress < 100);
+      };
+      const cancelHandler = () => {
+        setShowUpdateToast(false);
+      };
+      window.electron.ipcRenderer.on('update-download-progress', progressHandler);
+      window.electron.ipcRenderer.on('update-cancelled', cancelHandler);
+      return () => {
+        window.electron.ipcRenderer.removeListener('update-download-progress', progressHandler);
+        window.electron.ipcRenderer.removeListener('update-cancelled', cancelHandler);
+      };
+    } else if (window.copilot && window.copilot.onUpdateProgress) {
+      // If you expose a custom API
+      return window.copilot.onUpdateProgress((progress: number) => {
+        setUpdateProgress(progress);
+        setShowUpdateToast(progress < 100);
+      });
+    }
+  }, []);
   const [authStatus, setAuthStatus] = useState<string>('Unknown');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [user, setUser] = useState<string | undefined>();
@@ -30,10 +61,16 @@ const App: React.FC = () => {
 
   // Terminal state
   const [activeView, setActiveView] = useState<'chat' | 'terminal'>('chat');
-  const [terminalTabs, setTerminalTabs] = useState<Array<{ id: string; vmName: string; ip?: string; command: string }>>([]);
+  const [terminalTabs, setTerminalTabs] = useState<Array<{ id: string; vmName: string; ip?: string; command: string; username?: string; password?: string }>>([]);
   const [activeTerminalTab, setActiveTerminalTab] = useState<string | null>(null);
   const [showNewTerminalDialog, setShowNewTerminalDialog] = useState(false);
   const [newTerminalCommand, setNewTerminalCommand] = useState('');
+  const [newTerminalLabel, setNewTerminalLabel] = useState('');
+  const [newTerminalUsername, setNewTerminalUsername] = useState('');
+  const [newTerminalPassword, setNewTerminalPassword] = useState('');
+  const [newTerminalSave, setNewTerminalSave] = useState(false);
+  const [savedSessions, setSavedSessions] = useState<Array<{ id: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: string; createdAt: number; lastUsedAt?: number }>>([]);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
 
 
   // Move checkAuth/checkVcd above useEffect to avoid TDZ error
@@ -44,6 +81,15 @@ const App: React.FC = () => {
     checkAuth();
     checkVcd();
   }, []);
+
+  useEffect(() => {
+    if (!showNewTerminalDialog) return;
+    window.copilot.listSavedTerminalSessions().then((result) => {
+      if (result.success) {
+        setSavedSessions(result.sessions);
+      }
+    });
+  }, [showNewTerminalDialog]);
 
   const checkAuth = async () => {
     try {
@@ -111,7 +157,7 @@ const App: React.FC = () => {
     localStorage.setItem('terminalTheme', value);
   };
 
-  const handleOpenTerminal = (vm: { name: string; ip?: string }, user?: string, customCommand?: string) => {
+  const handleOpenTerminal = (vm: { name: string; ip?: string }, user?: string, password?: string, customCommand?: string) => {
     const terminalId = `term-${Date.now()}`;
     let command = customCommand;
     
@@ -124,12 +170,36 @@ const App: React.FC = () => {
       }
     }
     
-    setTerminalTabs((prev) => [...prev, { id: terminalId, vmName: vm.name, ip: vm.ip, command }]);
+    setTerminalTabs((prev) => [...prev, { id: terminalId, vmName: vm.name, ip: vm.ip, command, username: user, password }]);
     setActiveTerminalTab(terminalId);
     setActiveView('terminal');
+
+    if (vm.ip && (user || password)) {
+      window.copilot.saveTerminalSession({
+        label: vm.name,
+        command,
+        host: vm.ip,
+        username: user,
+        password,
+        vmName: vm.name,
+        ip: vm.ip,
+        source: 'vm',
+      }).then((result) => {
+        if (result.success) {
+          window.copilot.listSavedTerminalSessions().then((sessionsResult) => {
+            if (sessionsResult.success) {
+              setSavedSessions(sessionsResult.sessions);
+            }
+          });
+        }
+      });
+    }
   };
 
   const handleCloseTerminal = (id: string) => {
+    window.copilot.fileDisconnect({ terminalId: id }).catch(() => undefined);
+    delete passwordSentRef.current[id];
+    delete hostKeyAcceptedRef.current[id];
     setTerminalTabs((prev) => {
       const updated = prev.filter((t) => t.id !== id);
       if (activeTerminalTab === id && updated.length > 0) {
@@ -145,81 +215,146 @@ const App: React.FC = () => {
   const handleOpenNewTerminal = () => {
     const command = newTerminalCommand.trim() || 'bash';
     const terminalId = `term-${Date.now()}`;
-    setTerminalTabs((prev) => [...prev, { id: terminalId, vmName: 'Terminal', command }]);
+    setTerminalTabs((prev) => [...prev, { id: terminalId, vmName: newTerminalLabel || 'Terminal', command, username: newTerminalUsername || undefined, password: newTerminalPassword || undefined }]);
     setActiveTerminalTab(terminalId);
     setActiveView('terminal');
     setShowNewTerminalDialog(false);
     setNewTerminalCommand('');
+    setNewTerminalLabel('');
+    setNewTerminalUsername('');
+    setNewTerminalPassword('');
+    setNewTerminalSave(false);
+    setEditingSessionId(null);
+
+    if (newTerminalSave && command) {
+      window.copilot.saveTerminalSession({
+        id: editingSessionId || undefined,
+        label: newTerminalLabel || command,
+        command,
+        username: newTerminalUsername || undefined,
+        password: newTerminalPassword || undefined,
+        source: 'manual',
+      }).then(() => {
+        window.copilot.listSavedTerminalSessions().then((result) => {
+          if (result.success) {
+            setSavedSessions(result.sessions);
+          }
+        });
+      });
+    }
   };
 
-  return (
-    <div className={`flex h-screen w-screen min-h-0 bg-gray-900 text-gray-100 overflow-hidden ${theme === 'light' ? 'theme-light' : 'theme-dark'}`}>
-      {/* Sidebar - 25% */}
-      <div className="w-[25%] flex flex-col min-h-0">
-        {/* Auth Bar (always visible) */}
-        <div className="flex flex-col gap-0 border-b border-gray-700 bg-gray-800">
-          <div className="flex items-center justify-between px-4 py-2">
-            <span className="text-sm font-semibold text-blue-400">VCD Management</span>
-            <span className="text-xs text-gray-400">{vcdStatus.connected ? `${vcdStatus.user}@${vcdStatus.org}` : 'Not connected'}</span>
-          </div>
-          <div className="flex items-center justify-between px-4 pb-2 gap-2">
-            {/* VCD Auth */}
-            {!vcdStatus.connected ? (
-              <button
-                className="text-xs text-blue-400 hover:text-blue-300"
-                onClick={() => setShowVcdModal(true)}
-              >
-                VCD Sign In
-              </button>
-            ) : (
-              <button
-                className="text-xs text-red-400 hover:text-red-300"
-                onClick={handleVcdLogout}
-              >
-                VCD Logout
-              </button>
-            )}
-            {/* Copilot Auth */}
-            {authStatus !== 'OK' && authStatus !== 'AlreadySignedIn' ? (
-              <button
-                className="text-xs text-blue-400 hover:text-blue-300"
-                onClick={() => setShowAuthModal(true)}
-              >
-                Copilot Sign In
-              </button>
-            ) : (
-              <button
-                className="text-xs text-red-400 hover:text-red-300"
-                onClick={handleCopilotDisconnect}
-              >
-                Copilot Logout
-              </button>
-            )}
-          </div>
-        </div>
-        {/* Sidebar content */}
-        {vcdStatus.connected ? (
-          <VmSidebar onOpenTerminal={handleOpenTerminal} />
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center px-4 py-6 text-center">
-            <div className="text-gray-500 text-sm mb-4">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mx-auto mb-2 opacity-50">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-13c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5z" />
-              </svg>
-              <p>Connect to VCD to manage VMs</p>
-            </div>
-            <button
-              onClick={() => setShowVcdModal(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded transition-colors"
-            >
-              Connect to VCD
-            </button>
-          </div>
-        )}
-      </div>
+  const handleSaveSessionOnly = () => {
+    const command = newTerminalCommand.trim();
+    if (!command) return;
+    window.copilot.saveTerminalSession({
+      id: editingSessionId || undefined,
+      label: newTerminalLabel || command,
+      command,
+      username: newTerminalUsername || undefined,
+      password: newTerminalPassword || undefined,
+      source: 'manual',
+    }).then(() => {
+      window.copilot.listSavedTerminalSessions().then((result) => {
+        if (result.success) {
+          setSavedSessions(result.sessions);
+        }
+      });
+    });
+  };
 
-      {/* Main Panel - 75% */}
-      <div className="w-[75%] flex flex-col min-h-0 border-l border-gray-700">
+  const passwordSentRef = React.useRef<Record<string, boolean>>({});
+  const hostKeyAcceptedRef = React.useRef<Record<string, boolean>>({});
+  const terminalTabsRef = React.useRef(terminalTabs);
+
+  useEffect(() => {
+    terminalTabsRef.current = terminalTabs;
+  }, [terminalTabs]);
+
+  const handleTerminalData = React.useCallback((terminalId: string, data: string) => {
+    const tab = terminalTabsRef.current.find((item) => item.id === terminalId);
+    if (!tab?.password) return;
+
+    const lower = data.toLowerCase();
+    if (!hostKeyAcceptedRef.current[terminalId] && /are you sure you want to continue connecting/.test(lower)) {
+      hostKeyAcceptedRef.current[terminalId] = true;
+      window.copilot.terminalInput({ terminalId, data: 'yes\r' });
+      return;
+    }
+
+    if (!passwordSentRef.current[terminalId] && /password:/i.test(data)) {
+      passwordSentRef.current[terminalId] = true;
+      window.copilot.terminalInput({ terminalId, data: `${tab.password}\r` });
+    }
+  }, []);
+
+  const activeTerminal = terminalTabs.find((tab) => tab.id === activeTerminalTab) || null;
+
+  return (
+    <>
+      <div className={`flex flex-col h-screen w-screen min-h-0 bg-gray-900 text-gray-100 overflow-hidden ${theme === 'light' ? 'theme-light' : 'theme-dark'}`}>
+      <ResizablePanels
+        initialLeftWidth={320}
+        minLeftWidth={200}
+        minRightWidth={400}
+        left={
+          <Sidebar
+            vcdConnected={vcdStatus.connected}
+            onVcdSignIn={() => setShowVcdModal(true)}
+            onOpenTerminal={handleOpenTerminal}
+            hasTerminals={terminalTabs.length > 0}
+            activeTerminalId={activeTerminalTab}
+            activeTerminal={activeTerminal}
+            savedSessions={savedSessions}
+            onOpenSession={(session) => {
+              const terminalId = `term-${Date.now()}`;
+              setTerminalTabs((prev) => [...prev, {
+                id: terminalId,
+                vmName: session.label,
+                ip: session.ip,
+                command: session.command,
+                username: session.username,
+                password: session.password,
+              }]);
+              setActiveTerminalTab(terminalId);
+              setActiveView('terminal');
+              window.copilot.saveTerminalSession({
+                id: session.id,
+                label: session.label,
+                command: session.command,
+                host: session.host,
+                username: session.username,
+                port: session.port,
+                password: session.password,
+                vmName: session.vmName,
+                ip: session.ip,
+                source: session.source === 'vm' ? 'vm' : 'manual',
+              });
+            }}
+            onEditSession={(session) => {
+              setShowNewTerminalDialog(true);
+              setEditingSessionId(session.id);
+              setNewTerminalLabel(session.label);
+              setNewTerminalCommand(session.command);
+              setNewTerminalUsername(session.username || '');
+              setNewTerminalPassword(session.password || '');
+              setNewTerminalSave(true);
+            }}
+            onDeleteSession={(sessionId) => {
+              window.copilot.deleteTerminalSession({ id: sessionId }).then(() => {
+                setSavedSessions((prev) => prev.filter((item) => item.id !== sessionId));
+              });
+            }}
+            onRefreshSessions={() => {
+              window.copilot.listSavedTerminalSessions().then((result) => {
+                if (result.success) {
+                  setSavedSessions(result.sessions);
+                }
+              });
+            }}
+          />
+        }
+        right={<div className="flex flex-col flex-1 min-h-0 border-l border-gray-700 overflow-hidden">
         {/* Tab Bar */}
         <div className="bg-gray-800 border-b border-gray-700 flex items-center">
           {/* Main Tabs */}
@@ -291,6 +426,18 @@ const App: React.FC = () => {
 
           {/* Action Buttons - Right side */}
           <div className="flex items-center gap-2 px-2">
+            {/* Check for Update Button */}
+            <button
+              onClick={checkForAppUpdate}
+              className="p-2 text-gray-400 hover:text-green-400 hover:bg-gray-700 rounded transition-colors"
+              title="Check for Update"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M23 4v6h-6" />
+                <path d="M1 20v-6h6" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36M20.49 15a9 9 0 0 1-14.85 3.36" />
+              </svg>
+            </button>
                         {/* Terminal theme selector */}
                         <select
                           value={terminalTheme}
@@ -349,25 +496,26 @@ const App: React.FC = () => {
             <span className="text-gray-400">{authStatus === 'AlreadySignedIn' ? 'Connected' : authStatus}</span>
           </div>
         </div>
-        <div className="flex-1 min-h-0">
-          {activeView === 'chat' ? (
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className={`h-full w-full ${activeView === 'chat' ? '' : 'hidden'}`}>
             <ChatPane key={authStatusChanged} />
-          ) : (
-            <div className="h-full w-full min-h-0 flex flex-col">
-              {terminalTabs.map((tab) => (
-                <div key={tab.id} className={`h-full w-full ${activeTerminalTab === tab.id ? '' : 'hidden'}`}>
-                  <TerminalPane
-                    terminalId={tab.id}
-                    command={tab.command}
-                    terminalTheme={terminalTheme === 'auto' ? theme : terminalTheme}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+          </div>
+          <div className={`h-full w-full min-h-0 flex flex-col ${activeView === 'terminal' ? '' : 'hidden'}`}>
+            {terminalTabs.map((tab) => (
+              <div key={tab.id} className={`h-full w-full ${activeTerminalTab === tab.id ? '' : 'hidden'}`}>
+                <TerminalPane
+                  terminalId={tab.id}
+                  command={tab.command}
+                  onData={handleTerminalData}
+                  terminalTheme={terminalTheme === 'auto' ? theme : terminalTheme}
+                />
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
-
+        </div>}
+      />
+      <UpdateToast progress={updateProgress} visible={showUpdateToast} />
       {/* Auth Modal */}
       {showAuthModal && (
         <AuthModal onComplete={handleAuthComplete} onClose={() => setShowAuthModal(false)} />
@@ -380,8 +528,10 @@ const App: React.FC = () => {
       {/* New Terminal Dialog */}
       {showNewTerminalDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 w-96 shadow-lg">
-            <h3 className="text-lg font-semibold text-gray-200 mb-4">New Terminal</h3>
+          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 w-96 shadow-lg max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-gray-200 mb-4">
+              {editingSessionId ? 'Edit Session' : 'New Terminal'}
+            </h3>
             <div className="space-y-4">
               <div>
                 <label className="text-sm text-gray-400 block mb-1">Command (optional)</label>
@@ -395,6 +545,44 @@ const App: React.FC = () => {
                   autoFocus
                 />
               </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Label (optional)</label>
+                <input
+                  type="text"
+                  value={newTerminalLabel}
+                  onChange={(e) => setNewTerminalLabel(e.target.value)}
+                  placeholder="e.g., Prod Web VM"
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Username (optional)</label>
+                <input
+                  type="text"
+                  value={newTerminalUsername}
+                  onChange={(e) => setNewTerminalUsername(e.target.value)}
+                  placeholder="e.g., root, ubuntu"
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Password (optional)</label>
+                <input
+                  type="password"
+                  value={newTerminalPassword}
+                  onChange={(e) => setNewTerminalPassword(e.target.value)}
+                  placeholder="SSH password"
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={newTerminalSave}
+                  onChange={(e) => setNewTerminalSave(e.target.checked)}
+                />
+                Save this session
+              </label>
               <div className="text-xs text-gray-500">
                 {newTerminalCommand ? `Will run: ${newTerminalCommand}` : `Will run: bash (or cmd.exe on Windows)`}
               </div>
@@ -403,10 +591,22 @@ const App: React.FC = () => {
                   onClick={() => {
                     setShowNewTerminalDialog(false);
                     setNewTerminalCommand('');
+                    setNewTerminalLabel('');
+                    setNewTerminalUsername('');
+                    setNewTerminalPassword('');
+                    setNewTerminalSave(false);
+                    setEditingSessionId(null);
                   }}
                   className="px-4 py-2 bg-gray-700 text-gray-300 rounded text-sm hover:bg-gray-600 transition-colors"
                 >
                   Cancel
+                </button>
+                <button
+                  onClick={handleSaveSessionOnly}
+                  className="px-4 py-2 bg-gray-700 text-gray-200 rounded text-sm hover:bg-gray-600 transition-colors"
+                  disabled={!newTerminalCommand.trim()}
+                >
+                  {editingSessionId ? 'Update Session' : 'Save Session'}
                 </button>
                 <button
                   onClick={handleOpenNewTerminal}
@@ -420,6 +620,113 @@ const App: React.FC = () => {
         </div>
       )}
     </div>
+      {/* End of main app div */}
+      {/* Toast and modals are rendered here, outside the main layout div but inside the fragment */}
+      <UpdateToast progress={updateProgress} visible={showUpdateToast} />
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <AuthModal onComplete={handleAuthComplete} onClose={() => setShowAuthModal(false)} />
+      )}
+
+      {showVcdModal && (
+        <VcdAuthModal onComplete={handleVcdComplete} onClose={() => setShowVcdModal(false)} />
+      )}
+
+      {/* New Terminal Dialog */}
+      {showNewTerminalDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 w-96 shadow-lg max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-gray-200 mb-4">
+              {editingSessionId ? 'Edit Session' : 'New Terminal'}
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Command (optional)</label>
+                <input
+                  type="text"
+                  value={newTerminalCommand}
+                  onChange={(e) => setNewTerminalCommand(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleOpenNewTerminal()}
+                  placeholder="e.g., ssh user@host, bash, powershell, etc."
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Label (optional)</label>
+                <input
+                  type="text"
+                  value={newTerminalLabel}
+                  onChange={(e) => setNewTerminalLabel(e.target.value)}
+                  placeholder="e.g., Prod Web VM"
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Username (optional)</label>
+                <input
+                  type="text"
+                  value={newTerminalUsername}
+                  onChange={(e) => setNewTerminalUsername(e.target.value)}
+                  placeholder="e.g., root, ubuntu"
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Password (optional)</label>
+                <input
+                  type="password"
+                  value={newTerminalPassword}
+                  onChange={(e) => setNewTerminalPassword(e.target.value)}
+                  placeholder="SSH password"
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={newTerminalSave}
+                  onChange={(e) => setNewTerminalSave(e.target.checked)}
+                />
+                Save this session
+              </label>
+              <div className="text-xs text-gray-500">
+                {newTerminalCommand ? `Will run: ${newTerminalCommand}` : `Will run: bash (or cmd.exe on Windows)`}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => {
+                    setShowNewTerminalDialog(false);
+                    setNewTerminalCommand('');
+                    setNewTerminalLabel('');
+                    setNewTerminalUsername('');
+                    setNewTerminalPassword('');
+                    setNewTerminalSave(false);
+                    setEditingSessionId(null);
+                  }}
+                  className="px-4 py-2 bg-gray-700 text-gray-300 rounded text-sm hover:bg-gray-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveSessionOnly}
+                  className="px-4 py-2 bg-gray-700 text-gray-200 rounded text-sm hover:bg-gray-600 transition-colors"
+                  disabled={!newTerminalCommand.trim()}
+                >
+                  {editingSessionId ? 'Update Session' : 'Save Session'}
+                </button>
+                <button
+                  onClick={handleOpenNewTerminal}
+                  className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors"
+                >
+                  Open Terminal
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

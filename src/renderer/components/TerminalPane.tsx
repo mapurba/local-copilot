@@ -7,10 +7,11 @@ interface TerminalPaneProps {
   terminalId: string;
   command?: string;
   onReady?: (terminalId: string) => void;
+  onData?: (terminalId: string, data: string) => void;
   terminalTheme?: 'light' | 'dark';
 }
 
-const TerminalPane: React.FC<TerminalPaneProps> = ({ terminalId, command, onReady, terminalTheme = 'dark' }) => {
+const TerminalPane: React.FC<TerminalPaneProps> = ({ terminalId, command, onReady, onData, terminalTheme = 'dark' }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -102,8 +103,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ terminalId, command, onRead
     const dataDisposable = term.onData(handleData);
 
     const unsubOutput = window.copilot.onTerminalData((_event, payload) => {
-      if (payload.terminalId !== terminalSessionIdRef.current) return;
+      if (payload.terminalId !== terminalId) return;
       term.write(payload.data);
+      onData?.(payload.terminalId, payload.data);
     });
 
     window.copilot
@@ -134,7 +136,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ terminalId, command, onRead
       }
       term.dispose();
     };
-  }, [terminalId, command, onReady, terminalTheme]);
+  }, [terminalId, command, onReady, onData, terminalTheme]);
 
   return <div ref={containerRef} className="h-full w-full terminal-container" />;
 };

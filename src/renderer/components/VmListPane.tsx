@@ -13,7 +13,7 @@ interface VM {
 }
 
 interface VmListPaneProps {
-  onOpenTerminal?: (vm: VM, user?: string, command?: string) => void;
+  onOpenTerminal?: (vm: VM, user?: string, password?: string, command?: string) => void;
   onRefresh?: () => void;
 }
 
@@ -26,6 +26,7 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
   const [pendingAction, setPendingAction] = useState<{ href: string; action: 'start' | 'stop' | 'delete' } | null>(null);
   const [terminalVm, setTerminalVm] = useState<VM | null>(null);
   const [terminalUser, setTerminalUser] = useState<string>('');
+  const [terminalPassword, setTerminalPassword] = useState<string>('');
   const [terminalCommand, setTerminalCommand] = useState<string>('');
 
   useEffect(() => {
@@ -106,18 +107,19 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
   const handleTerminalClick = (vm: VM) => {
     setTerminalVm(vm);
     setTerminalUser('');
+    setTerminalPassword('');
     setTerminalCommand('');
   };
 
   const handleTerminalSubmit = () => {
     if (!terminalVm) return;
     const command = terminalCommand || (terminalUser ? `ssh ${terminalUser}@${terminalVm.ip}` : `ssh ${terminalVm.ip}`);
-    onOpenTerminal?.(terminalVm, terminalUser, command);
+    onOpenTerminal?.(terminalVm, terminalUser, terminalPassword, command);
     setTerminalVm(null);
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-gray-900">
+    <div className="flex flex-col flex-1 min-h-0 bg-gray-900 overflow-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-200">Virtual Machines</span>
@@ -286,6 +288,16 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
                   value={terminalUser}
                   onChange={(e) => setTerminalUser(e.target.value)}
                   placeholder="e.g., root, ubuntu"
+                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">Password (optional)</label>
+                <input
+                  type="password"
+                  value={terminalPassword}
+                  onChange={(e) => setTerminalPassword(e.target.value)}
+                  placeholder="SSH password"
                   className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
                 />
               </div>

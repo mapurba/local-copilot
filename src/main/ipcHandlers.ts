@@ -1,3 +1,4 @@
+  // ...existing imports...
 import { BrowserWindow, ipcMain } from 'electron';
 import { lspClient } from './lspClient';
 import { tokenManager } from './tokenManager';
@@ -7,6 +8,19 @@ import https from 'https';
 import { vcdSignIn, vcdStatus, vcdSignOut } from './vcdAuth';
 import { createVmFromTemplate, powerOnVm, powerOffVm, deleteVm, getVmDetails, allocateFreeIp } from './vcdApi';
 import { getVcdContext } from './vcdStore';
+import { deleteTerminalSession, listSavedTerminalSessions, saveTerminalSession } from './terminalSessionsStore';
+import {
+  connectTerminalFileSession,
+  deleteRemotePath,
+  disconnectTerminalFileSession,
+  getTerminalDirectory,
+  listDirectory,
+  makeRemoteDirectory,
+  readRemoteFile,
+  renameRemotePath,
+  setTerminalDirectory,
+  writeRemoteFile,
+} from './sftpManager';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -27,6 +41,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
+      // Manual update check from renderer
+      ipcMain.on('check-for-update', async () => {
+        const { checkForUpdates } = require('./autoUpdater');
+        checkForUpdates(mainWindow);
+      });
     // VCD: List VMs (direct, not via LLM)
     const { listVms } = require('./vcdApi');
     ipcMain.handle('vcd:listVms', async () => {
@@ -108,6 +127,43 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   // Chat: Get available models
   ipcMain.handle('copilot:getModels', async () => {
     return getModels();
+  });
+
+  ipcMain.handle('terminal:sessions:list', async () => {
+    try {
+      return { success: true, sessions: listSavedTerminalSessions() };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err), sessions: [] };
+    }
+  });
+
+  ipcMain.handle('terminal:sessions:save', async (_event, input: { id?: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: 'vm' | 'manual' }) => {
+    try {
+      const session = saveTerminalSession({
+        id: input.id,
+        label: input.label,
+        command: input.command,
+        host: input.host,
+        username: input.username,
+        port: input.port,
+        password: input.password,
+        vmName: input.vmName,
+        ip: input.ip,
+        source: input.source,
+        lastUsedAt: Date.now(),
+      });
+      return { success: true, session };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('terminal:sessions:delete', async (_event, input: { id: string }) => {
+    try {
+      return deleteTerminalSession(input.id);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   // Chat: Send message and stream response
@@ -302,6 +358,78 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     try {
       const result = await allocateFreeIp();
       return result;
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('file:connect', async (_event, options: { terminalId: string; command: string; password?: string }) => {
+    return connectTerminalFileSession(options.terminalId, options.command, { password: options.password });
+  });
+
+  ipcMain.handle('file:disconnect', async (_event, options: { terminalId: string }) => {
+    return disconnectTerminalFileSession(options.terminalId);
+  });
+
+  ipcMain.handle('file:getDirectory', async (_event, options: { terminalId: string }) => {
+    try {
+      return getTerminalDirectory(options.terminalId);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('file:setDirectory', async (_event, options: { terminalId: string; directory: string }) => {
+    try {
+      return setTerminalDirectory(options.terminalId, options.directory);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('file:list', async (_event, options: { terminalId: string; path?: string }) => {
+    try {
+      return await listDirectory(options.terminalId, options.path);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err), entries: [] };
+    }
+  });
+
+  ipcMain.handle('file:read', async (_event, options: { terminalId: string; path: string }) => {
+    try {
+      return await readRemoteFile(options.terminalId, options.path);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('file:write', async (_event, options: { terminalId: string; path: string; content: string }) => {
+    try {
+      return await writeRemoteFile(options.terminalId, options.path, options.content);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('file:delete', async (_event, options: { terminalId: string; path: string }) => {
+    try {
+      return await deleteRemotePath(options.terminalId, options.path);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('file:rename', async (_event, options: { terminalId: string; oldPath: string; newPath: string }) => {
+    try {
+      return await renameRemotePath(options.terminalId, options.oldPath, options.newPath);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('file:mkdir', async (_event, options: { terminalId: string; path: string }) => {
+    try {
+      return await makeRemoteDirectory(options.terminalId, options.path);
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
