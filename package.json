@@ -1,7 +1,7 @@
 {
   "name": "vcd-agent",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.3",
   "type": "commonjs",
   "main": "dist-electron/main/index.js",
   "scripts": {
@@ -37,19 +37,14 @@
     "@langchain/langgraph": "^1.2.0",
     "@langchain/openai": "^1.2.12",
     "@monaco-editor/react": "^4.7.0",
-    "@types/ssh2": "^1.15.5",
     "monaco-editor": "^0.55.1",
-    "node-pty": "^1.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.1",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
-    "ssh2": "^1.17.0",
     "vscode-languageclient": "^9.0.1",
-    "xterm": "^5.3.0",
-    "xterm-addon-fit": "^0.8.0",
     "zod": "^3.25.67"
   },
   "devDependencies": {

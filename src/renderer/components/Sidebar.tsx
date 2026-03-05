@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import VmListPane from './VmListPane';
-import FileBrowser from './FileBrowser';
-import SavedSessionsTab from './SavedSessionsTab';
+// DISABLED: FileBrowser import removed to disable SSH2/SFTP functionality
+// import FileBrowser from './FileBrowser';
+// DISABLED: SavedSessionsTab import removed since terminal sessions are disabled
+// import SavedSessionsTab from './SavedSessionsTab';
 
 interface VM {
   name: string;
@@ -33,39 +35,39 @@ interface SidebarProps {
   vcdConnected: boolean;
   onVcdSignIn?: () => void;
   onOpenTerminal?: (vm: VM, user?: string, password?: string, command?: string) => void;
-  hasTerminals: boolean;
-  activeTerminalId: string | null;
+  hasTerminals?: boolean;
+  activeTerminalId?: string | null;
   activeTerminal?: { id: string; vmName: string; ip?: string; command: string; username?: string; password?: string } | null;
-  savedSessions: SavedSession[];
-  onOpenSession: (session: SavedSession) => void;
-  onEditSession: (session: SavedSession) => void;
-  onDeleteSession: (sessionId: string) => void;
-  onRefreshSessions: () => void;
+  savedSessions?: SavedSession[];
+  onOpenSession?: (session: SavedSession) => void;
+  onEditSession?: (session: SavedSession) => void;
+  onDeleteSession?: (sessionId: string) => void;
+  onRefreshSessions?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
   vcdConnected,
   onVcdSignIn,
   onOpenTerminal,
-  hasTerminals,
-  activeTerminalId,
-  activeTerminal,
-  savedSessions,
-  onOpenSession,
-  onEditSession,
-  onDeleteSession,
-  onRefreshSessions,
+  // DISABLED: These parameters are no longer used since explorer tab was disabled
+  // hasTerminals,
+  // activeTerminalId,
+  // activeTerminal,
+  // DISABLED: Terminal session properties no longer needed
+  // savedSessions,
+  // onOpenSession,
+  // onEditSession,
+  // onDeleteSession,
+  // onRefreshSessions,
 }) => {
-  const [activeTab, setActiveTab] = useState<'vms' | 'explorer' | 'sessions'>(
-    hasTerminals ? 'explorer' : 'vms'
-  );
+  const [activeTab, setActiveTab] = useState<'vms' | 'sessions'>('vms');
 
-  // Switch to explorer by default when a terminal is opened
-  React.useEffect(() => {
-    if (hasTerminals && activeTab === 'vms') {
-      setActiveTab('explorer');
-    }
-  }, [hasTerminals]);
+  // DISABLED: explorer tab switching logic removed to disable SSH2/SFTP functionality
+  // React.useEffect(() => {
+  //   if (hasTerminals && activeTab === 'vms') {
+  //     setActiveTab('explorer');
+  //   }
+  // }, [hasTerminals]);
 
   const tabs = [
     { id: 'vms' as const, label: 'My VMs', icon: (
@@ -74,20 +76,22 @@ const Sidebar: React.FC<SidebarProps> = ({
         <line x1="2" y1="17" x2="22" y2="17" />
       </svg>
     ) },
-    ...(hasTerminals
-      ? [{ id: 'explorer' as const, label: 'Explorer', icon: (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        </svg>
-      ) }]
-      : []),
-    { id: 'sessions' as const, label: 'Saved Sessions', icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-        <polyline points="17 21 17 13 7 13 7 21" />
-        <polyline points="7 3 7 8 15 8" />
-      </svg>
-    ) },
+    // DISABLED: Explorer tab removed to disable SSH2/SFTP functionality
+    // ...(hasTerminals
+    //   ? [{ id: 'explorer' as const, label: 'Explorer', icon: (
+    //     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    //       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    //     </svg>
+    //   ) }]
+    //   : []),
+    // DISABLED: Saved Sessions tab removed - only available for terminal sessions
+    // { id: 'sessions' as const, label: 'Saved Sessions', icon: (
+    //   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    //     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+    //     <polyline points="17 21 17 13 7 13 7 21" />
+    //     <polyline points="7 3 7 8 15 8" />
+    //   </svg>
+    // ) },
   ];
 
   return (
@@ -153,18 +157,17 @@ const Sidebar: React.FC<SidebarProps> = ({
             </>
           )}
 
-          {/* Explorer Tab */}
-          {activeTab === 'explorer' && activeTerminal && (
+          {/* Explorer Tab - DISABLED */}
+          {/* {activeTab === 'explorer' && activeTerminal && (
             <FileBrowser
               terminalId={activeTerminal.id}
               command={activeTerminal.command}
               username={activeTerminal.username}
               password={activeTerminal.password}
             />
-          )}
+          )} */}
 
-          {/* Saved Sessions Tab */}
-          {activeTab === 'sessions' && (
+          {/* {activeTab === 'sessions' && (
             <SavedSessionsTab
               sessions={savedSessions}
               onOpen={onOpenSession}
@@ -172,7 +175,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               onDelete={onDeleteSession}
               onRefresh={onRefreshSessions}
             />
-          )}
+          )} */}
         </div>
       </div>
     </div>

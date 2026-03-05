@@ -1,3 +1,7 @@
+// DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
+// This file is kept for reference but all functionality is commented out
+
+/*
 import { Client, ConnectConfig, SFTPWrapper } from 'ssh2';
 import fs from 'fs';
 import os from 'os';
@@ -406,7 +410,7 @@ export function renameRemotePath(terminalId: string, oldRawPath: string, newRawP
   const newPath = resolvePath(session.currentDirectory, newRawPath);
 
   return new Promise((resolve, reject) => {
-    session.sftp.rename(oldPath, newPath, (err) => {
+    session.sftp.rename(oldPath, newPath, (err: Error | null) => {
       if (err) {
         reject(err);
         return;
@@ -421,7 +425,7 @@ export function makeRemoteDirectory(terminalId: string, rawPath: string): Promis
   const targetPath = resolvePath(session.currentDirectory, rawPath);
 
   return new Promise((resolve, reject) => {
-    session.sftp.mkdir(targetPath, (err) => {
+    session.sftp.mkdir(targetPath, (err: Error | null) => {
       if (err) {
         reject(err);
         return;
@@ -430,3 +434,4 @@ export function makeRemoteDirectory(terminalId: string, rawPath: string): Promis
     });
   });
 }
+*/

@@ -3,7 +3,8 @@ import { checkForUpdates } from './autoUpdater';
 import path from 'path';
 import { registerIpcHandlers } from './ipcHandlers';
 import { lspClient } from './lspClient';
-import { registerTerminalHandlers } from './terminalManager';
+// DISABLED: Terminal functionality disabled to prevent antivirus quarantine
+// import { registerTerminalHandlers } from './terminalManager';
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
 
 let mainWindow: BrowserWindow | null = null;
@@ -37,7 +38,8 @@ function createWindow() {
 app.whenReady().then(async () => {
   createWindow();
   registerIpcHandlers(mainWindow!);
-  registerTerminalHandlers(mainWindow!);
+  // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
+  // registerTerminalHandlers(mainWindow!);
 
   // Check for updates on startup (one-click)
   setTimeout(() => {

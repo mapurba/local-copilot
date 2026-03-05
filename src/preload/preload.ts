@@ -83,47 +83,49 @@ contextBridge.exposeInMainWorld('copilot', {
     ipcRenderer.invoke('vcd:signIn', input),
   vcdStatus: () => ipcRenderer.invoke('vcd:status'),
   vcdSignOut: () => ipcRenderer.invoke('vcd:signOut'),
-  terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) =>
-    ipcRenderer.invoke('terminal:create', options),
-  terminalInput: (options: { terminalId: string; data: string }) =>
-    ipcRenderer.invoke('terminal:input', options),
-  terminalResize: (options: { terminalId: string; cols: number; rows: number }) =>
-    ipcRenderer.invoke('terminal:resize', options),
-  terminalClose: (options: { terminalId: string }) =>
-    ipcRenderer.invoke('terminal:close', options),
-  terminalQueryCwd: (options: { terminalId: string }) =>
-    ipcRenderer.invoke('terminal:queryCwd', options),
-  terminalQuerySshContext: (options: { terminalId: string }) =>
-    ipcRenderer.invoke('terminal:querySshContext', options),
-  listSavedTerminalSessions: () =>
-    ipcRenderer.invoke('terminal:sessions:list'),
-  saveTerminalSession: (input: { id?: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: 'vm' | 'manual' }) =>
-    ipcRenderer.invoke('terminal:sessions:save', input),
-  deleteTerminalSession: (input: { id: string }) =>
-    ipcRenderer.invoke('terminal:sessions:delete', input),
-  onTerminalData: (callback: (event: Electron.IpcRendererEvent, data: { terminalId: string; data: string }) => void) => {
-    ipcRenderer.on('terminal:data', callback);
-    return () => ipcRenderer.removeListener('terminal:data', callback);
-  },
-  fileConnect: (options: { terminalId: string; command: string; password?: string }) =>
-    ipcRenderer.invoke('file:connect', options),
-  fileDisconnect: (options: { terminalId: string }) =>
-    ipcRenderer.invoke('file:disconnect', options),
-  fileGetDirectory: (options: { terminalId: string }) =>
-    ipcRenderer.invoke('file:getDirectory', options),
-  fileSetDirectory: (options: { terminalId: string; directory: string }) =>
-    ipcRenderer.invoke('file:setDirectory', options),
-  fileList: (options: { terminalId: string; path?: string }) =>
-    ipcRenderer.invoke('file:list', options),
-  fileRead: (options: { terminalId: string; path: string }) =>
-    ipcRenderer.invoke('file:read', options),
-  fileWrite: (options: { terminalId: string; path: string; content: string }) =>
-    ipcRenderer.invoke('file:write', options),
-  fileDelete: (options: { terminalId: string; path: string }) =>
-    ipcRenderer.invoke('file:delete', options),
-  fileRename: (options: { terminalId: string; oldPath: string; newPath: string }) =>
-    ipcRenderer.invoke('file:rename', options),
-  fileMkdir: (options: { terminalId: string; path: string }) =>
-    ipcRenderer.invoke('file:mkdir', options),
+  // DISABLED: Terminal methods removed to prevent antivirus quarantine
+  // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) =>
+  //   ipcRenderer.invoke('terminal:create', options),
+  // terminalInput: (options: { terminalId: string; data: string }) =>
+  //   ipcRenderer.invoke('terminal:input', options),
+  // terminalResize: (options: { terminalId: string; cols: number; rows: number }) =>
+  //   ipcRenderer.invoke('terminal:resize', options),
+  // terminalClose: (options: { terminalId: string }) =>
+  //   ipcRenderer.invoke('terminal:close', options),
+  // terminalQueryCwd: (options: { terminalId: string }) =>
+  //   ipcRenderer.invoke('terminal:queryCwd', options),
+  // terminalQuerySshContext: (options: { terminalId: string }) =>
+  //   ipcRenderer.invoke('terminal:querySshContext', options),
+  // listSavedTerminalSessions: () =>
+  //   ipcRenderer.invoke('terminal:sessions:list'),
+  // saveTerminalSession: (input: { id?: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: 'vm' | 'manual' }) =>
+  //   ipcRenderer.invoke('terminal:sessions:save', input),
+  // deleteTerminalSession: (input: { id: string }) =>
+  //   ipcRenderer.invoke('terminal:sessions:delete', input),
+  // onTerminalData: (callback: (event: Electron.IpcRendererEvent, data: { terminalId: string; data: string }) => void) => {
+  //   ipcRenderer.on('terminal:data', callback);
+  //   return () => ipcRenderer.removeListener('terminal:data', callback);
+  // },
+  // DISABLED: File/SFTP methods removed to disable SSH2 functionality
+  // fileConnect: (options: { terminalId: string; command: string; password?: string }) =>
+  //   ipcRenderer.invoke('file:connect', options),
+  // fileDisconnect: (options: { terminalId: string }) =>
+  //   ipcRenderer.invoke('file:disconnect', options),
+  // fileGetDirectory: (options: { terminalId: string }) =>
+  //   ipcRenderer.invoke('file:getDirectory', options),
+  // fileSetDirectory: (options: { terminalId: string; directory: string }) =>
+  //   ipcRenderer.invoke('file:setDirectory', options),
+  // fileList: (options: { terminalId: string; path?: string }) =>
+  //   ipcRenderer.invoke('file:list', options),
+  // fileRead: (options: { terminalId: string; path: string }) =>
+  //   ipcRenderer.invoke('file:read', options),
+  // fileWrite: (options: { terminalId: string; path: string; content: string }) =>
+  //   ipcRenderer.invoke('file:write', options),
+  // fileDelete: (options: { terminalId: string; path: string }) =>
+  //   ipcRenderer.invoke('file:delete', options),
+  // fileRename: (options: { terminalId: string; oldPath: string; newPath: string }) =>
+  //   ipcRenderer.invoke('file:rename', options),
+  // fileMkdir: (options: { terminalId: string; path: string }) =>
+  //   ipcRenderer.invoke('file:mkdir', options),
   checkForUpdate: () => ipcRenderer.send('check-for-update'),
-} as CopilotAPI);
+} as unknown as CopilotAPI);

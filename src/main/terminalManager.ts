@@ -1,3 +1,7 @@
+// DISABLED: Terminal functionality disabled to prevent antivirus quarantine
+// This file is kept for reference but all functionality is commented out
+
+/*
 import { ipcMain } from 'electron';
 import * as pty from 'node-pty';
 import * as os from 'os';
@@ -299,3 +303,4 @@ export function registerTerminalHandlers(mainWindow: { webContents: { send: (cha
     }
   });
 }
+*/
