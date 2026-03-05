@@ -12,12 +12,18 @@ export interface CopilotAPI {
   onChatEnd: (callback: (event: Electron.IpcRendererEvent) => void) => () => void;
   onChatError: (callback: (event: Electron.IpcRendererEvent, message: string) => void) => () => void;
   onVmDraft: (callback: (event: Electron.IpcRendererEvent, form: Record<string, unknown>) => void) => () => void;
+  onVmCopyDraft: (callback: (event: Electron.IpcRendererEvent, form: Record<string, unknown>) => void) => () => void;
   deployVm: (form: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   listVms: () => Promise<{ count?: number; vms?: Array<Record<string, unknown>>; error?: string }>;
+  listVapps: () => Promise<{ count?: number; vapps?: Array<Record<string, unknown>>; error?: string }>;
   powerOnVm: (vmHref: string) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   powerOffVm: (vmHref: string) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   deleteVm: (input: { href: string; powered_on?: boolean }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   allocateFreeIp: () => Promise<{ success: boolean; ip?: string; error?: string }>;
+  createSnapshot: (input: { vmNameOrHref: string; description?: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  revertSnapshot: (input: { vmNameOrHref: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  createVmCopy: (input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  listSnapshots: () => Promise<{ success: boolean; count?: number; snapshots?: Array<Record<string, unknown>>; error?: string }>;
   proxyRequest: (options: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; headers: Record<string, unknown>; body: string }>;
   vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdStatus: () => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
@@ -73,12 +79,21 @@ contextBridge.exposeInMainWorld('copilot', {
     ipcRenderer.on('chat:vm-draft', callback);
     return () => ipcRenderer.removeListener('chat:vm-draft', callback);
   },
+  onVmCopyDraft: (callback: (event: Electron.IpcRendererEvent, form: Record<string, unknown>) => void) => {
+    ipcRenderer.on('chat:vm-copy-draft', callback);
+    return () => ipcRenderer.removeListener('chat:vm-copy-draft', callback);
+  },
   deployVm: (form: Record<string, unknown>) => ipcRenderer.invoke('vcd:deployVm', form),
   listVms: () => ipcRenderer.invoke('vcd:listVms'),
+  listVapps: () => ipcRenderer.invoke('vcd:listVapps'),
   powerOnVm: (vmHref: string) => ipcRenderer.invoke('vcd:powerOnVm', vmHref),
   powerOffVm: (vmHref: string) => ipcRenderer.invoke('vcd:powerOffVm', vmHref),
   deleteVm: (input: { href: string; powered_on?: boolean }) => ipcRenderer.invoke('vcd:deleteVm', input),
   allocateFreeIp: () => ipcRenderer.invoke('vcd:allocateFreeIp'),
+  createSnapshot: (input: { vmNameOrHref: string; description?: string }) => ipcRenderer.invoke('vcd:createSnapshot', input),
+  revertSnapshot: (input: { vmNameOrHref: string }) => ipcRenderer.invoke('vcd:revertSnapshot', input),
+  createVmCopy: (input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => ipcRenderer.invoke('vcd:createVmCopy', input),
+  listSnapshots: () => ipcRenderer.invoke('vcd:listSnapshots'),
   vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) =>
     ipcRenderer.invoke('vcd:signIn', input),
   vcdStatus: () => ipcRenderer.invoke('vcd:status'),

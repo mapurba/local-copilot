@@ -85,6 +85,33 @@ function sanitizeComputerName(vmName: string): string {
   return cleaned;
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function extractXmlSection(xml: string, tagName: string): string {
+  const regex = new RegExp(`<(?:\\w+:)?${tagName}\\b[\\s\\S]*?<\\/(?:\\w+:)?${tagName}>`, 'i');
+  const match = xml.match(regex);
+  return match ? match[0] : '';
+}
+
+function replaceXmlTagValue(xml: string, tagName: string, value: string): string {
+  const regex = new RegExp(`(<(?:\\w+:)?${tagName}\\b[^>]*>)([\\s\\S]*?)(<\\/(?:\\w+:)?${tagName}>)`, 'i');
+  if (!regex.test(xml)) return xml;
+  return xml.replace(regex, `$1${escapeXml(value)}$3`);
+}
+
+function extractXmlAttr(xml: string, tagName: string, attrName: string): string {
+  const regex = new RegExp(`<(?:\\w+:)?${tagName}\\b[^>]*\\b${attrName}="([^"]+)"`, 'i');
+  const match = xml.match(regex);
+  return match ? match[1] : '';
+}
+
 const SLES_PATTERNS = ['sles_15', 'sles15', 'sles', 'suse', 'sp5', 'sp6', 'sp7'];
 
 function isSlesTemplate(templateName?: string): boolean {
@@ -126,6 +153,57 @@ async function queryRecords(
   }
   const data = jsonParseSafe(result.body) as { record?: Record<string, unknown>[] } | null;
   return data?.record || [];
+}
+
+export async function listVApps(pageSize = 100): Promise<Record<string, unknown>> {
+  const ctx = getVcdContext();
+  const username = ctx.username || '';
+  let records: Record<string, unknown>[] = [];
+  try {
+    // Some VCD environments reject ownerName filtering for vApp records (HTTP 400).
+    records = await queryRecords('vApp', pageSize, undefined, 'dateCreated');
+  } catch (err) {
+    // Fallback to adminVApp record type when vApp records are unavailable in the tenant query API.
+    try {
+      records = await queryRecords('adminVApp', pageSize, undefined, 'dateCreated');
+    } catch {
+      throw err;
+    }
+  }
+
+  const filteredByOwner = username
+    ? records.filter((app) => matchesOwner(String(app.ownerName || ''), username))
+    : records;
+  const userVApps = username && filteredByOwner.length === 0 ? records : filteredByOwner;
+
+  const vapps = userVApps.map((app) => ({
+    name: String(app.name || ''),
+    href: String(app.href || ''),
+    status: String(app.status || ''),
+    owner: String(app.ownerName || ''),
+  }));
+
+  return { count: vapps.length, vapps };
+}
+
+async function getVappDetailsXml(vappHref: string): Promise<string> {
+  const ctx = getVcdContext();
+  const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`);
+  const result = await httpsRequest(vappHref, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`get_vapp_details failed: HTTP ${result.status}`);
+  }
+  return result.body || '';
+}
+
+async function getVmDetailsXml(vmHref: string): Promise<string> {
+  const ctx = getVcdContext();
+  const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`);
+  const result = await httpsRequest(vmHref, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`get_vm_details failed: HTTP ${result.status}`);
+  }
+  return result.body || '';
 }
 
 export async function listVms(pageSize = 100, saveToFile?: string): Promise<unknown> {
@@ -396,7 +474,7 @@ EOF
         if grep -q "^NETCONFIG_DNS_STATIC_SERVERS=" /etc/sysconfig/network/config; then
             sed -i 's/^NETCONFIG_DNS_STATIC_SERVERS=.*/NETCONFIG_DNS_STATIC_SERVERS="__DNS_ALL__"/' /etc/sysconfig/network/config
         else
-            echo "NETCONFIG_DNS_STATIC_SERVERS=\"__DNS_ALL__\"" >> /etc/sysconfig/network/config
+            echo 'NETCONFIG_DNS_STATIC_SERVERS="__DNS_ALL__"' >> /etc/sysconfig/network/config
         fi
         netconfig update -f
         wicked ifreload all
@@ -778,6 +856,215 @@ async function resolveVmHrefByName(nameOrHref: string): Promise<string> {
   return href;
 }
 
+function getVmIdFromHref(vmHref: string): string {
+  if (!vmHref.includes('/vm-')) return '';
+  return vmHref.split('/vm-')[1]?.split(/[/?#]/)[0] || '';
+}
+
+function parseSnapshotSectionXml(xml: string): Array<Record<string, unknown>> {
+  const snapshots: Array<Record<string, unknown>> = [];
+  const regex = /<Snapshot\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(xml)) !== null) {
+    const attrs = match[1] || '';
+    const href = attrs.match(/\bhref="([^"]+)"/i)?.[1] || '';
+    const name = attrs.match(/\bname="([^"]+)"/i)?.[1] || '';
+    const created = attrs.match(/\bcreated="([^"]+)"/i)?.[1] || '';
+    const size = attrs.match(/\bsize="([^"]+)"/i)?.[1] || '';
+    const poweredOn = attrs.match(/\bpoweredOn="([^"]+)"/i)?.[1] || '';
+    snapshots.push({
+      href,
+      id: href.includes('/snapshot-') ? href.split('/snapshot-')[1] : href,
+      name,
+      created,
+      size,
+      powered_on: poweredOn.toLowerCase() === 'true',
+    });
+  }
+  return snapshots;
+}
+
+export async function createSnapshot(vmNameOrHref: string, description?: string): Promise<Record<string, unknown>> {
+  const ctx = getVcdContext();
+  const vmHref = await resolveVmHrefByName(vmNameOrHref);
+  const url = `${vmHref}/action/createSnapshot`;
+  const hasDescription = Boolean(description?.trim());
+
+  let body = '';
+  const headers: Record<string, string> = {
+    ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
+    'Content-Length': '0',
+  };
+
+  if (hasDescription) {
+    body = `<CreateSnapshotParams xmlns="http://www.vmware.com/vcloud/v1.5" description="${escapeXml(description!.trim())}" />`;
+    headers['Content-Type'] = 'application/vnd.vmware.vcloud.createSnapshotParams+xml';
+    headers['Content-Length'] = Buffer.byteLength(body).toString();
+  }
+
+  const result = await httpsRequest(url, 'POST', headers, body, 30000, ctx.rejectUnauthorized);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`create_snapshot failed: HTTP ${result.status} - ${result.body.slice(0, 400)}`);
+  }
+
+  return { status: 'success', action: 'createSnapshot', vm_href: vmHref };
+}
+
+export async function revertSnapshot(vmNameOrHref: string): Promise<Record<string, unknown>> {
+  const ctx = getVcdContext();
+  const vmHref = await resolveVmHrefByName(vmNameOrHref);
+  const candidates = ['revertToCurrentSnapshot', 'revertToSnapshot'];
+
+  for (const action of candidates) {
+    const url = `${vmHref}/action/${action}`;
+    const headers = {
+      ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
+      'Content-Length': '0',
+    };
+    const result = await httpsRequest(url, 'POST', headers, '', 30000, ctx.rejectUnauthorized);
+    if (result.status >= 200 && result.status < 300) {
+      return { status: 'success', action: 'revertSnapshot', vm_href: vmHref };
+    }
+    if (![404, 405].includes(result.status)) {
+      throw new Error(`revert_snapshot failed: HTTP ${result.status} - ${result.body.slice(0, 400)}`);
+    }
+  }
+
+  throw new Error('revert_snapshot failed: supported revert endpoint not available on this VCD API version.');
+}
+
+export async function listVmSnapshots(vmNameOrHref: string): Promise<Record<string, unknown>> {
+  const ctx = getVcdContext();
+  const vmHref = await resolveVmHrefByName(vmNameOrHref);
+  const vmId = getVmIdFromHref(vmHref);
+  const sectionUrl = `${vmHref}/snapshotSection`;
+  const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`);
+  const result = await httpsRequest(sectionUrl, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`list_vm_snapshots failed: HTTP ${result.status}`);
+  }
+
+  const snapshots = parseSnapshotSectionXml(result.body);
+  return {
+    vm_href: vmHref,
+    vm_id: vmId,
+    count: snapshots.length,
+    snapshots,
+  };
+}
+
+export async function listAllSnapshots(pageSize = 200): Promise<Record<string, unknown>> {
+  try {
+    const records = await queryRecords('snapshot', pageSize, undefined, 'dateCreated');
+    const snapshots = records.map((s) => ({
+      id: s.id || '',
+      name: s.name || '',
+      vm_name: s.vmName || s.containerName || '',
+      created: s.dateCreated || s.created || '',
+      owner: s.ownerName || '',
+      href: s.href || '',
+      status: s.status || '',
+    }));
+    return { count: snapshots.length, snapshots };
+  } catch {
+    // Fallback for VCD environments that do not expose snapshot records in query API.
+    const vmResult = await listVms(pageSize);
+    const vms = (vmResult as { vms?: Array<Record<string, unknown>> }).vms || [];
+    const collected: Array<Record<string, unknown>> = [];
+
+    for (const vm of vms) {
+      const href = String(vm.href || '');
+      if (!href) continue;
+      try {
+        const perVm = await listVmSnapshots(href);
+        const snapshots = (perVm.snapshots as Array<Record<string, unknown>> | undefined) || [];
+        snapshots.forEach((snap) => {
+          collected.push({ ...snap, vm_name: vm.name || '', vm_href: href });
+        });
+      } catch {
+        // Continue collecting from other VMs even if one VM does not expose snapshot info.
+      }
+    }
+
+    return { count: collected.length, snapshots: collected };
+  }
+}
+
+export async function createVmCopy(
+  vmNameOrHref: string,
+  newVmName: string,
+  targetVappHref: string,
+  powerOn = false,
+  description?: string
+): Promise<Record<string, unknown>> {
+  const ctx = getVcdContext();
+  const vmHref = await resolveVmHrefByName(vmNameOrHref);
+  if (!targetVappHref) throw new Error('create_vm_copy failed: target vApp is required.');
+
+  const [vmXml, vappXml] = await Promise.all([
+    getVmDetailsXml(vmHref),
+    getVappDetailsXml(targetVappHref),
+  ]);
+
+  const vappName = extractXmlAttr(vappXml, 'VApp', 'name') || 'Target vApp';
+  const vappDescription = extractXmlSection(vappXml, 'Description');
+
+  const sourceVmName = extractXmlAttr(vmXml, 'Vm', 'name') || vmNameOrHref;
+  let guestCustomization = extractXmlSection(vmXml, 'GuestCustomizationSection');
+  if (guestCustomization) {
+    guestCustomization = replaceXmlTagValue(guestCustomization, 'ComputerName', newVmName);
+  }
+  const networkSection = extractXmlSection(vmXml, 'NetworkConnectionSection');
+  const hardwareSection = extractXmlSection(vmXml, 'VirtualHardwareSection');
+  const storageProfileHref = extractXmlAttr(vmXml, 'StorageProfile', 'href');
+
+  const descriptionBlock = description?.trim()
+    ? `<root:Description>${escapeXml(description.trim())}</root:Description>`
+    : vappDescription || `<root:Description>${escapeXml(vappName)}</root:Description>`;
+
+  const instantiationParams = [guestCustomization, networkSection, hardwareSection]
+    .filter(Boolean)
+    .map((section) => section.trim())
+    .join('');
+
+  const storageProfileBlock = storageProfileHref
+    ? `<root:StorageProfile href="${escapeXml(storageProfileHref)}"/>`
+    : '';
+
+  const xmlBody = [
+    `<root:RecomposeVAppParams xmlns:root="http://www.vmware.com/vcloud/v1.5" name="${escapeXml(vappName)}" xmlns:ns0="http://schemas.dmtf.org/ovf/envelope/1" xmlns:ns1="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData" xmlns:ns2="http://www.vmware.com/schema/ovf">`,
+    descriptionBlock,
+    `<root:SourcedItem sourceDelete="false">`,
+    `<root:Source href="${escapeXml(vmHref)}" name="${escapeXml(newVmName || sourceVmName)}"/>`,
+    instantiationParams ? `<root:InstantiationParams>${instantiationParams}</root:InstantiationParams>` : '',
+    storageProfileBlock,
+    `<root:ReplaceTpm>false</root:ReplaceTpm>`,
+    `</root:SourcedItem>`,
+    `</root:RecomposeVAppParams>`,
+  ].join('');
+
+  const xmlHeaders = {
+    ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
+    'Content-Type': 'application/vnd.vmware.vcloud.recomposeVAppParams+xml;charset=UTF-8',
+  };
+
+  const recomposeUrl = `${targetVappHref}/action/recomposeVApp`;
+  const result = await httpsRequest(recomposeUrl, 'POST', xmlHeaders, xmlBody, 30000, ctx.rejectUnauthorized);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`create_vm_copy failed: HTTP ${result.status} - ${result.body.slice(0, 400)}`);
+  }
+
+  return {
+    status: 'success',
+    action: 'copyVm',
+    vm_href: vmHref,
+    new_vm_name: newVmName,
+    target_vapp_href: targetVappHref,
+    power_on_requested: powerOn,
+  };
+}
+
 export async function updateVmResources(vmId: string, cpuCount?: number, ramMb?: number): Promise<Record<string, unknown>> {
   const MAX_CPU = 4;
   const MAX_RAM_MB = 20480;
@@ -792,7 +1079,6 @@ export async function updateVmResources(vmId: string, cpuCount?: number, ramMb?:
     return { status: 'noop', message: 'No updates requested' };
   }
 
-  const ctx = getVcdContext();
   const vmHref = await resolveVmHrefByName(vmId);
   const id = vmHref.includes('/vm-') ? vmHref.split('/vm-')[1] : vmId;
   const vmData = await getVmDetails(id);

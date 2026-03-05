@@ -25,6 +25,21 @@ interface VmDraftForm {
   ilm_version?: string;
 }
 
+interface VmCopyDraftForm {
+  vm_name_or_href: string;
+  new_vm_name: string;
+  target_vapp_href?: string;
+  description?: string;
+  power_on?: boolean;
+}
+
+interface VApp {
+  name: string;
+  href: string;
+  status?: string;
+  owner?: string;
+}
+
 const ChatPane: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -32,7 +47,11 @@ const ChatPane: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [useTools, setUseTools] = useState(true);
   const [pendingForm, setPendingForm] = useState<VmDraftForm | null>(null);
+  const [pendingCopyForm, setPendingCopyForm] = useState<VmCopyDraftForm | null>(null);
+  const [vapps, setVapps] = useState<VApp[]>([]);
+  const [vappsLoading, setVappsLoading] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [isCopyingVm, setIsCopyingVm] = useState(false);
   const [fetchingIp, setFetchingIp] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void)[]>([]);
@@ -68,6 +87,7 @@ const ChatPane: React.FC = () => {
       console.log('[ChatPane] onVmDraft event received');
       console.log('[ChatPane] Form data:', form);
       setIsStreaming(false);
+      setPendingCopyForm(null);
       setPendingForm({
         vm_name: String(form.vm_name || ''),
         template_id: String(form.template_id || ''),
@@ -86,13 +106,58 @@ const ChatPane: React.FC = () => {
       console.log('[ChatPane] Pending form state updated');
     });
 
-    cleanupRef.current = [unsubChunk, unsubEnd, unsubError, unsubDraft];
+    const unsubCopyDraft = window.copilot.onVmCopyDraft((_event: unknown, form: Record<string, unknown>) => {
+      console.log('[ChatPane] onVmCopyDraft event received');
+      console.log('[ChatPane] Copy form data:', form);
+      setIsStreaming(false);
+      setPendingForm(null);
+      setPendingCopyForm({
+        vm_name_or_href: String(form.vm_name_or_href || ''),
+        new_vm_name: String(form.new_vm_name || ''),
+        target_vapp_href: form.target_vapp_href ? String(form.target_vapp_href) : '',
+        description: form.description ? String(form.description) : '',
+        power_on: form.power_on !== undefined ? Boolean(form.power_on) : false,
+      });
+    });
+
+    cleanupRef.current = [unsubChunk, unsubEnd, unsubError, unsubDraft, unsubCopyDraft];
     return () => cleanupRef.current.forEach((fn) => fn());
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, pendingForm]);
+  }, [messages, pendingForm, pendingCopyForm]);
+
+  const loadVapps = useCallback(async () => {
+    setVappsLoading(true);
+    try {
+      const result = await window.copilot.listVapps();
+      const items = Array.isArray(result?.vapps) ? result.vapps : [];
+      const normalized: VApp[] = items.map((item) => ({
+        name: String(item.name || 'Unknown'),
+        href: String(item.href || ''),
+        status: item.status ? String(item.status) : undefined,
+        owner: item.owner ? String(item.owner) : undefined,
+      })).filter((item) => Boolean(item.href));
+      setVapps(normalized);
+      setPendingCopyForm((prev) => {
+        if (!prev || prev.target_vapp_href) return prev;
+        if (!normalized.length) return prev;
+        return { ...prev, target_vapp_href: normalized[0].href };
+      });
+    } catch (err) {
+      console.error('[ChatPane] Failed to load vApps:', err);
+      setVapps([]);
+    } finally {
+      setVappsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (pendingCopyForm && vapps.length === 0 && !vappsLoading) {
+      loadVapps();
+    }
+  }, [pendingCopyForm, vapps.length, vappsLoading, loadVapps]);
 
   const sendMessage = useCallback(async () => {
     const trimmed = input.trim();
@@ -123,6 +188,10 @@ const ChatPane: React.FC = () => {
 
   const updateForm = (key: keyof VmDraftForm, value: string | boolean) => {
     setPendingForm((prev) => prev ? { ...prev, [key]: value } : null);
+  };
+
+  const updateCopyForm = (key: keyof VmCopyDraftForm, value: string | boolean) => {
+    setPendingCopyForm((prev) => prev ? { ...prev, [key]: value } : null);
   };
 
   const handleFetchFreeIp = async () => {
@@ -175,6 +244,53 @@ const ChatPane: React.FC = () => {
     setMessages((prev) => [...prev, { role: 'assistant', content: 'VM creation cancelled.' }]);
   };
 
+  const handleCopyVm = async () => {
+    if (!pendingCopyForm) return;
+    if (!pendingCopyForm.new_vm_name.trim()) {
+      setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: VM name is required for copy.' }]);
+      return;
+    }
+    if (!pendingCopyForm.target_vapp_href) {
+      setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: Target vApp is required for copy.' }]);
+      return;
+    }
+
+    setIsCopyingVm(true);
+    try {
+      const result = await window.copilot.createVmCopy({
+        vmNameOrHref: pendingCopyForm.vm_name_or_href,
+        newVmName: pendingCopyForm.new_vm_name.trim(),
+        targetVappHref: pendingCopyForm.target_vapp_href,
+        description: pendingCopyForm.description?.trim() || undefined,
+        powerOn: Boolean(pendingCopyForm.power_on),
+      });
+
+      const copiedName = pendingCopyForm.new_vm_name;
+      setPendingCopyForm(null);
+      if (result.success) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `OK: VM copy **${copiedName}** has been started successfully.` },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `Error: VM copy failed: ${result.error || 'Unknown error'}` },
+        ]);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'VM copy failed';
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${msg}` }]);
+    } finally {
+      setIsCopyingVm(false);
+    }
+  };
+
+  const handleCancelCopyReview = () => {
+    setPendingCopyForm(null);
+    setMessages((prev) => [...prev, { role: 'assistant', content: 'VM copy cancelled.' }]);
+  };
+
   const getMessageColor = (message: Message) => {
     if (message.role === 'user') return 'msg-user';
     switch (message.type) {
@@ -206,7 +322,7 @@ const ChatPane: React.FC = () => {
 
       {/* Messages */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.length === 0 && !pendingForm && (
+        {messages.length === 0 && !pendingForm && !pendingCopyForm && (
           <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm space-y-2">
             <span className="text-4xl">:)</span>
             <p>Ask about your VMs or create new ones</p>
@@ -396,6 +512,102 @@ const ChatPane: React.FC = () => {
                 >
                   {isDeploying && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   {isDeploying ? 'Deploying...' : 'Deploy VM'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VM Copy Review Form */}
+        {pendingCopyForm && (
+          <div className="flex justify-start">
+            <div className="w-full max-w-lg bg-gray-800 rounded-xl border border-violet-500/40 overflow-hidden shadow-lg">
+              <div className="px-5 py-3 bg-gray-750 border-b border-gray-700 flex items-center gap-2">
+                <svg className="text-violet-400" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <path d="M9 9h6v6H9z" />
+                </svg>
+                <span className="text-sm font-semibold text-gray-200">Review &amp; edit VM copy details</span>
+              </div>
+
+              <div className="p-5 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">SOURCE VM</label>
+                  <input
+                    type="text"
+                    value={pendingCopyForm.vm_name_or_href}
+                    onChange={(e) => updateCopyForm('vm_name_or_href', e.target.value)}
+                    className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">TARGET VAPP</label>
+                  <select
+                    value={pendingCopyForm.target_vapp_href || ''}
+                    onChange={(e) => updateCopyForm('target_vapp_href', e.target.value)}
+                    className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                  >
+                    <option value="" disabled>
+                      {vappsLoading ? 'Loading vApps...' : 'Select a vApp'}
+                    </option>
+                    {vapps.map((vapp) => (
+                      <option key={vapp.href} value={vapp.href}>
+                        {vapp.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">NEW VM NAME</label>
+                    <input
+                      type="text"
+                      value={pendingCopyForm.new_vm_name}
+                      onChange={(e) => updateCopyForm('new_vm_name', e.target.value)}
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">POWER ON</label>
+                    <select
+                      value={pendingCopyForm.power_on ? 'Yes' : 'No'}
+                      onChange={(e) => updateCopyForm('power_on', e.target.value === 'Yes')}
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    >
+                      <option>Yes</option>
+                      <option>No</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">DESCRIPTION</label>
+                  <textarea
+                    value={pendingCopyForm.description || ''}
+                    onChange={(e) => updateCopyForm('description', e.target.value)}
+                    rows={3}
+                    className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                  />
+                </div>
+              </div>
+
+              <div className="px-5 py-3 bg-gray-750 border-t border-gray-700 flex gap-3 justify-end">
+                <button
+                  onClick={handleCancelCopyReview}
+                  disabled={isCopyingVm}
+                  className="px-4 py-1.5 rounded text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCopyVm}
+                  disabled={isCopyingVm}
+                  className="px-4 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-700 transition-colors disabled:opacity-60 flex items-center gap-2"
+                >
+                  {isCopyingVm && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {isCopyingVm ? 'Copying...' : 'Create Copy'}
                 </button>
               </div>
             </div>

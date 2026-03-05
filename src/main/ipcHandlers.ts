@@ -5,7 +5,19 @@ import { getModels, streamChatCompletion, chatWithTools, ChatMessage } from './c
 import http from 'http';
 import https from 'https';
 import { vcdSignIn, vcdStatus, vcdSignOut } from './vcdAuth';
-import { createVmFromTemplate, powerOnVm, powerOffVm, deleteVm, getVmDetails, allocateFreeIp } from './vcdApi';
+import {
+  createVmFromTemplate,
+  powerOnVm,
+  powerOffVm,
+  deleteVm,
+  getVmDetails,
+  allocateFreeIp,
+  createSnapshot,
+  revertSnapshot,
+  createVmCopy,
+  listAllSnapshots,
+  listVApps,
+} from './vcdApi';
 import { getVcdContext } from './vcdStore';
 import { deleteTerminalSession, listSavedTerminalSessions, saveTerminalSession } from './terminalSessionsStore';
 import { checkForUpdates } from './autoUpdater';
@@ -54,6 +66,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         return result;
       } catch (err) {
         return { vms: [], error: err instanceof Error ? err.message : String(err) };
+      }
+    });
+    // VCD: List vApps (direct, not via LLM)
+    ipcMain.handle('vcd:listVapps', async () => {
+      try {
+        const result = await listVApps(200);
+        return result;
+      } catch (err) {
+        return { vapps: [], error: err instanceof Error ? err.message : String(err) };
       }
     });
   // Initialize LSP on startup
@@ -204,6 +225,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
           console.log('[IPC] onVmDraft callback triggered, emitting chat:vm-draft event');
           console.log('[IPC] Form data:', JSON.stringify(form, null, 2));
           mainWindow.webContents.send('chat:vm-draft', form);
+        },
+        (form) => {
+          console.log('[IPC] onVmCopyDraft callback triggered, emitting chat:vm-copy-draft event');
+          console.log('[IPC] Copy form data:', JSON.stringify(form, null, 2));
+          mainWindow.webContents.send('chat:vm-copy-draft', form);
         }
       );
       return { started: true };
@@ -360,6 +386,52 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       return result;
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: Create snapshot
+  ipcMain.handle('vcd:createSnapshot', async (_event, input: { vmNameOrHref: string; description?: string }) => {
+    try {
+      const result = await createSnapshot(input.vmNameOrHref, input.description);
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: Revert to latest/current snapshot
+  ipcMain.handle('vcd:revertSnapshot', async (_event, input: { vmNameOrHref: string }) => {
+    try {
+      const result = await revertSnapshot(input.vmNameOrHref);
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: Create copy/clone of a VM (via vApp recompose)
+  ipcMain.handle('vcd:createVmCopy', async (_event, input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => {
+    try {
+      const result = await createVmCopy(
+        input.vmNameOrHref,
+        input.newVmName,
+        input.targetVappHref,
+        input.powerOn ?? false,
+        input.description
+      );
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: List snapshots across tenant
+  ipcMain.handle('vcd:listSnapshots', async () => {
+    try {
+      const result = await listAllSnapshots(200);
+      return { success: true, ...result };
+    } catch (err) {
+      return { success: false, snapshots: [], error: err instanceof Error ? err.message : String(err) };
     }
   });
 

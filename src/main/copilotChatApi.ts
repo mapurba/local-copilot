@@ -5,9 +5,14 @@ import https from 'https';
 import { tokenManager } from './tokenManager';
 import {
   listVms,
+  listVApps,
   listTemplates,
   powerOnVm,
   powerOffVm,
+  createSnapshot,
+  revertSnapshot,
+  createVmCopy,
+  listAllSnapshots,
   updateVmResources,
   createVmDraft,
   // createVmConfirmed,
@@ -46,8 +51,11 @@ const TOOL_SYSTEM_PROMPT = [
   '4) Do not ask for confirmation before create_vm_draft. The draft is the review step.',
   '5) Call create_vm_confirmed only after the user explicitly confirms.',
   'When resizing CPU or memory, call resize_vm directly with vm_id and num_cpus/memory_mb.',
+  'For snapshot actions: use create_snapshot, revert_snapshot, and list_snapshots tools.',
+  'For VM copy/clone requests in chat, call list_vapps, select a target vApp, then call create_vm_copy_draft with target_vapp_href so the UI can show an editable review form.',
+  'Do not call create_vm_copy directly in chat unless the user explicitly asks to skip review.',
   '',
-  'IMPORTANT: For all tool results (especially list_vms, list_templates, list_tasks):',
+  'IMPORTANT: For all tool results (especially list_vms, list_vapps, list_templates, list_tasks):',
   '- Do NOT show raw JSON responses.',
   '- Format list results as markdown tables with columns for key properties.',
   '- Use bold headers, organize data clearly, and add helpful summaries.',
@@ -115,6 +123,20 @@ const listVmsTool = lcTool(
     description: 'List VMs in the current tenant.',
     schema: z.object({
       page_size: z.number().optional().describe('Number of VMs per page (default 100)'),
+    }),
+  }
+);
+
+const listVappsTool = lcTool(
+  async (args) => {
+    const result = await listVApps(args.page_size ?? 100);
+    return JSON.stringify(result);
+  },
+  {
+    name: 'list_vapps',
+    description: 'List vApps in the current tenant.',
+    schema: z.object({
+      page_size: z.number().optional().describe('Number of vApps per page (default 100)'),
     }),
   }
 );
@@ -204,6 +226,103 @@ const stopVmTool = lcTool(
   }
 );
 
+const createSnapshotTool = lcTool(
+  async (args) => {
+    const result = await createSnapshot(args.vm_name_or_href, args.description);
+    return JSON.stringify(result);
+  },
+  {
+    name: 'create_snapshot',
+    description: 'Create a snapshot for a VM by name or href.',
+    schema: z.object({
+      vm_name_or_href: z.string().describe('VM name or full href'),
+      description: z.string().optional().describe('Optional snapshot description'),
+    }),
+  }
+);
+
+const revertSnapshotTool = lcTool(
+  async (args) => {
+    const result = await revertSnapshot(args.vm_name_or_href);
+    return JSON.stringify(result);
+  },
+  {
+    name: 'revert_snapshot',
+    description: 'Revert a VM to its current/latest snapshot.',
+    schema: z.object({
+      vm_name_or_href: z.string().describe('VM name or full href'),
+    }),
+  }
+);
+
+const createVmCopyDraftTool = lcTool(
+  async (args) => {
+    const source = String(args.vm_name_or_href || '').trim();
+    const draftName = String(args.new_vm_name || (source && !source.startsWith('http') ? `${source}-copy` : 'vm-copy')).trim();
+    const result = {
+      type: 'vm_copy_form',
+      message: 'Review and confirm VM copy details.',
+      form: {
+        vm_name_or_href: source,
+        new_vm_name: draftName,
+        target_vapp_href: args.target_vapp_href ? String(args.target_vapp_href) : '',
+        description: args.description ? String(args.description) : `Copy of ${source || 'source-vm'}`,
+        power_on: args.power_on ?? false,
+      },
+    };
+    return JSON.stringify(result);
+  },
+  {
+    name: 'create_vm_copy_draft',
+    description: 'Prepare a VM copy/clone draft for review in the chat UI.',
+    schema: z.object({
+      vm_name_or_href: z.string().describe('Source VM name or full href'),
+      new_vm_name: z.string().optional().describe('Name for the cloned VM (defaults to source-name-copy)'),
+      target_vapp_href: z.string().optional().describe('Target vApp href where the VM copy will be placed'),
+      power_on: z.boolean().optional().describe('Power on the copied VM after clone'),
+      description: z.string().optional().describe('Optional description for the copied VM'),
+    }),
+  }
+);
+
+const createVmCopyTool = lcTool(
+  async (args) => {
+    const result = await createVmCopy(
+      args.vm_name_or_href,
+      args.new_vm_name,
+      args.target_vapp_href,
+      args.power_on ?? false,
+      args.description
+    );
+    return JSON.stringify(result);
+  },
+  {
+    name: 'create_vm_copy',
+    description: 'Create a copy/clone of a VM with a new name in a target vApp.',
+    schema: z.object({
+      vm_name_or_href: z.string().describe('Source VM name or full href'),
+      new_vm_name: z.string().describe('Name for the cloned VM'),
+      target_vapp_href: z.string().describe('Target vApp href where the VM copy will be placed'),
+      power_on: z.boolean().optional().describe('Power on the copied VM after clone'),
+      description: z.string().optional().describe('Optional description for the copied VM'),
+    }),
+  }
+);
+
+const listSnapshotsTool = lcTool(
+  async (args) => {
+    const result = await listAllSnapshots(args.page_size ?? 200);
+    return JSON.stringify(result);
+  },
+  {
+    name: 'list_snapshots',
+    description: 'List snapshots across all VMs in the tenant.',
+    schema: z.object({
+      page_size: z.number().optional().describe('Max records to fetch (default 200)'),
+    }),
+  }
+);
+
 const resizeVmTool = lcTool(
   async (args) => {
     const result = await updateVmResources(args.vm_name_or_href, args.num_cpus, args.memory_mb);
@@ -261,18 +380,6 @@ const createVmDraftTool = lcTool(
   }
 );
 
-const createVmConfirmedTool = lcTool(
-  async () => {
-    const result = await createVmConfirmed();
-    return JSON.stringify(result);
-  },
-  {
-    name: 'create_vm_confirmed',
-    description: 'Create the VM using the last draft form.',
-    schema: z.object({}),
-  }
-);
-
 const listTasksTool = lcTool(
   async (args) => {
     const result = await listTasks(args.minutes_ago ?? 60, args.page_size ?? 50);
@@ -292,12 +399,18 @@ const listTasksTool = lcTool(
 const LC_TOOLS = [
   setVcdContextTool,
   listVmsTool,
+  listVappsTool,
   listRunningVmsTool,
   listStoppedVmsTool,
   listTemplatesTool,
   checkVmStatusTool,
   startVmTool,
   stopVmTool,
+  createSnapshotTool,
+  revertSnapshotTool,
+  createVmCopyDraftTool,
+  createVmCopyTool,
+  listSnapshotsTool,
   resizeVmTool,
   createVmDraftTool,
   // createVmConfirmedTool,
@@ -466,7 +579,8 @@ export async function chatWithTools(
   onChunk: (chunk: string, type: 'text' | 'tool-call' | 'tool-result') => void,
   onEnd: () => void,
   onError: (err: Error) => void,
-  onVmDraft?: (form: Record<string, unknown>) => void
+  onVmDraft?: (form: Record<string, unknown>) => void,
+  onVmCopyDraft?: (form: Record<string, unknown>) => void
 ): Promise<void> {
   try {
     console.log('[ChatAPI] chatWithTools starting - model:', modelId, 'messages:', messages.length);
@@ -582,6 +696,23 @@ export async function chatWithTools(
             }
           } catch (err) {
             console.error('[VM DRAFT] Parse error:', err);
+          }
+        }
+
+        // If create_vm_copy_draft succeeded, emit copy form to renderer and stop the loop
+        if (tc.name === 'create_vm_copy_draft' && onVmCopyDraft) {
+          console.log('[VM COPY DRAFT] Detected create_vm_copy_draft tool call');
+          try {
+            const parsed = JSON.parse(result) as { type?: string; form?: Record<string, unknown> };
+            if (parsed?.type === 'vm_copy_form' && parsed.form) {
+              console.log('[VM COPY DRAFT] ✓ Emitting form via onVmCopyDraft callback');
+              onVmCopyDraft(parsed.form);
+              lcMessages.push(...toolMessages);
+              onEnd();
+              return;
+            }
+          } catch (err) {
+            console.error('[VM COPY DRAFT] Parse error:', err);
           }
         }
       }

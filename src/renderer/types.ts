@@ -10,12 +10,18 @@ export interface CopilotAPI {
   onChatEnd: (callback: (event: unknown) => void) => () => void;
   onChatError: (callback: (event: unknown, message: string) => void) => () => void;
   onVmDraft: (callback: (event: unknown, form: Record<string, unknown>) => void) => () => void;
+  onVmCopyDraft: (callback: (event: unknown, form: Record<string, unknown>) => void) => () => void;
   deployVm: (form: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   listVms: () => Promise<{ count?: number; vms?: Array<Record<string, unknown>>; error?: string }>;
+  listVapps: () => Promise<{ count?: number; vapps?: Array<Record<string, unknown>>; error?: string }>;
   powerOnVm: (vmHref: string) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   powerOffVm: (vmHref: string) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   deleteVm: (input: { href: string; powered_on?: boolean }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   allocateFreeIp: () => Promise<{ success: boolean; ip?: string; error?: string }>;
+  createSnapshot: (input: { vmNameOrHref: string; description?: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  revertSnapshot: (input: { vmNameOrHref: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  createVmCopy: (input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  listSnapshots: () => Promise<{ success: boolean; count?: number; snapshots?: Array<Record<string, unknown>>; error?: string }>;
   proxyRequest: (options: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; headers: Record<string, unknown>; body: string }>;
   vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdStatus: () => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
