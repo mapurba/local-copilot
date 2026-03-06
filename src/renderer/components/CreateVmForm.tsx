@@ -5,6 +5,7 @@ interface CreateVmFormProps {
   onStatusChange?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
+
 const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange }) => {
   const [formData, setFormData] = useState({
     vm_name: '',
@@ -12,8 +13,30 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
     network_name: '',
     ip_address: '',
     power_on: 'true',
+    setup_ilm: false,
+    ilm_version: '',
+    custom_env_content: '',
   });
   const [loading, setLoading] = useState(false);
+
+  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, checked } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: checked }));
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result;
+      setFormData((prev) => ({
+        ...prev,
+        custom_env_content: typeof result === 'string' ? result : ''
+      }));
+    };
+    reader.readAsText(file);
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -46,7 +69,7 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
   const handleFetchFreeIp = async () => {
     try {
       const result = await window.copilot.allocateFreeIp();
-      if (result.success && result.ip) {
+      if (result.success && typeof result.ip === 'string') {
         setFormData((prev) => ({
           ...prev,
           ip_address: result.ip,
@@ -71,6 +94,46 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
 
       {/* Form Fields */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
+                <div>
+                  <label className="flex items-center gap-2 text-xs font-medium text-gray-300 mb-1.5">
+                    <input
+                      type="checkbox"
+                      name="setup_ilm"
+                      checked={!!formData.setup_ilm}
+                      onChange={handleCheckboxChange}
+                      className="form-checkbox"
+                    />
+                    Setup ILM
+                  </label>
+                </div>
+
+                {formData.setup_ilm && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-300 mb-1.5">ILM Version</label>
+                      <input
+                        type="text"
+                        name="ilm_version"
+                        value={formData.ilm_version}
+                        onChange={handleChange}
+                        placeholder="e.g., 1.3.0 or latest"
+                        className="w-full bg-gray-700 text-gray-100 text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-300 mb-1.5">Custom .env File (optional)</label>
+                      <input
+                        type="file"
+                        accept=".env,text/plain"
+                        onChange={handleFileChange}
+                        className="w-full text-xs text-gray-400"
+                      />
+                      {formData.custom_env_content && (
+                        <div className="mt-1 text-xs text-green-400">.env file loaded ({formData.custom_env_content.length} chars)</div>
+                      )}
+                    </div>
+                  </>
+                )}
         <div>
           <label className="block text-xs font-medium text-gray-300 mb-1.5">VM Name *</label>
           <input

@@ -24,6 +24,7 @@ interface VmDraftForm {
   compute_policy_id?: string;
   setup_ilm?: boolean;
   ilm_version?: string;
+  custom_env_content?: string;
 }
 
 interface VmCopyDraftForm {
@@ -48,6 +49,7 @@ const CHAT_WELCOME_MESSAGE = [
   '- List VMs, vApps, templates, and recent tasks',
   '- Start, stop, delete, snapshot, and revert VM snapshots',
   '- Create or clone VMs with a review form before execution',
+  '- Set up ILM and upload a custom .env during VM creation',
   '- Resize VM CPU and memory',
   '- Check VM status and troubleshoot failed actions',
   '',
@@ -58,6 +60,7 @@ const CHAT_WELCOME_MESSAGE = [
   '- "Resize vm-web-02 to 4 CPU and 8192 MB RAM"',
   '- "Show tasks from the last 30 minutes"',
   '- "Create a new Ubuntu VM with name appurbatest and setup ILM 1.3.0"',
+  '- "Create a VM with setup ILM and I will upload a custom .env"',
   '- "Create a new SLES 15 SP6 VM with name appurbatest"',
 ].join('\n');
 
@@ -135,6 +138,7 @@ const ChatPane: React.FC = () => {
         compute_policy_id: form.compute_policy_id ? String(form.compute_policy_id) : undefined,
         setup_ilm: form.setup_ilm !== undefined ? Boolean(form.setup_ilm) : false,
         ilm_version: form.ilm_version ? String(form.ilm_version) : undefined,
+        custom_env_content: form.custom_env_content ? String(form.custom_env_content) : undefined,
       });
       console.log('[ChatPane] Pending form state updated');
     });
@@ -223,6 +227,18 @@ const ChatPane: React.FC = () => {
     setPendingForm((prev) => prev ? { ...prev, [key]: value } : null);
   };
 
+  const handleEnvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !pendingForm) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result;
+      const content = typeof result === 'string' ? result : '';
+      updateForm('custom_env_content', content);
+    };
+    reader.readAsText(file);
+  };
+
   const updateCopyForm = (key: keyof VmCopyDraftForm, value: string | boolean) => {
     setPendingCopyForm((prev) => prev ? { ...prev, [key]: value } : null);
   };
@@ -254,10 +270,22 @@ const ChatPane: React.FC = () => {
       const result = await window.copilot.deployVm(pendingForm as unknown as Record<string, unknown>);
       setPendingForm(null);
       if (result.success) {
+        const envUpdate = (result.result as { env_update?: { changesSummary?: string; rationale?: string; usedFallback?: boolean } } | undefined)?.env_update;
         setMessages((prev) => [
           ...prev,
           { role: 'assistant', content: `OK: VM **${pendingForm.vm_name}** creation started successfully!` },
+          { role: 'assistant', content: `VM IP : **${pendingForm.ip_address}** allocated.` },
+          { role: 'assistant', content: `User Name : Root , Password : Password1!` },
         ]);
+        if (envUpdate) {
+          const fallbackNote = envUpdate.usedFallback ? '\n\nNote: Used fallback update (LLM unavailable).' : '';
+          const summary = envUpdate.changesSummary ? `\n\nChanges:\n${envUpdate.changesSummary}` : '';
+          const rationale = envUpdate.rationale ? `\n\nNotes: ${envUpdate.rationale}` : '';
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: `Understood custom .env. Modified with VM IP.${summary}${rationale}${fallbackNote}` },
+          ]);
+        }
       } else {
         setMessages((prev) => [
           ...prev,
@@ -530,23 +558,37 @@ const ChatPane: React.FC = () => {
 
                 {/* Setup ILM */}
                 {pendingForm.setup_ilm && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="flex items-center gap-2 text-xs font-medium text-gray-400 cursor-pointer">
-                        <input type="checkbox" checked={pendingForm.setup_ilm} onChange={(e) => updateForm('setup_ilm', e.target.checked)} className="w-3.5 h-3.5" />
-                        SETUP ILM
-                      </label>
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="flex items-center gap-2 text-xs font-medium text-gray-400 cursor-pointer">
+                          <input type="checkbox" checked={pendingForm.setup_ilm} onChange={(e) => updateForm('setup_ilm', e.target.checked)} className="w-3.5 h-3.5" />
+                          SETUP ILM
+                        </label>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">ILM VERSION</label>
+                        <input
+                          type="text"
+                          value={pendingForm.ilm_version || 'latest'}
+                          onChange={(e) => updateForm('ilm_version', e.target.value)}
+                          className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1">ILM VERSION</label>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">CUSTOM .ENV FILE (optional)</label>
                       <input
-                        type="text"
-                        value={pendingForm.ilm_version || 'latest'}
-                        onChange={(e) => updateForm('ilm_version', e.target.value)}
-                        className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        type="file"
+                        accept=".env,text/plain"
+                        onChange={handleEnvFileChange}
+                        className="w-full text-xs text-gray-400"
                       />
+                      {pendingForm.custom_env_content && (
+                        <div className="mt-1 text-xs text-green-400">.env file loaded ({pendingForm.custom_env_content.length} chars)</div>
+                      )}
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
 

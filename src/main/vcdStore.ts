@@ -28,6 +28,7 @@ export interface VcdCreateForm {
   compute_policy_id?: string;
   setup_ilm?: boolean;
   ilm_version?: string;
+  custom_env_content?: string;
 }
 
 let vcdContext: VcdContext | null = null;

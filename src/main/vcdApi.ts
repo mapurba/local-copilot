@@ -5,6 +5,7 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import { getVcdContext, setPendingForm, getPendingForm, VcdCreateForm } from './vcdStore';
+import { rewriteEnvWithVmIp } from './envRewrite';
 import { logApi } from './apiLogger';
 
 /**
@@ -451,7 +452,8 @@ function getUnifiedCustomizationScript(
   gateway: string,
   dnsServers: string[],
   setupIlm = false,
-  ilmVersion = 'latest'
+  ilmVersion = 'latest',
+  customEnvContent?: string
 ): string {
   const ipWithCidr = ipAddress.includes('/') ? ipAddress : `${ipAddress}/21`;
   const dnsPrimary = dnsServers.length ? dnsServers[0] : '15.122.222.53';
@@ -496,6 +498,7 @@ fi
 echo "VCD Post IF statement accepted" >> "$LOG"
 
 # ============================================================================
+
 # ILM SETUP CONFIGURATION VARIABLES
 # ============================================================================
 SETUP_ILM="__ILM_ENABLED__"
@@ -503,6 +506,11 @@ ILM_VERSION="__ILM_VERSION__"
 ILM_FULL_VERSION="__ILM_FULL_VERSION__"
 ILM_COMPOSE_URL="__ILM_URL__"
 echo "ILM Setup Enabled: $SETUP_ILM, Version: $ILM_VERSION" >> "$LOG"
+
+# ============================================================================
+# CUSTOM .ENV FILE INJECTION (if provided by user + processed by LLM)
+# ============================================================================
+__CUSTOM_ENV_INJECTION__
 
 # ============================================================================
 # OS DETECTION
@@ -568,7 +576,7 @@ STARTMODE='auto'
 IPADDR='__IP_WITH_CIDR__'
 EOF
         echo "default __GATEWAY__ - -" > /etc/sysconfig/network/routes
-        
+
         if grep -q "^NETCONFIG_DNS_STATIC_SERVERS=" /etc/sysconfig/network/config; then
             sed -i 's/^NETCONFIG_DNS_STATIC_SERVERS=.*/NETCONFIG_DNS_STATIC_SERVERS="__DNS_ALL__"/' /etc/sysconfig/network/config
         else
@@ -741,13 +749,19 @@ EOF
                 # Modify .env file
                 ENV_FILE=".env"
                 if [ -f "$ENV_FILE" ]; then
-                    echo "Modifying .env file..." >> "$LOG"
+                  if [ -f /root/uploaded.env ]; then
+                    echo "Replacing .env with uploaded content..." >> "$LOG"
+                    cp /root/uploaded.env "$ENV_FILE"
+                    echo ".env file replaced successfully." >> "$LOG"
+                  else
+                    echo "Modifying default .env file..." >> "$LOG"
                     sed -i "s|TENANT_OSP_REDIRECT_URL=.*|TENANT_OSP_REDIRECT_URL=http://lab:9888/ilm/|g" $ENV_FILE
                     sed -i "s|CALLBACK_SERVER=.*|CALLBACK_SERVER=http://lab:9990|g" $ENV_FILE
                     sed -i "s|SECRETS_URL=.*|SECRETS_URL=http://lab:4566|g" $ENV_FILE
                     echo ".env file modified successfully." >> "$LOG"
+                  fi
                 else
-                    echo "ERROR: .env file not found in $WORK_DIR" >> "$LOG"
+                  echo "ERROR: .env file not found in $WORK_DIR" >> "$LOG"
                 fi
                                 
                 # --- IMPROVED DOCKER COMPOSE HANDLING ---
@@ -841,6 +855,12 @@ fi
 echo "VCD Customization Completed" >> "$LOG"
 `;
 
+  // Replace .env injection placeholder early (before other replacements)
+  const envInjectionBlock = customEnvContent
+    ? `if [ "$SETUP_ILM" = "true" ]; then\n  echo "Writing custom .env file..." >> "$LOG"\n  cat > /root/uploaded.env <<'EOF_ENV'\n${customEnvContent.replace(/\\/g, '\\\\').replace(/`/g, '\`').replace(/\$/g, '\$')}\nEOF_ENV\n  echo "Custom .env file written." >> "$LOG"\nfi`
+    : `# No custom .env provided; will use default .env from compose zip`;
+  script = script.replace(/__CUSTOM_ENV_INJECTION__/g, envInjectionBlock);
+  
   script = script
     .replace(/__IP_WITH_CIDR__/g, ipWithCidr)
     .replace(/__GATEWAY__/g, gateway)
@@ -854,6 +874,89 @@ echo "VCD Customization Completed" >> "$LOG"
     .replace(/__DOLLAR_CURLY__/g, '${');
 
   return script;
+}
+
+const ILM_ENV_KEYS = [
+  'TENANT_OSP_REDIRECT_URL',
+  'CALLBACK_SERVER',
+  'SECRETS_URL',
+  'ILM_CORE_REST_URL',
+];
+
+function normalizeIpAddress(ipAddress: string): string {
+  return ipAddress.includes('/') ? ipAddress.split('/')[0] : ipAddress;
+}
+
+function replaceUrlHost(value: string, ipAddress: string): string {
+  try {
+    const url = new URL(value);
+    url.hostname = ipAddress;
+    return url.toString();
+  } catch {
+    const match = value.match(/^(https?:\/\/)([^\/:]+)(:\d+)?(\/.*)?$/i);
+    if (match) {
+      const prefix = match[1];
+      const port = match[3] || '';
+      const path = match[4] || '';
+      return `${prefix}${ipAddress}${port}${path}`;
+    }
+    if (value.includes('lab')) {
+      return value.replace(/\blab\b/g, ipAddress);
+    }
+    return value;
+  }
+}
+
+function parseEnvMap(envContent: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const line of envContent.split(/\r?\n/)) {
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    const idx = line.indexOf('=');
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    map[key] = value;
+  }
+  return map;
+}
+
+function updateEnvContentManual(envContent: string, ipAddress: string): string {
+  const lines = envContent.split(/\r?\n/);
+  return lines.map((line) => {
+    const match = line.match(/^(\s*([A-Z0-9_]+)\s*=\s*)(.*)$/);
+    if (!match) return line;
+    const key = match[2];
+    if (!ILM_ENV_KEYS.includes(key)) return line;
+    const rawValue = match[3].trim();
+    const quote = rawValue.startsWith('"') && rawValue.endsWith('"') ? '"'
+      : rawValue.startsWith("'") && rawValue.endsWith("'") ? "'" : '';
+    const unquoted = quote ? rawValue.slice(1, -1) : rawValue;
+    const replaced = replaceUrlHost(unquoted, ipAddress);
+    const finalValue = quote ? `${quote}${replaced}${quote}` : replaced;
+    return `${match[1]}${finalValue}`;
+  }).join('\n');
+}
+
+function buildEnvChangesSummary(beforeEnv: string, afterEnv: string): string {
+  const beforeMap = parseEnvMap(beforeEnv);
+  const afterMap = parseEnvMap(afterEnv);
+  const lines: string[] = [];
+  for (const key of ILM_ENV_KEYS) {
+    const beforeValue = beforeMap[key];
+    const afterValue = afterMap[key];
+    if (beforeValue && afterValue && beforeValue !== afterValue) {
+      lines.push(`- ${key}: ${beforeValue} -> ${afterValue}`);
+    }
+  }
+  return lines.length ? lines.join('\n') : 'No changes detected in target keys.';
+}
+
+function isEnvUpdateComplete(originalEnv: string, updatedEnv: string): boolean {
+  const originalLines = originalEnv.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith('#'));
+  const updatedLines = updatedEnv.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith('#'));
+  if (updatedLines.length === 0) return false;
+  if (updatedLines.length < Math.max(3, Math.floor(originalLines.length * 0.7))) return false;
+  return true;
 }
 
 async function waitForTask(taskHref: string, timeoutSec = 60): Promise<boolean> {
@@ -927,6 +1030,18 @@ async function resolveVmHrefByName(nameOrHref: string): Promise<string> {
     return nameOrHref;
   }
   const ctx = getVcdContext();
+  const trimmed = nameOrHref.trim();
+  if (trimmed.startsWith('urn:vcloud:vm:')) {
+    const id = trimmed.split('urn:vcloud:vm:')[1];
+    if (id) return `https://${ctx.host}/api/vApp/vm-${id}`;
+  }
+  if (trimmed.startsWith('vm-')) {
+    const id = trimmed.slice(3);
+    if (id) return `https://${ctx.host}/api/vApp/vm-${id}`;
+  }
+  if (/^[a-f0-9-]{20,}$/i.test(trimmed)) {
+    return `https://${ctx.host}/api/vApp/vm-${trimmed}`;
+  }
   const username = ctx.username || '';
   const records = await queryRecords(
     'vm',
@@ -1016,8 +1131,8 @@ export async function createSnapshot(
 
   const body = JSON.stringify({
     name,
-    memory: false,
-    quiesce: false,
+    memory,
+    quiesce,
   });
   const res = await httpsRequest(cloudapiUrl, 'POST', jsonHeaders, body, 30000, ctx.rejectUnauthorized);
   if (res.status < 200 || res.status >= 300) {
@@ -1338,6 +1453,7 @@ export async function createVmFromTemplate(params: {
   setup_ilm?: boolean;
   ilm_version?: string;
   custom_script?: string;
+  custom_env_content?: string;
 }): Promise<Record<string, unknown>> {
   const ctx = getVcdContext();
 
@@ -1346,9 +1462,56 @@ export async function createVmFromTemplate(params: {
   if (childVmUuid.startsWith('vm-')) childVmUuid = childVmUuid.slice(3);
 
   const storageProfileHref = `https://${ctx.host}/api/vdcStorageProfile/${params.storage_profile_id}`;
-  const ipSection = params.ip_allocation_mode === 'MANUAL'
+  const isManualIp = String(params.ip_allocation_mode || '').toUpperCase() === 'MANUAL';
+  const ipSection = isManualIp && params.ip_address
     ? `<IpAddress>${params.ip_address}</IpAddress>`
     : '<IpAddress/>';
+  console.log('ipSection:', ipSection);
+  let envUpdateInfo: {
+    updatedEnv: string;
+    changesSummary: string;
+    rationale: string;
+    usedFallback: boolean;
+  } | null = null;
+
+  const normalizedIp = normalizeIpAddress(params.ip_address);
+  let updatedEnvContent = params.custom_env_content;
+
+  if (params.setup_ilm && params.custom_env_content) {
+    if (!normalizedIp) {
+      updatedEnvContent = params.custom_env_content;
+      envUpdateInfo = {
+        updatedEnv: params.custom_env_content,
+        changesSummary: 'VM IP unavailable. No .env updates applied.',
+        rationale: 'Skipped update because VM IP was not provided.',
+        usedFallback: true,
+      };
+    } else {
+      try {
+        const llmResult = await rewriteEnvWithVmIp(params.custom_env_content, normalizedIp);
+        if (!isEnvUpdateComplete(params.custom_env_content, llmResult.updatedEnv)) {
+          throw new Error('LLM returned incomplete .env content.');
+        }
+        updatedEnvContent = llmResult.updatedEnv;
+        envUpdateInfo = {
+          updatedEnv: llmResult.updatedEnv,
+          changesSummary: llmResult.changesSummary || buildEnvChangesSummary(params.custom_env_content, llmResult.updatedEnv),
+          rationale: llmResult.rationale || 'Updated ILM endpoints to use the VM IP.',
+          usedFallback: false,
+        };
+      } catch (err) {
+        const fallbackEnv = updateEnvContentManual(params.custom_env_content, normalizedIp);
+        updatedEnvContent = fallbackEnv;
+        envUpdateInfo = {
+          updatedEnv: fallbackEnv,
+          changesSummary: buildEnvChangesSummary(params.custom_env_content, fallbackEnv),
+          rationale: 'LLM update failed. Applied manual host replacement instead.',
+          usedFallback: true,
+        };
+        console.warn('[ILM] LLM update failed, using fallback:', err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
 
   let customizationScript = params.custom_script;
   if (!customizationScript) {
@@ -1357,7 +1520,8 @@ export async function createVmFromTemplate(params: {
       params.gateway,
       params.dns_servers,
       params.setup_ilm,
-      params.ilm_version
+      params.ilm_version,
+      updatedEnvContent
     );
   }
 
@@ -1380,11 +1544,11 @@ export async function createVmFromTemplate(params: {
                 <PrimaryNetworkConnectionIndex>0</PrimaryNetworkConnectionIndex>
                 <NetworkConnection network="${params.network_name}">
                     <NetworkConnectionIndex>0</NetworkConnectionIndex>
-                    ${ipSection}
+                    <IpAddress/>
                     <IpType>IPV4</IpType>
                     <IsConnected>true</IsConnected>
-                    <IpAddressAllocationMode>${params.ip_allocation_mode}</IpAddressAllocationMode>
-                    <NetworkAdapterType>${params.network_adapter_type}</NetworkAdapterType>
+                    <IpAddressAllocationMode>DHCP</IpAddressAllocationMode>
+                    <NetworkAdapterType>VMXNET3</NetworkAdapterType>
                 </NetworkConnection>
             </NetworkConnectionSection>
             <GuestCustomizationSection>
@@ -1432,11 +1596,16 @@ export async function createVmFromTemplate(params: {
     status: 'success',
     status_code: result.status,
     response_text: result.body.slice(0, 500),
+    env_update: envUpdateInfo,
+    env_update_message: envUpdateInfo
+      ? 'Understood custom .env. Modified with VM IP. See env_update for details.'
+      : undefined,
   };
 }
 
 export async function createVmDraft(form: VcdCreateForm): Promise<Record<string, unknown>> {
   console.log('[createVmDraft] Called with form:', JSON.stringify(form, null, 2));
+  // Accept and store custom_env_content if present
   setPendingForm(form);
   const response = {
     type: 'vm_create_form',
@@ -1490,6 +1659,7 @@ export async function createVmConfirmed(): Promise<Record<string, unknown>> {
     compute_policy_id: computePolicyId,
     setup_ilm: form.setup_ilm,
     ilm_version: form.ilm_version,
+    custom_env_content: form.custom_env_content,
   });
 
   setPendingForm(null);
@@ -1573,6 +1743,7 @@ export function buildCreateFormFromInput(form: Partial<VcdCreateForm>): VcdCreat
     compute_policy_id: form.compute_policy_id || ctx.computePolicyId || '',
     setup_ilm: form.setup_ilm ?? false,
     ilm_version: form.ilm_version || 'latest',
+    custom_env_content: form.custom_env_content,
   };
 }
 

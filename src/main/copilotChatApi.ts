@@ -51,7 +51,7 @@ const TOOL_SYSTEM_PROMPT = [
   '3) Call create_vm_draft with vm_name, template_id, template_name, and any provided params.',
   '4) Do not ask for confirmation before create_vm_draft. The draft is the review step.',
   '5) Call create_vm_confirmed only after the user explicitly confirms.',
-  'When resizing CPU or memory, call resize_vm directly with vm_id and num_cpus/memory_mb.',
+  'When resizing CPU or memory, call resize_vm directly with vm_name_or_href and num_cpus/memory_mb.',
   'For snapshot actions: use create_snapshot, revert_snapshot, and list_snapshots tools.',
   'For recent task lookups: use list_tasks or list_recent_tasks with minutes_ago.',
   'For VM copy/clone requests in chat, call list_vapps, select a target vApp, then call create_vm_copy_draft with target_vapp_href so the UI can show an editable review form.',
