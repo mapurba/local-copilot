@@ -1,7 +1,11 @@
 import { app, BrowserWindow } from 'electron';
+import { checkForUpdates } from './autoUpdater';
 import path from 'path';
 import { registerIpcHandlers } from './ipcHandlers';
 import { lspClient } from './lspClient';
+// DISABLED: Terminal functionality disabled to prevent antivirus quarantine
+// import { registerTerminalHandlers } from './terminalManager';
+process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -19,7 +23,7 @@ function createWindow() {
   // Use app.isPackaged to reliably detect production builds
   if (!app.isPackaged) {
     mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools();
+    // mainWindow.webContents.openDevTools();
   } else {
     // In production, load the built files
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
@@ -30,9 +34,17 @@ function createWindow() {
   });
 }
 
+
 app.whenReady().then(async () => {
   createWindow();
   registerIpcHandlers(mainWindow!);
+  // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
+  // registerTerminalHandlers(mainWindow!);
+
+  // Check for updates on startup (one-click)
+  setTimeout(() => {
+    if (mainWindow) checkForUpdates(mainWindow);
+  }, 3000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
