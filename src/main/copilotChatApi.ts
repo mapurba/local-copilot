@@ -3,6 +3,7 @@
 // their heavy generic type declarations at compile time (causing OOM in tsc).
 import https from 'https';
 import { tokenManager } from './tokenManager';
+import { logApi } from './apiLogger';
 import {
   listVms,
   listVApps,
@@ -52,6 +53,7 @@ const TOOL_SYSTEM_PROMPT = [
   '5) Call create_vm_confirmed only after the user explicitly confirms.',
   'When resizing CPU or memory, call resize_vm directly with vm_id and num_cpus/memory_mb.',
   'For snapshot actions: use create_snapshot, revert_snapshot, and list_snapshots tools.',
+  'For recent task lookups: use list_tasks or list_recent_tasks with minutes_ago.',
   'For VM copy/clone requests in chat, call list_vapps, select a target vApp, then call create_vm_copy_draft with target_vapp_href so the UI can show an editable review form.',
   'Do not call create_vm_copy directly in chat unless the user explicitly asks to skip review.',
   '',
@@ -228,7 +230,13 @@ const stopVmTool = lcTool(
 
 const createSnapshotTool = lcTool(
   async (args) => {
-    const result = await createSnapshot(args.vm_name_or_href, args.description);
+    const snapshotName = args.name ?? args.description;
+    const result = await createSnapshot(
+      args.vm_name_or_href,
+      snapshotName,
+      args.memory ?? false,
+      args.quiesce ?? false
+    );
     return JSON.stringify(result);
   },
   {
@@ -236,7 +244,10 @@ const createSnapshotTool = lcTool(
     description: 'Create a snapshot for a VM by name or href.',
     schema: z.object({
       vm_name_or_href: z.string().describe('VM name or full href'),
-      description: z.string().optional().describe('Optional snapshot description'),
+      name: z.string().optional().describe('Snapshot name'),
+      description: z.string().optional().describe('Optional snapshot name/description (legacy)'),
+      memory: z.boolean().optional().describe('Include memory in snapshot (default false)'),
+      quiesce: z.boolean().optional().describe('Quiesce file system (default false)'),
     }),
   }
 );
@@ -395,6 +406,21 @@ const listTasksTool = lcTool(
   }
 );
 
+const listRecentTasksTool = lcTool(
+  async (args) => {
+    const result = await listTasks(args.minutes_ago ?? 60, args.page_size ?? 50);
+    return JSON.stringify(result);
+  },
+  {
+    name: 'list_recent_tasks',
+    description: 'List recent tasks from the last N minutes.',
+    schema: z.object({
+      minutes_ago: z.number().optional().describe('Minutes to look back (default 60)'),
+      page_size: z.number().optional().describe('Max tasks to return (default 50)'),
+    }),
+  }
+);
+
 // Ordered list of all LangChain tools
 const LC_TOOLS = [
   setVcdContextTool,
@@ -415,6 +441,7 @@ const LC_TOOLS = [
   createVmDraftTool,
   // createVmConfirmedTool,
   listTasksTool,
+  listRecentTasksTool,
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -465,6 +492,16 @@ async function getValidToken(): Promise<string> {
 
 async function httpsGet(urlPath: string, headers: Record<string, string>): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const fullUrl = `https://${CHAT_API_BASE}${urlPath}`;
+    logApi({
+      source: 'copilotChatApi.httpsGet',
+      stage: 'request',
+      method: 'GET',
+      url: fullUrl,
+      headers,
+    });
+
     const options = {
       hostname: CHAT_API_BASE,
       path: urlPath,
@@ -476,6 +513,16 @@ async function httpsGet(urlPath: string, headers: Record<string, string>): Promi
       let data = '';
       res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
+        logApi({
+          source: 'copilotChatApi.httpsGet',
+          stage: 'response',
+          method: 'GET',
+          url: fullUrl,
+          status: res.statusCode || 0,
+          durationMs: Date.now() - startedAt,
+          headers: res.headers as Record<string, unknown>,
+          responseBody: data,
+        });
         try {
           resolve(JSON.parse(data));
         } catch {
@@ -484,7 +531,17 @@ async function httpsGet(urlPath: string, headers: Record<string, string>): Promi
       });
     });
 
-    req.on('error', reject);
+    req.on('error', (err) => {
+      logApi({
+        source: 'copilotChatApi.httpsGet',
+        stage: 'error',
+        method: 'GET',
+        url: fullUrl,
+        durationMs: Date.now() - startedAt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      reject(err);
+    });
     req.end();
   });
 }

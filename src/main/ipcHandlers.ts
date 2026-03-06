@@ -22,6 +22,7 @@ import { getVcdContext } from './vcdStore';
 import { deleteTerminalSession, listSavedTerminalSessions, saveTerminalSession } from './terminalSessionsStore';
 import { checkForUpdates } from './autoUpdater';
 import { listVms } from './vcdApi';
+import { logApi } from './apiLogger';
 // DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
 // import {
 //   connectTerminalFileSession,
@@ -308,12 +309,32 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     const client = url.startsWith('https:') ? https : http;
 
     return new Promise((resolve, reject) => {
+      const startedAt = Date.now();
+      logApi({
+        source: 'ipc.proxy:http',
+        stage: 'request',
+        method,
+        url,
+        headers,
+        requestBody: body,
+      });
+
       const req = client.request(url, { method, headers }, (res) => {
         let data = '';
         res.on('data', (chunk) => {
           data += chunk.toString();
         });
         res.on('end', () => {
+          logApi({
+            source: 'ipc.proxy:http',
+            stage: 'response',
+            method,
+            url,
+            status: res.statusCode || 0,
+            durationMs: Date.now() - startedAt,
+            headers: res.headers as Record<string, unknown>,
+            responseBody: data,
+          });
           resolve({
             status: res.statusCode || 0,
             headers: res.headers,
@@ -322,7 +343,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         });
       });
 
-      req.on('error', reject);
+      req.on('error', (err) => {
+        logApi({
+          source: 'ipc.proxy:http',
+          stage: 'error',
+          method,
+          url,
+          durationMs: Date.now() - startedAt,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        reject(err);
+      });
       if (body) req.write(body);
       req.end();
     });
@@ -390,9 +421,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   // VCD: Create snapshot
-  ipcMain.handle('vcd:createSnapshot', async (_event, input: { vmNameOrHref: string; description?: string }) => {
+  ipcMain.handle('vcd:createSnapshot', async (_event, input: { vmNameOrHref: string; name?: string; description?: string; memory?: boolean; quiesce?: boolean }) => {
     try {
-      const result = await createSnapshot(input.vmNameOrHref, input.description);
+      const snapshotName = input.name ?? input.description;
+      const result = await createSnapshot(
+        input.vmNameOrHref,
+        snapshotName,
+        input.memory ?? false,
+        input.quiesce ?? false
+      );
       return { success: true, result };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };

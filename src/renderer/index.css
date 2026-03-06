@@ -82,9 +82,17 @@ body {
 }
 
 .theme-light .vm-name { color: #111827; }
-.theme-light .vm-status { background-color: #e5e7eb; color: #374151; }
+.theme-light .vm-status {  color: #374151; }
 .theme-light .vm-dot { box-shadow: 0 0 0 2px #ffffff; }
+.bg-green-700 {
+    --tw-bg-opacity: 1;
+   background-color: rgb(21 128 61 / 70%);
+}
 
+.bg-red-700 {
+    --tw-bg-opacity: 1;
+    background-color: rgb(185 28 28 / 70%);
+}
 .theme-light .vm-action {
   background-color: #f3f4f6;
   color: #374151;

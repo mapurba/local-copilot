@@ -1,8 +1,53 @@
+// Robust vApp XML parser using fast-xml-parser
+import { XMLParser } from 'fast-xml-parser';
+
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import { getVcdContext, setPendingForm, getPendingForm, VcdCreateForm } from './vcdStore';
+import { logApi } from './apiLogger';
 
+/**
+ * Parse vApp XML and return an array of vApp details.
+ * Each vApp includes name, id, href, numberOfVMs, status, owner, and other useful fields.
+ */
+export function parseVAppRecordsXml(xml: string): Array<{
+  name: string;
+  id: string;
+  href: string;
+  numberOfVMs?: number;
+  status?: string;
+  owner?: string;
+  vdcName?: string;
+  description?: string;
+  [key: string]: any;
+}> {
+  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '', allowBooleanAttributes: true });
+  const root = parser.parse(xml);
+  // The root is QueryResultRecords, vApp records are in QueryResultRecords.VAppRecord (array or single)
+  let records = root?.QueryResultRecords?.VAppRecord;
+  if (!records) return [];
+  if (!Array.isArray(records)) records = [records];
+  return records.map((rec: any) => {
+    // Extract id from href (last segment after 'vapp-')
+    let id = '';
+    if (typeof rec.href === 'string') {
+      const m = rec.href.match(/vapp-([a-f0-9\-]+)/i);
+      id = m ? m[1] : rec.href;
+    }
+    return {
+      name: rec.name || '',
+      id,
+      href: rec.href || '',
+      numberOfVMs: rec.numberOfVMs !== undefined ? Number(rec.numberOfVMs) : undefined,
+      status: rec.status,
+      owner: rec.ownerName,
+      vdcName: rec.vdcName,
+      description: rec.description,
+      ...rec,
+    };
+  });
+}
 interface HttpResult {
   status: number;
   headers: Record<string, string | string[] | undefined>;
@@ -22,6 +67,16 @@ function httpsRequest(
   rejectUnauthorized?: boolean
 ): Promise<HttpResult> {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    logApi({
+      source: 'vcdApi.httpsRequest',
+      stage: 'request',
+      method,
+      url,
+      headers,
+      requestBody: body,
+    });
+
     const parsed = new URL(url);
     const req = https.request(
       {
@@ -38,12 +93,32 @@ function httpsRequest(
           data += chunk.toString();
         });
         res.on('end', () => {
+          logApi({
+            source: 'vcdApi.httpsRequest',
+            stage: 'response',
+            method,
+            url,
+            status: res.statusCode || 0,
+            durationMs: Date.now() - startedAt,
+            headers: res.headers as Record<string, unknown>,
+            responseBody: data,
+          });
           resolve({ status: res.statusCode || 0, headers: res.headers, body: data });
         });
       }
     );
 
-    req.on('error', reject);
+    req.on('error', (err) => {
+      logApi({
+        source: 'vcdApi.httpsRequest',
+        stage: 'error',
+        method,
+        url,
+        durationMs: Date.now() - startedAt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      reject(err);
+    });
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error(`Request timeout after ${timeoutMs}ms`));
     });
@@ -112,6 +187,19 @@ function extractXmlAttr(xml: string, tagName: string, attrName: string): string 
   return match ? match[1] : '';
 }
 
+function extractVcdErrorMessage(xml: string): string {
+  if (!xml) return '';
+  const messageMatch = xml.match(/<([\w:]+)?Message>([\s\S]*?)<\/[\w:]*Message>/i);
+  const majorMatch = xml.match(/<([\w:]+)?MajorErrorCode>([\s\S]*?)<\/[\w:]*MajorErrorCode>/i);
+  const minorMatch = xml.match(/<([\w:]+)?MinorErrorCode>([\s\S]*?)<\/[\w:]*MinorErrorCode>/i);
+  const details = [
+    messageMatch ? messageMatch[2].trim() : '',
+    majorMatch ? `major=${majorMatch[2].trim()}` : '',
+    minorMatch ? `minor=${minorMatch[2].trim()}` : '',
+  ].filter(Boolean);
+  return details.join(' | ');
+}
+
 const SLES_PATTERNS = ['sles_15', 'sles15', 'sles', 'suse', 'sp5', 'sp6', 'sp7'];
 
 function isSlesTemplate(templateName?: string): boolean {
@@ -157,33 +245,43 @@ async function queryRecords(
 
 export async function listVApps(pageSize = 100): Promise<Record<string, unknown>> {
   const ctx = getVcdContext();
-  const username = ctx.username || '';
-  let records: Record<string, unknown>[] = [];
-  try {
-    // Some VCD environments reject ownerName filtering for vApp records (HTTP 400).
-    records = await queryRecords('vApp', pageSize, undefined, 'dateCreated');
-  } catch (err) {
-    // Fallback to adminVApp record type when vApp records are unavailable in the tenant query API.
-    try {
-      records = await queryRecords('adminVApp', pageSize, undefined, 'dateCreated');
-    } catch {
-      throw err;
-    }
+  // Build the exact query string as in the curl example
+  const vdcId = ctx.vdcId || '';
+  const url = new URL(`https://${ctx.host}/api/query`);
+  url.searchParams.set('type', 'vApp');
+  url.searchParams.append('type', 'vApp');
+  url.searchParams.set('format', 'records');
+  url.searchParams.set('page', '1');
+  url.searchParams.set('pageSize', String(pageSize));
+  url.searchParams.set('filterEncoded', 'true');
+  url.searchParams.set('filter', `((isAutoNature==false;vdc==${vdcId}))`);
+  url.searchParams.set('sortDesc', 'creationDate');
+  url.searchParams.set('fields', 'metadata@SYSTEM:vmware.cloud.director.availability.protected,metadata@GENERAL:vmware.cloud.director.ui.badges.blue,metadata@GENERAL:vmware.cloud.director.ui.badges.red,metadata@GENERAL:vmware.cloud.director.ui.badges.orange,metadata@GENERAL:vmware.cloud.director.ui.badges.green,metadata@GENERAL:vmware.cloud.director.ui.badges.magenta');
+  url.searchParams.set('links', 'true');
+
+  // Build headers to match the curl example
+  const headers: Record<string, string> = {
+    'Accept': 'application/*+xml;version=40.0.0-alpha',
+    'Accept-Language': 'en-US,en;q=0.9,en-IN;q=0.8',
+    'Authorization': `Bearer ${ctx.token}`,
+    'Content-Type': 'application/vnd.vmware.vcloud.vApp+xml;charset=utf-8',
+    'X-Requested-With': 'XMLHttpRequest',
+    'X-VMWARE-VCLOUD-AUTH-CONTEXT': ctx.orgName || '',
+    'X-VMWARE-VCLOUD-TENANT-CONTEXT': ctx.orgUuid || '',
+    'X-vCloud-Authorization': ctx.orgName || '',
+    // Optionally add Referer, User-Agent, etc. if needed
+  };
+  // Remove any empty headers
+  Object.keys(headers).forEach((k) => { if (!headers[k]) delete headers[k]; });
+
+  const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`listVApps failed: HTTP ${result.status}`);
   }
-
-  const filteredByOwner = username
-    ? records.filter((app) => matchesOwner(String(app.ownerName || ''), username))
-    : records;
-  const userVApps = username && filteredByOwner.length === 0 ? records : filteredByOwner;
-
-  const vapps = userVApps.map((app) => ({
-    name: String(app.name || ''),
-    href: String(app.href || ''),
-    status: String(app.status || ''),
-    owner: String(app.ownerName || ''),
-  }));
-
-  return { count: vapps.length, vapps };
+  // Use robust XML parser to extract vApp records
+  const xml = result.body;
+  const vapps = parseVAppRecordsXml(xml);
+  return { vapps };
 }
 
 async function getVappDetailsXml(vappHref: string): Promise<string> {
@@ -813,10 +911,13 @@ async function updateHardwareItem(vmHref: string, sectionName: 'cpu' | 'memory',
 }
 
 export async function checkVmStatus(vmName: string): Promise<Record<string, unknown>> {
-  const records = await queryRecords('vm', 128);
-  const found = records.find((vm) => String(vm.name || '') === vmName);
+  const name = vmName.trim();
+  const result = await listVms(200);
+  const vms = (result as { vms?: Record<string, unknown>[] }).vms ?? [];
+  const needle = name.toLowerCase();
+  const found = vms.find((vm) => String(vm.name || '').toLowerCase() === needle);
   if (!found) {
-    return { found: false, vm_name: vmName };
+    return { found: false, vm_name: name };
   }
   return { found: true, vm: normalizeVmStatus(found) };
 }
@@ -884,30 +985,53 @@ function parseSnapshotSectionXml(xml: string): Array<Record<string, unknown>> {
   return snapshots;
 }
 
-export async function createSnapshot(vmNameOrHref: string, description?: string): Promise<Record<string, unknown>> {
+export async function createSnapshot(
+  vmNameOrHref: string,
+  snapshotName?: string,
+  memory = false,
+  quiesce = false
+): Promise<Record<string, unknown>> {
   const ctx = getVcdContext();
   const vmHref = await resolveVmHrefByName(vmNameOrHref);
-  const url = `${vmHref}/action/createSnapshot`;
-  const hasDescription = Boolean(description?.trim());
+  const vmId = getVmIdFromHref(vmHref);
+  if (!vmId) throw new Error('create_snapshot failed: unable to resolve VM ID from href.');
 
-  let body = '';
-  const headers: Record<string, string> = {
-    ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
-    'Content-Length': '0',
+
+  const name = snapshotName?.trim() || 'base';
+  const urnVmId = `urn:vcloud:vm:${vmId}`;
+  const cloudapiUrl = `https://${ctx.host}/cloudapi/1.0.0/vm/${urnVmId}/snapshots`;
+  // Build headers to match the curl example exactly
+  const jsonHeaders: Record<string, string> = {
+    'Accept': 'application/json;version=40.0.0-alpha',
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${ctx.token}`,
+    'x-vcloud-authorization': ctx.token,
+    'x-vmware-vcloud-tenant-context': ctx.orgUuid || '',
   };
+  // Remove Accept-Language and any other extra headers
+  // Remove any undefined/empty headers
+  Object.keys(jsonHeaders).forEach((k) => {
+    if (!jsonHeaders[k]) delete jsonHeaders[k];
+  });
 
-  if (hasDescription) {
-    body = `<CreateSnapshotParams xmlns="http://www.vmware.com/vcloud/v1.5" description="${escapeXml(description!.trim())}" />`;
-    headers['Content-Type'] = 'application/vnd.vmware.vcloud.createSnapshotParams+xml';
-    headers['Content-Length'] = Buffer.byteLength(body).toString();
+  const body = JSON.stringify({
+    name,
+    memory: false,
+    quiesce: false,
+  });
+  const res = await httpsRequest(cloudapiUrl, 'POST', jsonHeaders, body, 30000, ctx.rejectUnauthorized);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`create_snapshot failed: cloudapi vm snapshots HTTP ${res.status} - ${res.body.slice(0, 600)}`);
   }
 
-  const result = await httpsRequest(url, 'POST', headers, body, 30000, ctx.rejectUnauthorized);
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`create_snapshot failed: HTTP ${result.status} - ${result.body.slice(0, 400)}`);
-  }
-
-  return { status: 'success', action: 'createSnapshot', vm_href: vmHref };
+  return {
+    status: 'success',
+    action: 'createSnapshot',
+    vm_href: vmHref,
+    vm_id: vmId,
+    snapshot_name: name,
+    endpoint: '/cloudapi/1.0.0/vm/{urn}/snapshots',
+  };
 }
 
 export async function revertSnapshot(vmNameOrHref: string): Promise<Record<string, unknown>> {
@@ -1011,11 +1135,57 @@ export async function createVmCopy(
   const vappDescription = extractXmlSection(vappXml, 'Description');
 
   const sourceVmName = extractXmlAttr(vmXml, 'Vm', 'name') || vmNameOrHref;
-  let guestCustomization = extractXmlSection(vmXml, 'GuestCustomizationSection');
-  if (guestCustomization) {
-    guestCustomization = replaceXmlTagValue(guestCustomization, 'ComputerName', newVmName);
-  }
-  const networkSection = extractXmlSection(vmXml, 'NetworkConnectionSection');
+  const rawGuestCustomization = extractXmlSection(vmXml, 'GuestCustomizationSection');
+  const rawNetworkSection = extractXmlSection(vmXml, 'NetworkConnectionSection');
+  const extractXmlTagValue = (xml: string, tagName: string) => {
+    const regex = new RegExp(`<(?:\\w+:)?${tagName}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${tagName}>`, 'i');
+    const match = xml.match(regex);
+    return match ? match[1].trim() : '';
+  };
+  const buildGuestCustomizationSection = (section: string, computerName: string) => {
+    const enabled = extractXmlTagValue(section, 'Enabled') || 'true';
+    const changeSid = extractXmlTagValue(section, 'ChangeSid') || 'false';
+    const joinDomainEnabled = extractXmlTagValue(section, 'JoinDomainEnabled') || 'false';
+    const adminPasswordEnabled = extractXmlTagValue(section, 'AdminPasswordEnabled') || 'false';
+    const adminPasswordAuto = extractXmlTagValue(section, 'AdminPasswordAuto') || 'false';
+    const resetPasswordRequired = extractXmlTagValue(section, 'ResetPasswordRequired') || 'false';
+    return [
+      '<root:GuestCustomizationSection>',
+      '<ns0:Info>Guest Customization Section</ns0:Info>',
+      `<root:Enabled>${escapeXml(enabled)}</root:Enabled>`,
+      `<root:ChangeSid>${escapeXml(changeSid)}</root:ChangeSid>`,
+      `<root:JoinDomainEnabled>${escapeXml(joinDomainEnabled)}</root:JoinDomainEnabled>`,
+      `<root:AdminPasswordEnabled>${escapeXml(adminPasswordEnabled)}</root:AdminPasswordEnabled>`,
+      `<root:AdminPasswordAuto>${escapeXml(adminPasswordAuto)}</root:AdminPasswordAuto>`,
+      `<root:ResetPasswordRequired>${escapeXml(resetPasswordRequired)}</root:ResetPasswordRequired>`,
+      `<root:ComputerName>${escapeXml(computerName)}</root:ComputerName>`,
+      '</root:GuestCustomizationSection>',
+    ].join('');
+  };
+  const buildNoneNetworkSection = (section: string) => {
+    if (!section) return '';
+    const macAddress = extractXmlTagValue(section, 'MACAddress');
+    const adapterType = extractXmlTagValue(section, 'NetworkAdapterType');
+    const macTag = macAddress ? `<root:MACAddress>${escapeXml(macAddress)}</root:MACAddress>` : '';
+    const adapterTag = adapterType ? `<root:NetworkAdapterType>${escapeXml(adapterType)}</root:NetworkAdapterType>` : '';
+    return [
+      '<root:NetworkConnectionSection>',
+      '<ns0:Info>Network Connection Section</ns0:Info>',
+      '<root:PrimaryNetworkConnectionIndex>0</root:PrimaryNetworkConnectionIndex>',
+      '<root:NetworkConnection network="none">',
+      '<root:NetworkConnectionIndex>0</root:NetworkConnectionIndex>',
+      '<root:IpType>IPV4</root:IpType>',
+      '<root:IsConnected>false</root:IsConnected>',
+      macTag,
+      '<root:IpAddressAllocationMode>NONE</root:IpAddressAllocationMode>',
+      '<root:SecondaryIpAddressAllocationMode>NONE</root:SecondaryIpAddressAllocationMode>',
+      adapterTag,
+      '</root:NetworkConnection>',
+      '</root:NetworkConnectionSection>',
+    ].join('');
+  };
+  const guestCustomization = buildGuestCustomizationSection(rawGuestCustomization, newVmName || sourceVmName);
+  const networkSection = buildNoneNetworkSection(rawNetworkSection);
   const hardwareSection = extractXmlSection(vmXml, 'VirtualHardwareSection');
   const storageProfileHref = extractXmlAttr(vmXml, 'StorageProfile', 'href');
 
@@ -1023,36 +1193,69 @@ export async function createVmCopy(
     ? `<root:Description>${escapeXml(description.trim())}</root:Description>`
     : vappDescription || `<root:Description>${escapeXml(vappName)}</root:Description>`;
 
-  const instantiationParams = [guestCustomization, networkSection, hardwareSection]
-    .filter(Boolean)
-    .map((section) => section.trim())
-    .join('');
-
   const storageProfileBlock = storageProfileHref
     ? `<root:StorageProfile href="${escapeXml(storageProfileHref)}"/>`
     : '';
 
-  const xmlBody = [
-    `<root:RecomposeVAppParams xmlns:root="http://www.vmware.com/vcloud/v1.5" name="${escapeXml(vappName)}" xmlns:ns0="http://schemas.dmtf.org/ovf/envelope/1" xmlns:ns1="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData" xmlns:ns2="http://www.vmware.com/schema/ovf">`,
-    descriptionBlock,
-    `<root:SourcedItem sourceDelete="false">`,
-    `<root:Source href="${escapeXml(vmHref)}" name="${escapeXml(newVmName || sourceVmName)}"/>`,
-    instantiationParams ? `<root:InstantiationParams>${instantiationParams}</root:InstantiationParams>` : '',
-    storageProfileBlock,
-    `<root:ReplaceTpm>false</root:ReplaceTpm>`,
-    `</root:SourcedItem>`,
-    `</root:RecomposeVAppParams>`,
-  ].join('');
+  const buildXmlBody = (sections: string[]) => {
+    const instantiationParams = sections
+      .filter(Boolean)
+      .map((section) => section.trim())
+      .join('');
 
-  const xmlHeaders = {
-    ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
-    'Content-Type': 'application/vnd.vmware.vcloud.recomposeVAppParams+xml;charset=UTF-8',
+    return [
+      `<root:RecomposeVAppParams xmlns:root="http://www.vmware.com/vcloud/v1.5" name="${escapeXml(vappName)}" xmlns:ns0="http://schemas.dmtf.org/ovf/envelope/1" xmlns:ns1="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData" xmlns:ns2="http://www.vmware.com/schema/ovf">`,
+      descriptionBlock,
+      `<root:SourcedItem sourceDelete="false">`,
+      `<root:Source href="${escapeXml(vmHref)}" name="${escapeXml(newVmName || sourceVmName)}"/>`,
+      instantiationParams ? `<root:InstantiationParams>${instantiationParams}</root:InstantiationParams>` : '',
+      storageProfileBlock,
+      `<root:ReplaceTpm>false</root:ReplaceTpm>`,
+      `</root:SourcedItem>`,
+      `</root:RecomposeVAppParams>`,
+    ].join('');
   };
 
+  // Build headers to match the curl example exactly
+  const xmlHeaders: Record<string, string> = {
+    'Accept': 'application/*+xml;version=40.0.0-alpha',
+    'Content-Type': 'application/vnd.vmware.vcloud.recomposeVAppParams+xml;charset=UTF-8',
+    'Authorization': `Bearer ${ctx.token}`,
+    'X-vCloud-Authorization': ctx.orgName || '',
+    'X-VMWARE-VCLOUD-TENANT-CONTEXT': ctx.orgUuid || '',
+    'X-VMWARE-VCLOUD-AUTH-CONTEXT': ctx.orgName || '',
+    'X-Requested-With': 'XMLHttpRequest',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0',
+    'Referer': `https://${ctx.host}/tenant/${ctx.orgName}/vdcs/${ctx.vdcId}/vm`,
+    'sec-ch-ua': '"Not:A-Brand";v="99", "Microsoft Edge";v="145", "Chromium";v="145"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+  };
+  // Remove any empty headers
+  Object.keys(xmlHeaders).forEach((k) => { if (!xmlHeaders[k]) delete xmlHeaders[k]; });
+
   const recomposeUrl = `${targetVappHref}/action/recomposeVApp`;
-  const result = await httpsRequest(recomposeUrl, 'POST', xmlHeaders, xmlBody, 30000, ctx.rejectUnauthorized);
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`create_vm_copy failed: HTTP ${result.status} - ${result.body.slice(0, 400)}`);
+
+  const attemptRecompose = async (sections: string[]) => {
+    const body = buildXmlBody(sections);
+    const response = await httpsRequest(recomposeUrl, 'POST', xmlHeaders, body, 30000, ctx.rejectUnauthorized);
+    return response;
+  };
+
+  const primarySections = [guestCustomization, networkSection, hardwareSection];
+  const primaryResult = await attemptRecompose(primarySections);
+  if (primaryResult.status < 200 || primaryResult.status >= 300) {
+    // Retry with minimal instantiation params to handle incompatible network/hardware sections.
+    const fallbackSections = [guestCustomization];
+    const fallbackResult = await attemptRecompose(fallbackSections);
+    if (fallbackResult.status < 200 || fallbackResult.status >= 300) {
+      const primaryMessage = extractVcdErrorMessage(primaryResult.body);
+      const fallbackMessage = extractVcdErrorMessage(fallbackResult.body);
+      throw new Error(
+        `create_vm_copy failed: HTTP ${primaryResult.status} - ${primaryMessage || primaryResult.body.slice(0, 400)} ` +
+        `(fallback failed: HTTP ${fallbackResult.status} - ${fallbackMessage || fallbackResult.body.slice(0, 400)})`
+      );
+    }
   }
 
   return {
@@ -1296,7 +1499,7 @@ export async function createVmConfirmed(): Promise<Record<string, unknown>> {
 export async function listTasks(minutesAgo = 60, pageSize = 50): Promise<Record<string, unknown>> {
   const ctx = getVcdContext();
   const since = new Date(Date.now() - minutesAgo * 60 * 1000);
-  const iso = since.toISOString().replace(/\.\d{3}Z$/, '.00');
+  const iso = since.toISOString();
 
   const url = new URL(`https://${ctx.host}/api/query`);
   url.searchParams.set('type', 'task');
@@ -1305,6 +1508,8 @@ export async function listTasks(minutesAgo = 60, pageSize = 50): Promise<Record<
   url.searchParams.set('pageSize', String(pageSize));
   url.searchParams.set('filterEncoded', 'true');
   url.searchParams.set('filter', `startDate=gt=${iso}`);
+  url.searchParams.set('sortDesc', 'startDate');
+  url.searchParams.set('links', 'true');
 
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`);
   const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
@@ -1394,6 +1599,16 @@ export async function allocateFreeIp(): Promise<{ success: boolean; ip?: string;
 
     console.log('[IP Allocator] Requesting free IP from:', REMOTE_URL);
     
+    const startedAt = Date.now();
+    logApi({
+      source: 'vcdApi.allocateFreeIp',
+      stage: 'request',
+      method: 'POST',
+      url: REMOTE_URL,
+      headers: options.headers as Record<string, unknown>,
+      requestBody: payload,
+    });
+
     const req = http.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => {
@@ -1401,6 +1616,16 @@ export async function allocateFreeIp(): Promise<{ success: boolean; ip?: string;
       });
       
       res.on('end', () => {
+        logApi({
+          source: 'vcdApi.allocateFreeIp',
+          stage: 'response',
+          method: 'POST',
+          url: REMOTE_URL,
+          status: res.statusCode || 0,
+          durationMs: Date.now() - startedAt,
+          headers: res.headers as Record<string, unknown>,
+          responseBody: data,
+        });
         console.log('[IP Allocator] Response status:', res.statusCode);
         console.log('[IP Allocator] Response body:', data.substring(0, 500));
         
@@ -1438,6 +1663,14 @@ export async function allocateFreeIp(): Promise<{ success: boolean; ip?: string;
     });
 
     req.on('error', (err) => {
+      logApi({
+        source: 'vcdApi.allocateFreeIp',
+        stage: 'error',
+        method: 'POST',
+        url: REMOTE_URL,
+        durationMs: Date.now() - startedAt,
+        error: err.message,
+      });
       console.error('[IP Allocator] Request error:', err);
       resolve({
         success: false,

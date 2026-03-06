@@ -12,6 +12,7 @@ import {
   DNS_SERVERS,
   getDefaultsForOrg,
 } from './vcdConfig';
+import { logApi } from './apiLogger';
 
 export interface VcdLoginInput {
   host?: string;
@@ -99,6 +100,19 @@ async function vcdLoginRequest(input: VcdLoginInput): Promise<string> {
   const credentials = Buffer.from(`${userId}:${input.password}`, 'utf8').toString('base64');
 
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const requestUrl = `https://${VCD_HOST}/cloudapi/1.0.0/sessions`;
+    logApi({
+      source: 'vcdAuth.signIn',
+      stage: 'request',
+      method: 'POST',
+      url: requestUrl,
+      headers: {
+        Accept: `application/json;version=${apiVersion}`,
+        Authorization: `Basic ${credentials}`,
+      },
+    });
+
     const req = https.request(
       {
         hostname: VCD_HOST,
@@ -111,26 +125,47 @@ async function vcdLoginRequest(input: VcdLoginInput): Promise<string> {
         rejectUnauthorized: input.rejectUnauthorized ?? false,
       },
       (res) => {
-        const token =
-          res.headers['x-vmware-vcloud-access-token'] ||
-          res.headers['X-VMWARE-VCLOUD-ACCESS-TOKEN'] ||
-          res.headers['x-vcloud-authorization'] ||
-          res.headers['X-VCloud-Authorization'];
-        if (token && typeof token === 'string') {
-          resolve(token);
-          return;
-        }
         let body = '';
         res.on('data', (chunk) => {
           body += chunk.toString();
         });
         res.on('end', () => {
+          logApi({
+            source: 'vcdAuth.signIn',
+            stage: 'response',
+            method: 'POST',
+            url: requestUrl,
+            status: res.statusCode || 0,
+            durationMs: Date.now() - startedAt,
+            headers: res.headers as Record<string, unknown>,
+            responseBody: body,
+          });
+
+          const token =
+            res.headers['x-vmware-vcloud-access-token'] ||
+            res.headers['X-VMWARE-VCLOUD-ACCESS-TOKEN'] ||
+            res.headers['x-vcloud-authorization'] ||
+            res.headers['X-VCloud-Authorization'];
+          if (token && typeof token === 'string') {
+            resolve(token);
+            return;
+          }
           reject(new Error(`VCD login failed (HTTP ${res.statusCode}): ${body}`));
         });
       }
     );
 
-    req.on('error', reject);
+    req.on('error', (err) => {
+      logApi({
+        source: 'vcdAuth.signIn',
+        stage: 'error',
+        method: 'POST',
+        url: requestUrl,
+        durationMs: Date.now() - startedAt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      reject(err);
+    });
     req.end();
   });
 }

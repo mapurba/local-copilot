@@ -1,4 +1,5 @@
 ﻿import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ConfirmDialog from './ConfirmDialog';
 import ModelSelector from './ModelSelector';
 import ResponseRenderer from './ResponseRenderer';
 
@@ -40,8 +41,40 @@ interface VApp {
   owner?: string;
 }
 
+const CHAT_WELCOME_MESSAGE = [
+  'Welcome. I can help you manage VMs using natural language.',
+  '',
+  '**What you can ask me:**',
+  '- List VMs, vApps, templates, and recent tasks',
+  '- Start, stop, delete, snapshot, and revert VM snapshots',
+  '- Create or clone VMs with a review form before execution',
+  '- Resize VM CPU and memory',
+  '- Check VM status and troubleshoot failed actions',
+  '',
+  '**Try prompts like:**',
+  '- "Show all running VMs"',
+  '- "Create a snapshot for vm-app-01"',
+  '- "Clone vm-db-01 to app-vapp"',
+  '- "Resize vm-web-02 to 4 CPU and 8192 MB RAM"',
+  '- "Show tasks from the last 30 minutes"',
+  '- "Create a new Ubuntu VM with name appurbatest and setup ILM 1.3.0"',
+  '- "Create a new SLES 15 SP6 VM with name appurbatest"',
+].join('\n');
+
 const ChatPane: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Confirmation dialog state
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMessage, setConfirmMessage] = useState('');
+  const [confirmAction, setConfirmAction] = useState<null | (() => void)>(null);
+  // Helper to show confirmation dialog for any operation
+  const requestConfirmation = (message: string, action: () => void) => {
+    setConfirmMessage(message);
+    setConfirmAction(() => action);
+    setConfirmOpen(true);
+  };
+  const [messages, setMessages] = useState<Message[]>([
+    { role: 'assistant', content: CHAT_WELCOME_MESSAGE },
+  ]);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gpt-4');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -214,7 +247,7 @@ const ChatPane: React.FC = () => {
     }
   };
 
-  const handleDeployVm = async () => {
+  const doDeployVm = async () => {
     if (!pendingForm) return;
     setIsDeploying(true);
     try {
@@ -238,13 +271,16 @@ const ChatPane: React.FC = () => {
       setIsDeploying(false);
     }
   };
+  const handleDeployVm = () => {
+    requestConfirmation('Are you sure you want to deploy this VM?', doDeployVm);
+  };
 
   const handleCancelReview = () => {
     setPendingForm(null);
     setMessages((prev) => [...prev, { role: 'assistant', content: 'VM creation cancelled.' }]);
   };
 
-  const handleCopyVm = async () => {
+  const doCopyVm = async () => {
     if (!pendingCopyForm) return;
     if (!pendingCopyForm.new_vm_name.trim()) {
       setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: VM name is required for copy.' }]);
@@ -254,7 +290,6 @@ const ChatPane: React.FC = () => {
       setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: Target vApp is required for copy.' }]);
       return;
     }
-
     setIsCopyingVm(true);
     try {
       const result = await window.copilot.createVmCopy({
@@ -264,7 +299,6 @@ const ChatPane: React.FC = () => {
         description: pendingCopyForm.description?.trim() || undefined,
         powerOn: Boolean(pendingCopyForm.power_on),
       });
-
       const copiedName = pendingCopyForm.new_vm_name;
       setPendingCopyForm(null);
       if (result.success) {
@@ -284,6 +318,19 @@ const ChatPane: React.FC = () => {
     } finally {
       setIsCopyingVm(false);
     }
+  };
+  const handleCopyVm = () => {
+    requestConfirmation('Are you sure you want to create a copy of this VM?', doCopyVm);
+  };
+  // ConfirmDialog rendering
+  // Only one confirm dialog at a time
+  const handleConfirm = () => {
+    setConfirmOpen(false);
+    if (confirmAction) confirmAction();
+  };
+  const handleDeny = () => {
+    setConfirmOpen(false);
+    setConfirmAction(null);
   };
 
   const handleCancelCopyReview = () => {
@@ -349,6 +396,13 @@ const ChatPane: React.FC = () => {
           </div>
         ))}
 
+        {/* Confirmation Dialog for all destructive/critical actions */}
+        <ConfirmDialog
+          open={confirmOpen}
+          message={confirmMessage}
+          onConfirm={handleConfirm}
+          onCancel={handleDeny}
+        />
         {/* VM Review & Deploy Form */}
         {pendingForm && (
           <div className="flex justify-start">

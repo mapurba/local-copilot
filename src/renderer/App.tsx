@@ -129,7 +129,7 @@ const App: React.FC = () => {
     <>
       <div className={`flex flex-col h-screen w-screen min-h-0 bg-gray-900 text-gray-100 overflow-hidden ${theme === 'light' ? 'theme-light' : 'theme-dark'}`}>
         <ResizablePanels
-          initialLeftWidth={320}
+          initialLeftWidth={450}
           minLeftWidth={200}
           minRightWidth={400}
           left={

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ConfirmDialog from './ConfirmDialog';
 
 interface VM {
   name: string;
@@ -25,6 +26,14 @@ interface VmListPaneProps {
 }
 
 const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) => {
+  // Confirm dialog state for snapshot/revert actions.
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    type: 'snapshot' | 'revert' | null;
+    vm: VM | null;
+  }>({ open: false, type: null, vm: null });
+  const [snapshotDescription, setSnapshotDescription] = useState('');
+
   const [vms, setVms] = useState<VM[]>([]);
   const [allVms, setAllVms] = useState<VM[]>([]);
   const [filter, setFilter] = useState<'all' | 'on' | 'off'>('all');
@@ -91,6 +100,16 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
     setVappsLoading(true);
     try {
       const result = await window.copilot.listVapps();
+      // DEBUG: Show the result in the console and as an alert for troubleshooting
+      // eslint-disable-next-line no-console
+      console.log('DEBUG: listVapps result', result);
+      if (!result || typeof result !== 'object') {
+        window.alert('DEBUG: listVapps returned null or non-object: ' + JSON.stringify(result));
+      } else if (!Array.isArray(result.vapps)) {
+        window.alert('DEBUG: listVapps result.vapps is not an array: ' + JSON.stringify(result));
+      } else if (result.vapps.length === 0) {
+        window.alert('DEBUG: listVapps result.vapps is an empty array');
+      }
       const items = Array.isArray(result?.vapps) ? result.vapps : [];
       const normalized: VApp[] = items
         .map((item) => ({
@@ -154,14 +173,20 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
     }
   };
 
-  const handleCreateSnapshot = async (vm: VM) => {
+  const handleCreateSnapshot = (vm: VM) => {
     setError(null);
-    const description = window.prompt(`Snapshot description for "${vm.name}" (optional):`, '') || '';
-    setPendingAction({ href: vm.href, action: 'snapshot' });
+    setSnapshotDescription('');
+    setConfirmDialog({ open: true, type: 'snapshot', vm });
+  };
+
+  const doCreateSnapshot = async () => {
+    if (!confirmDialog.vm) return;
+    setConfirmDialog({ open: false, type: null, vm: null });
+    setPendingAction({ href: confirmDialog.vm.href, action: 'snapshot' });
     try {
       const result = await window.copilot.createSnapshot({
-        vmNameOrHref: vm.href,
-        description: description.trim() || undefined,
+        vmNameOrHref: confirmDialog.vm.href,
+        description: snapshotDescription.trim() || undefined,
       });
       if (!result.success) throw new Error(result.error || 'Failed to create snapshot');
       await loadVms();
@@ -173,14 +198,17 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
     }
   };
 
-  const handleRevertSnapshot = async (vm: VM) => {
+  const handleRevertSnapshot = (vm: VM) => {
     setError(null);
-    const confirmed = window.confirm(`Revert VM "${vm.name}" to its latest/current snapshot?`);
-    if (!confirmed) return;
+    setConfirmDialog({ open: true, type: 'revert', vm });
+  };
 
-    setPendingAction({ href: vm.href, action: 'revert' });
+  const doRevertSnapshot = async () => {
+    if (!confirmDialog.vm) return;
+    setConfirmDialog({ open: false, type: null, vm: null });
+    setPendingAction({ href: confirmDialog.vm.href, action: 'revert' });
     try {
-      const result = await window.copilot.revertSnapshot({ vmNameOrHref: vm.href });
+      const result = await window.copilot.revertSnapshot({ vmNameOrHref: confirmDialog.vm.href });
       if (!result.success) throw new Error(result.error || 'Failed to revert snapshot');
       await loadVms();
     } catch (err) {
@@ -189,6 +217,51 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
     } finally {
       setPendingAction(null);
     }
+  };
+  // ConfirmDialog rendering
+  const renderConfirmDialog = () => {
+    if (!confirmDialog.open || !confirmDialog.vm) return null;
+    if (confirmDialog.type === 'snapshot') {
+      return (
+        <ConfirmDialog
+          open={true}
+          title={`Create Snapshot`}
+          message={
+            <div>
+              <div>Snapshot for <b>{confirmDialog.vm.name}</b></div>
+              <div className="mt-2">
+                <label className="block text-xs mb-1 text-gray-400">Description (optional):</label>
+                <input
+                  type="text"
+                  value={snapshotDescription}
+                  onChange={e => setSnapshotDescription(e.target.value)}
+                  className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                  autoFocus
+                />
+              </div>
+            </div>
+          }
+          onConfirm={doCreateSnapshot}
+          onCancel={() => setConfirmDialog({ open: false, type: null, vm: null })}
+          confirmLabel="Create"
+          cancelLabel="Cancel"
+        />
+      );
+    }
+    if (confirmDialog.type === 'revert') {
+      return (
+        <ConfirmDialog
+          open={true}
+          title={`Revert Snapshot`}
+          message={`Revert VM "${confirmDialog.vm.name}" to its latest/current snapshot?`}
+          onConfirm={doRevertSnapshot}
+          onCancel={() => setConfirmDialog({ open: false, type: null, vm: null })}
+          confirmLabel="Revert"
+          cancelLabel="Cancel"
+        />
+      );
+    }
+    return null;
   };
 
   const handleCreateCopy = (vm: VM) => {
@@ -310,7 +383,7 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
         ))}
       </div>
 
-      <div className="px-4 py-2 bg-gray-850 border-b border-gray-700">
+      {/* <div className="px-4 py-2 bg-gray-850 border-b border-gray-700">
         <button
           onClick={handleListSnapshots}
           className="text-xs px-3 py-1.5 rounded bg-indigo-900/30 text-indigo-300 hover:bg-indigo-900/50 transition-colors"
@@ -318,7 +391,7 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
         >
           List Snapshots
         </button>
-      </div>
+      </div> */}
 
       {/* VM List */}
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -364,12 +437,12 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
                 />
                 <span className="vm-name text-sm font-medium text-gray-100 truncate">{vm.name}</span>
               </div>
-              <span className={`vm-status text-xs px-2 py-0.5 rounded whitespace-nowrap ml-2 flex-shrink-0 ${
+              <span className={`vm-status text-xs font-semibold px-2.5 py-1 rounded whitespace-nowrap ml-2 flex-shrink-0 ${
                 vm.powered_on
-                  ? 'bg-green-900/30 text-green-400'
-                  : 'bg-gray-700 text-gray-400'
+                  ? 'bg-green-700 text-white shadow-sm'
+                  : 'bg-red-700 text-white shadow-sm'
               }`}>
-                {vm.status || (vm.powered_on ? 'On' : 'Off')}
+                {vm.status || (vm.powered_on ? 'POWERED ON' : 'POWERED OFF')}
               </span>
             </div>
 
@@ -396,7 +469,7 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
             </div>
 
             {/* Action Buttons */}
-            <div className="vm-actions flex gap-2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="vm-actions flex gap-2 ml-4">
               {vm.powered_on ? (
                 <button
                   onClick={() => handlePowerToggle(vm, 'stop')}
@@ -416,15 +489,7 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
                   {pendingAction?.href === vm.href && pendingAction.action === 'start' ? 'Starting...' : 'Start'}
                 </button>
               )}
-              {vm.powered_on && (
-                <button
-                  onClick={() => handleTerminalClick(vm)}
-                  className="vm-action vm-action-terminal text-xs px-2 py-1 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 transition-colors"
-                  title="Open Terminal"
-                >
-                  Terminal
-                </button>
-              )}
+              
               <button
                 onClick={() => handleDeleteVm(vm)}
                 disabled={pendingAction?.href === vm.href}
@@ -461,6 +526,9 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
           </div>
         ))}
       </div>
+
+      {/* Confirm dialog for snapshot/revert actions */}
+      {renderConfirmDialog()}
 
       {/* Terminal Input Dialog */}
       {terminalVm && (

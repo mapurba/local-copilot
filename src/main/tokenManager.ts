@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import https from 'https';
 import { lspClient } from './lspClient';
+import { logApi } from './apiLogger';
 
 interface CopilotToken {
   token: string;
@@ -70,6 +71,24 @@ class TokenManager {
 
     const tryEndpoint = async (hostname: string, pathName: string): Promise<CopilotToken | null> => {
       return new Promise((resolve) => {
+        const startedAt = Date.now();
+        const requestUrl = `https://${hostname}${pathName}`;
+        logApi({
+          source: 'tokenManager.exchange',
+          stage: 'request',
+          method: 'GET',
+          url: requestUrl,
+          headers: {
+            Authorization: `token ${oauthToken}`,
+            Accept: 'application/json',
+            'Editor-Version': 'vscode/1.85.0',
+            'Editor-Plugin-Version': 'copilot-chat/0.12.0',
+            'Copilot-Integration-Id': 'vscode-chat',
+            'User-Agent': 'local-copilot/1.0.0',
+            'X-GitHub-Api-Version': '2023-07-07',
+          },
+        });
+
         const req = https.request(
           {
             hostname,
@@ -89,6 +108,16 @@ class TokenManager {
             let data = '';
             res.on('data', (chunk) => (data += chunk));
             res.on('end', () => {
+              logApi({
+                source: 'tokenManager.exchange',
+                stage: 'response',
+                method: 'GET',
+                url: requestUrl,
+                status: res.statusCode || 0,
+                durationMs: Date.now() - startedAt,
+                headers: res.headers as Record<string, unknown>,
+                responseBody: data,
+              });
               console.log(`[TokenManager] Token exchange response (${hostname}${pathName}) - Status: ${res.statusCode}`);
               if (res.statusCode !== 200) {
                 console.warn(`[TokenManager] Token exchange failed at ${hostname}${pathName} (HTTP ${res.statusCode})`);
@@ -122,6 +151,14 @@ class TokenManager {
         );
 
         req.on('error', (err) => {
+          logApi({
+            source: 'tokenManager.exchange',
+            stage: 'error',
+            method: 'GET',
+            url: requestUrl,
+            durationMs: Date.now() - startedAt,
+            error: err instanceof Error ? err.message : String(err),
+          });
           console.error(`[TokenManager] Token exchange request error (${hostname}${pathName}):`, err instanceof Error ? err.message : err);
           resolve(null);
         });

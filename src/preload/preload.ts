@@ -20,7 +20,7 @@ export interface CopilotAPI {
   powerOffVm: (vmHref: string) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   deleteVm: (input: { href: string; powered_on?: boolean }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   allocateFreeIp: () => Promise<{ success: boolean; ip?: string; error?: string }>;
-  createSnapshot: (input: { vmNameOrHref: string; description?: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  createSnapshot: (input: { vmNameOrHref: string; name?: string; description?: string; memory?: boolean; quiesce?: boolean }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   revertSnapshot: (input: { vmNameOrHref: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   createVmCopy: (input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   listSnapshots: () => Promise<{ success: boolean; count?: number; snapshots?: Array<Record<string, unknown>>; error?: string }>;
@@ -90,7 +90,7 @@ contextBridge.exposeInMainWorld('copilot', {
   powerOffVm: (vmHref: string) => ipcRenderer.invoke('vcd:powerOffVm', vmHref),
   deleteVm: (input: { href: string; powered_on?: boolean }) => ipcRenderer.invoke('vcd:deleteVm', input),
   allocateFreeIp: () => ipcRenderer.invoke('vcd:allocateFreeIp'),
-  createSnapshot: (input: { vmNameOrHref: string; description?: string }) => ipcRenderer.invoke('vcd:createSnapshot', input),
+  createSnapshot: (input: { vmNameOrHref: string; name?: string; description?: string; memory?: boolean; quiesce?: boolean }) => ipcRenderer.invoke('vcd:createSnapshot', input),
   revertSnapshot: (input: { vmNameOrHref: string }) => ipcRenderer.invoke('vcd:revertSnapshot', input),
   createVmCopy: (input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => ipcRenderer.invoke('vcd:createVmCopy', input),
   listSnapshots: () => ipcRenderer.invoke('vcd:listSnapshots'),

@@ -37,6 +37,7 @@
     "@langchain/langgraph": "^1.2.0",
     "@langchain/openai": "^1.2.12",
     "@monaco-editor/react": "^4.7.0",
+    "fast-xml-parser": "^5.4.2",
     "monaco-editor": "^0.55.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
