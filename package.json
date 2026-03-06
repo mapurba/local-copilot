@@ -25,7 +25,8 @@
       "target": "dmg"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "VCD-Agent-${version}.exe"
     },
     "linux": {
       "target": "AppImage"
