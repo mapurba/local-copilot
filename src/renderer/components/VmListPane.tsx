@@ -11,6 +11,8 @@ interface VM {
   cpus?: number;
   memory_mb?: number;
   storage_gb?: number;
+  osType?: string;
+  osVersion?: string;
 }
 
 interface VApp {
@@ -86,6 +88,8 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
         cpus: typeof item.cpus === 'number' ? item.cpus : undefined,
         memory_mb: typeof item.memory_mb === 'number' ? item.memory_mb : undefined,
         storage_gb: typeof item.storage_gb === 'number' ? item.storage_gb : undefined,
+        osType: item.osType ? String(item.osType) : undefined,
+        osVersion: item.osVersion ? String(item.osVersion) : undefined,
       }));
       setAllVms(normalized);
       setLoading(false);
@@ -458,6 +462,15 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
                 <div className="flex gap-2">
                   <span className="text-gray-500 min-w-fit">Owner:</span>
                   <span className="text-gray-300 truncate">{vm.owner}</span>
+                </div>
+              )}
+              {vm.osType && (
+                <div className="flex gap-2">
+                  <span className="text-gray-500 min-w-fit">OS:</span>
+                  <span className="text-gray-300 truncate">
+                    {vm.osType}
+                    {vm.osVersion ? ` (${vm.osVersion})` : ''}
+                  </span>
                 </div>
               )}
               {vm.cpus && vm.memory_mb && (

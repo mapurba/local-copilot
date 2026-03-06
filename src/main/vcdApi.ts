@@ -1541,6 +1541,10 @@ export function normalizeVmStatus(vm: Record<string, unknown>): Record<string, u
   const statusNormalized = rawStatus.toLowerCase().replace(/\s+|_/g, '');
   const poweredOn = ['4', 'poweredon', 'poweron', 'on'].includes(statusNormalized);
 
+  // Prefer guestOs, fallback to detectedGuestOs, then other fields
+  const osType = vm.guestOs || vm.detectedGuestOs || vm.osType || vm.guestOsType || vm['os type'] || '';
+  const osVersion = vm.osVersion || vm.guestOsVersion || vm['os version'] || '';
+
   return {
     name,
     status: rawStatus,
@@ -1548,6 +1552,8 @@ export function normalizeVmStatus(vm: Record<string, unknown>): Record<string, u
     href,
     ip: vm.ipAddress || vm.ip || '',
     owner: vm.ownerName || '',
+    osType: typeof osType === 'string' ? osType : '',
+    osVersion: typeof osVersion === 'string' ? osVersion : '',
   };
 }
 
