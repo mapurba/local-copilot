@@ -77,6 +77,20 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
     try {
       // Call the direct VCD API via a new IPC handler
       const result = await window.copilot.listVms();
+      if (result && (result.error || (Array.isArray(result.vms) && result.vms.length === 0 && result.error))) {
+        // If error is auth-related, prompt relogin
+        if (typeof result.error === 'string' &&
+          (result.error.toLowerCase().includes('unauthorized') ||
+           result.error.toLowerCase().includes('expired') ||
+           result.error.toLowerCase().includes('401') ||
+           result.error.toLowerCase().includes('token'))
+        ) {
+          setError('Session expired or unauthorized. Please re-login to VCD.');
+          setAllVms([]);
+          setLoading(false);
+          return;
+        }
+      }
       const vms = Array.isArray(result?.vms) ? result.vms : [];
       const normalized: VM[] = vms.map((item) => ({
         name: String(item.name || 'Unknown'),
@@ -95,6 +109,18 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
       setLoading(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load VMs';
+      // If error is auth-related, prompt relogin
+      if (typeof message === 'string' &&
+        (message.toLowerCase().includes('unauthorized') ||
+         message.toLowerCase().includes('expired') ||
+         message.toLowerCase().includes('401') ||
+         message.toLowerCase().includes('token'))
+      ) {
+        setError('Session expired or unauthorized. Please re-login to VCD.');
+        setAllVms([]);
+        setLoading(false);
+        return;
+      }
       setError(message);
       setLoading(false);
     }
@@ -402,6 +428,14 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
         {error && (
           <div className="px-4 py-3 text-sm text-red-400 bg-red-900/20 border-b border-red-800">
             {error}
+            {error.includes('re-login') && (
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('show-vcd-login'))}
+                className="ml-4 px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 transition-colors"
+              >
+                Re-login
+              </button>
+            )}
           </div>
         )}
 

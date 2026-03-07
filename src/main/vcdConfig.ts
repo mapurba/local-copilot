@@ -20,9 +20,9 @@ export const VDC_ID_MAP: Record<string, string> = {
 };
 
 export const ORG_UUID_MAP: Record<string, string> = {
-  ban2_identity_edir: '',
+  ban2_identity_edir: '64ab70eb-58cc-4914-8922-2948ebd48715',
   ban2_identity_ilm: 'fbf2e477-e45e-41a4-be7d-d8b3bc3e4197',
-  ban2_identity_idm: '',
+  ban2_identity_idm: 'b2f56ca2-3669-4c80-a250-4820949cf223',
 };
 
 export const STORAGE_PROFILE_ID_MAP: Record<string, string> = {

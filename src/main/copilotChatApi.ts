@@ -81,6 +81,8 @@ const setVcdContextTool = lcTool(
     };
     if (args.host) patch.host = args.host;
     if (args.token) patch.token = args.token;
+    if ((args as Record<string, unknown>).access_token) patch.accessToken = (args as Record<string, unknown>).access_token as string;
+    if ((args as Record<string, unknown>).session_token) patch.sessionToken = (args as Record<string, unknown>).session_token as string;
     if (args.org_name) patch.orgName = args.org_name;
     if (args.org_uuid) patch.orgUuid = args.org_uuid;
     if (args.vdc_id) patch.vdcId = args.vdc_id;
@@ -98,7 +100,9 @@ const setVcdContextTool = lcTool(
     description: 'Set or override VCD context values if needed. Usually not required after VCD login.',
     schema: z.object({
       host: z.string().optional().describe('VCD hostname (optional override)'),
-      token: z.string().optional().describe('Bearer token (optional override)'),
+      token: z.string().optional().describe('Bearer access token (optional override)'),
+      access_token: z.string().optional().describe('Bearer access token (optional override)'),
+      session_token: z.string().optional().describe('x-vcloud-authorization session token (optional override)'),
       api_version: z.string().optional().describe('VCD API version (default 38.0)'),
       org_name: z.string().optional().describe('Org name for tenant context (optional)'),
       org_uuid: z.string().optional().describe('Org UUID for tenant context (optional)'),

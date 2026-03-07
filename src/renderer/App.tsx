@@ -125,6 +125,20 @@ const App: React.FC = () => {
     });
   };
 
+  // Handle VCD logout
+  const handleVcdLogout = async () => {
+    await window.copilot.vcdSignOut();
+    setVcdStatus({ connected: false });
+    // Optionally, reload VMs or force re-auth UI
+  };
+
+  // Listen for relogin event from VmListPane
+  React.useEffect(() => {
+    const handler = () => setShowVcdModal(true);
+    window.addEventListener('show-vcd-login', handler);
+    return () => window.removeEventListener('show-vcd-login', handler);
+  }, []);
+
   return (
     <>
       <div className={`flex flex-col h-screen w-screen min-h-0 bg-gray-900 text-gray-100 overflow-hidden ${theme === 'light' ? 'theme-light' : 'theme-dark'}`}>
@@ -136,6 +150,7 @@ const App: React.FC = () => {
             <Sidebar
               vcdConnected={vcdStatus.connected}
               onVcdSignIn={() => setShowVcdModal(true)}
+              onVcdLogout={handleVcdLogout}
             />
           }
           right={

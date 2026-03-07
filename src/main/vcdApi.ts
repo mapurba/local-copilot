@@ -149,7 +149,7 @@ function addTenantHeaders(
   orgUuid?: string
 ): Record<string, string> {
   if (orgName) headers['x-vmware-vcloud-auth-context'] = orgName;
-  if (orgUuid) headers['x-vmware-vcloud-tenant-context'] = orgUuid;
+  if (orgUuid && orgUuid.trim()) headers['x-vmware-vcloud-tenant-context'] = orgUuid;
   return headers;
 }
 
@@ -264,12 +264,12 @@ export async function listVApps(pageSize = 100): Promise<Record<string, unknown>
   const headers: Record<string, string> = {
     'Accept': 'application/*+xml;version=40.0.0-alpha',
     'Accept-Language': 'en-US,en;q=0.9,en-IN;q=0.8',
-    'Authorization': `Bearer ${ctx.token}`,
+    'Authorization': `Bearer ${ctx.accessToken || ctx.token}`,
     'Content-Type': 'application/vnd.vmware.vcloud.vApp+xml;charset=utf-8',
     'X-Requested-With': 'XMLHttpRequest',
-    'X-VMWARE-VCLOUD-AUTH-CONTEXT': ctx.orgName || '',
-    'X-VMWARE-VCLOUD-TENANT-CONTEXT': ctx.orgUuid || '',
-    'X-vCloud-Authorization': ctx.orgName || '',
+    ...(ctx.orgName ? { 'X-VMWARE-VCLOUD-AUTH-CONTEXT': ctx.orgName } : {}),
+    ...(ctx.orgUuid && ctx.orgUuid.trim() ? { 'X-VMWARE-VCLOUD-TENANT-CONTEXT': ctx.orgUuid } : {}),
+    ...(ctx.sessionToken || ctx.token ? { 'X-vCloud-Authorization': ctx.sessionToken || ctx.token } : {}),
     // Optionally add Referer, User-Agent, etc. if needed
   };
   // Remove any empty headers
@@ -288,6 +288,7 @@ export async function listVApps(pageSize = 100): Promise<Record<string, unknown>
 async function getVappDetailsXml(vappHref: string): Promise<string> {
   const ctx = getVcdContext();
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`);
+  // No org context headers here, as this is a generic vApp details fetch
   const result = await httpsRequest(vappHref, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`get_vapp_details failed: HTTP ${result.status}`);
@@ -397,7 +398,14 @@ export async function listTemplates(nameFilter = ''): Promise<Record<string, unk
   url.searchParams.set('sortAsc', 'name');
   url.searchParams.set('links', 'true');
 
-  const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`);
+  const headers = addTenantHeaders(
+    {
+      ...baseHeaders(ctx.apiVersion, ctx.accessToken || ctx.token, `application/*+json;version=${ctx.apiVersion}`),
+      ...(ctx.sessionToken || ctx.token ? { 'X-vCloud-Authorization': ctx.sessionToken || ctx.token } : {}),
+    },
+    ctx.orgName,
+    ctx.orgUuid
+  );
   const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
 
   if (result.status < 200 || result.status >= 300) {
@@ -435,7 +443,10 @@ async function resolveTemplateVmHref(vappTemplateUuid: string): Promise<string> 
   const ctx = getVcdContext();
   const url = `https://${ctx.host}/api/vAppTemplate/vappTemplate-${vappTemplateUuid}`;
   const headers = addTenantHeaders(
-    baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
+    {
+      ...baseHeaders(ctx.apiVersion, ctx.accessToken || ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
+      ...(ctx.sessionToken || ctx.token ? { 'X-vCloud-Authorization': ctx.sessionToken || ctx.token } : {}),
+    },
     ctx.orgName,
     ctx.orgUuid
   );
@@ -1119,9 +1130,9 @@ export async function createSnapshot(
   const jsonHeaders: Record<string, string> = {
     'Accept': 'application/json;version=40.0.0-alpha',
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${ctx.token}`,
-    'x-vcloud-authorization': ctx.token,
-    'x-vmware-vcloud-tenant-context': ctx.orgUuid || '',
+    'Authorization': `Bearer ${ctx.accessToken || ctx.token}`,
+    'x-vcloud-authorization': ctx.sessionToken || ctx.token,
+    ...(ctx.orgUuid && ctx.orgUuid.trim() ? { 'x-vmware-vcloud-tenant-context': ctx.orgUuid } : {}),
   };
   // Remove Accept-Language and any other extra headers
   // Remove any undefined/empty headers
@@ -1335,10 +1346,10 @@ export async function createVmCopy(
   const xmlHeaders: Record<string, string> = {
     'Accept': 'application/*+xml;version=40.0.0-alpha',
     'Content-Type': 'application/vnd.vmware.vcloud.recomposeVAppParams+xml;charset=UTF-8',
-    'Authorization': `Bearer ${ctx.token}`,
-    'X-vCloud-Authorization': ctx.orgName || '',
-    'X-VMWARE-VCLOUD-TENANT-CONTEXT': ctx.orgUuid || '',
-    'X-VMWARE-VCLOUD-AUTH-CONTEXT': ctx.orgName || '',
+    'Authorization': `Bearer ${ctx.accessToken || ctx.token}`,
+    ...(ctx.sessionToken || ctx.token ? { 'X-vCloud-Authorization': ctx.sessionToken || ctx.token } : {}),
+    ...(ctx.orgUuid && ctx.orgUuid.trim() ? { 'X-VMWARE-VCLOUD-TENANT-CONTEXT': ctx.orgUuid } : {}),
+    ...(ctx.orgName ? { 'X-VMWARE-VCLOUD-AUTH-CONTEXT': ctx.orgName } : {}),
     'X-Requested-With': 'XMLHttpRequest',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0',
     'Referer': `https://${ctx.host}/tenant/${ctx.orgName}/vdcs/${ctx.vdcId}/vm`,
@@ -1580,8 +1591,10 @@ export async function createVmFromTemplate(params: {
 
   const headers = addTenantHeaders(
     {
-      ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
+      ...baseHeaders(ctx.apiVersion, ctx.accessToken || ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
       'Content-Type': 'application/*+xml;charset=UTF-8',
+      'x-vcloud-authorization': ctx.sessionToken || ctx.token,
+      'X-vCloud-Authorization': ctx.sessionToken || ctx.token,
     },
     params.org_name || ctx.orgName,
     params.org_uuid || ctx.orgUuid

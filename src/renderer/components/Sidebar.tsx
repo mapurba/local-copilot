@@ -35,6 +35,7 @@ interface SidebarProps {
   vcdConnected: boolean;
   onVcdSignIn?: () => void;
   onOpenTerminal?: (vm: VM, user?: string, password?: string, command?: string) => void;
+  onVcdLogout?: () => void;
   hasTerminals?: boolean;
   activeTerminalId?: string | null;
   activeTerminal?: { id: string; vmName: string; ip?: string; command: string; username?: string; password?: string } | null;
@@ -49,16 +50,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   vcdConnected,
   onVcdSignIn,
   onOpenTerminal,
-  // DISABLED: These parameters are no longer used since explorer tab was disabled
-  // hasTerminals,
-  // activeTerminalId,
-  // activeTerminal,
-  // DISABLED: Terminal session properties no longer needed
-  // savedSessions,
-  // onOpenSession,
-  // onEditSession,
-  // onDeleteSession,
-  // onRefreshSessions,
+  onVcdLogout,
+  // ...existing code...
 }) => {
   const [activeTab, setActiveTab] = useState<'vms' | 'sessions'>('vms');
 
@@ -116,11 +109,25 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Sidebar Panel */}
       <div className="flex flex-col flex-1 min-h-0 bg-gray-900 border-r border-gray-700 overflow-hidden">
-        {/* Header with title */}
-        <div className="px-4 py-3 bg-gray-800 border-b border-gray-700">
+        {/* Header with title and logout button */}
+        <div className="px-4 py-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
           <h2 className="text-xs font-semibold text-gray-300">
             {tabs.find(t => t.id === activeTab)?.label}
           </h2>
+          {activeTab === 'vms' && vcdConnected && (
+            <button
+              onClick={onVcdLogout}
+              className="ml-2 px-2 py-1 rounded bg-gray-700 text-red-400 hover:bg-red-700 hover:text-white text-xs flex items-center gap-1 transition-all"
+              title="Logout from VCD"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              Logout
+            </button>
+          )}
         </div>
 
         {/* Content Area */}
@@ -156,26 +163,6 @@ const Sidebar: React.FC<SidebarProps> = ({
               )}
             </>
           )}
-
-          {/* Explorer Tab - DISABLED */}
-          {/* {activeTab === 'explorer' && activeTerminal && (
-            <FileBrowser
-              terminalId={activeTerminal.id}
-              command={activeTerminal.command}
-              username={activeTerminal.username}
-              password={activeTerminal.password}
-            />
-          )} */}
-
-          {/* {activeTab === 'sessions' && (
-            <SavedSessionsTab
-              sessions={savedSessions}
-              onOpen={onOpenSession}
-              onEdit={onEditSession}
-              onDelete={onDeleteSession}
-              onRefresh={onRefreshSessions}
-            />
-          )} */}
         </div>
       </div>
     </div>

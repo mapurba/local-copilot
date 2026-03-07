@@ -1,6 +1,8 @@
 export interface VcdContext {
   host: string;
   token: string;
+  accessToken?: string;
+  sessionToken?: string;
   apiVersion: string;
   orgName?: string;
   orgUuid?: string;
@@ -38,6 +40,8 @@ export function setVcdContext(partial: Partial<VcdContext>): VcdContext {
   const current = vcdContext || {
     host: '',
     token: '',
+    accessToken: '',
+    sessionToken: '',
     apiVersion: '38.0',
     rejectUnauthorized: false,
   };
@@ -46,7 +50,7 @@ export function setVcdContext(partial: Partial<VcdContext>): VcdContext {
 }
 
 export function getVcdContext(): VcdContext {
-  if (!vcdContext || !vcdContext.host || !vcdContext.token) {
+  if (!vcdContext || !vcdContext.host || (!vcdContext.token && !vcdContext.accessToken)) {
     throw new Error('VCD context not configured. Call set_vcd_context with host and token.');
   }
   return vcdContext;

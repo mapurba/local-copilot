@@ -35,6 +35,8 @@ interface StoredVcdSession {
   org: string;
   username: string;
   token: string;
+  accessToken?: string;
+  sessionToken?: string;
   apiVersion: string;
   vdcId?: string;
   orgUuid?: string;
@@ -94,7 +96,7 @@ function buildUserId(username: string, org: string): string {
   return `${normalized}@${org.trim()}`;
 }
 
-async function vcdLoginRequest(input: VcdLoginInput): Promise<string> {
+async function vcdLoginRequest(input: VcdLoginInput): Promise<{ accessToken: string; sessionToken: string }> {
   const apiVersion = input.apiVersion || API_VERSION;
   const userId = buildUserId(input.username, input.org);
   const credentials = Buffer.from(`${userId}:${input.password}`, 'utf8').toString('base64');
@@ -141,13 +143,21 @@ async function vcdLoginRequest(input: VcdLoginInput): Promise<string> {
             responseBody: body,
           });
 
-          const token =
+          const accessToken =
             res.headers['x-vmware-vcloud-access-token'] ||
-            res.headers['X-VMWARE-VCLOUD-ACCESS-TOKEN'] ||
+            res.headers['X-VMWARE-VCLOUD-ACCESS-TOKEN'];
+          const sessionToken =
             res.headers['x-vcloud-authorization'] ||
             res.headers['X-VCloud-Authorization'];
-          if (token && typeof token === 'string') {
-            resolve(token);
+
+          const access = typeof accessToken === 'string' ? accessToken : '';
+          const session = typeof sessionToken === 'string' ? sessionToken : '';
+
+          if (access || session) {
+            resolve({
+              accessToken: access || session,
+              sessionToken: session || access,
+            });
             return;
           }
           reject(new Error(`VCD login failed (HTTP ${res.statusCode}): ${body}`));
@@ -178,7 +188,7 @@ export async function vcdSignIn(input: VcdLoginInput): Promise<{ connected: bool
   const apiVersion = input.apiVersion || API_VERSION;
   const orgName = input.org || DEFAULT_ORG;
   const orgDefaults = getDefaultsForOrg(orgName);
-  const token = await vcdLoginRequest(input);
+  const tokens = await vcdLoginRequest(input);
   const dnsServers = input.dnsServers
     ? input.dnsServers.split(',').map((s) => s.trim()).filter(Boolean)
     : DNS_SERVERS;
@@ -187,7 +197,9 @@ export async function vcdSignIn(input: VcdLoginInput): Promise<{ connected: bool
     host: VCD_HOST,
     org: orgName,
     username: input.username,
-    token,
+    token: tokens.accessToken,
+    accessToken: tokens.accessToken,
+    sessionToken: tokens.sessionToken,
     apiVersion,
     vdcId: input.vdcId || orgDefaults.vdcId,
     orgUuid: input.orgUuid || orgDefaults.orgUuid,
@@ -203,6 +215,8 @@ export async function vcdSignIn(input: VcdLoginInput): Promise<{ connected: bool
   setVcdContext({
     host: session.host,
     token: session.token,
+    accessToken: session.accessToken,
+    sessionToken: session.sessionToken,
     apiVersion: session.apiVersion,
     orgName: session.org,
     orgUuid: session.orgUuid,
@@ -227,6 +241,8 @@ export async function vcdStatus(): Promise<{ connected: boolean; user?: string; 
   setVcdContext({
     host: session.host,
     token: session.token,
+    accessToken: session.accessToken,
+    sessionToken: session.sessionToken,
     apiVersion: session.apiVersion,
     orgName: session.org,
     orgUuid: session.orgUuid,
