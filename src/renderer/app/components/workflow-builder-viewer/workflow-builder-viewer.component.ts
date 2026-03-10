@@ -1,15 +1,14 @@
-import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, HostListener, CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { HttpClientModule } from '@angular/common/http';
 import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
 import { WorkflowbuilderModule } from '@iam/workflowbuilder';
-import { HttpClientModule } from '@angular/common/http';
 
 @Component({
   selector: 'app-workflow-builder-viewer',
   standalone: true,
-  imports: [CommonModule, FormsModule, MonacoEditorModule,HttpClientModule, WorkflowbuilderModule,],
-//   schemas: [CUSTOM_ELEMENTS_SCHEMA],
+  imports: [CommonModule, FormsModule, HttpClientModule, MonacoEditorModule, WorkflowbuilderModule],
   template: `
     <div class="flex flex-col h-full">
       <div class="flex items-center justify-between mb-2 px-2">

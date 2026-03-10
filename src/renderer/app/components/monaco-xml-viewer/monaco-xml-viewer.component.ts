@@ -1,12 +1,8 @@
 import { Component, HostListener, Input } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
 
 @Component({
   selector: 'app-monaco-xml-viewer',
-  standalone: true,
-  imports: [CommonModule, FormsModule, MonacoEditorModule],
+  standalone: false,
   template: `
     <div class="editor-host">
       <ngx-monaco-editor

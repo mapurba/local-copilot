@@ -1,12 +1,9 @@
 import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormioModule } from '@iam/angular-formio';
 // import { FormioAuth } from '@iam/angular-formio/auth';
 
 @Component({
   selector: 'app-formio-builder-viewer',
-  standalone: true,
-  imports: [CommonModule, FormioModule],
+  standalone: false,
   template: `
     <div class="flex items-center justify-between mb-2">
       <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">Form View</div>

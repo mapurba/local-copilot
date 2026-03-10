@@ -52,6 +52,7 @@
     "@iam/formiojs": "^4.14.6-next",
     "ngx-monaco-editor-v2": "19.0.2",
     "fast-xml-parser": "^5.4.2",
+    "@microfocus/ias-icons": "1.1.67",
     "monaco-editor": "0.52.2",
     "rxjs": "^7.8.0",
     "tslib": "^2.3.0",

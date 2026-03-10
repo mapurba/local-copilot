@@ -1,12 +1,8 @@
-import { Component, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { ChatComponent } from './components/chat/chat.component';
-import { OnInit } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 
 @Component({
   selector: 'app-root',
-  standalone: true,
-  imports: [CommonModule, ChatComponent],
+  standalone: false,
   template: `
     <div [ngClass]="theme() === 'dark' ? 'dark' : 'light'" class="flex flex-col h-screen w-screen min-h-0 light">
       <div class="flex flex-col flex-1 min-h-0">

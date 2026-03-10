@@ -26,7 +26,7 @@ function createWindow() {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     // In production, load the built files
-    mainWindow.loadFile(path.join(__dirname, '../../dist/renderer-angular/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../../dist/renderer-angular/browser/index.html'));
   }
 
   mainWindow.on('closed', () => {

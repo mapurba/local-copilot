@@ -1,5 +1,4 @@
 import { Component, Input, Output, EventEmitter } from '@angular/core';
-import { CommonModule } from '@angular/common';
 
 export interface FileNode {
   name: string;
@@ -10,8 +9,7 @@ export interface FileNode {
 
 @Component({
   selector: 'app-file-tree',
-  standalone: true,
-  imports: [CommonModule],
+  standalone: false,
   template: `
     <ul class="tree-list select-none">
       <ng-container *ngFor="let node of nodes">

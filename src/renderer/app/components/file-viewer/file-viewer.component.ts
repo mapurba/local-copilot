@@ -1,10 +1,8 @@
 import { Component, Input } from '@angular/core';
-import { CommonModule } from '@angular/common';
 
 @Component({
   selector: 'app-file-viewer',
-  standalone: true,
-  imports: [CommonModule],
+  standalone: false,
   template: `
     <ng-container *ngIf="file && file.endsWith('.xml')">
       <!-- Monaco editor placeholder for XML -->

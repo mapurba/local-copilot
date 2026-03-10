@@ -59,7 +59,8 @@
               }
             ],
             "styles": [
-             "src/renderer/styles.css"
+             "src/renderer/styles.css",
+            "node_modules/@microfocus/ias-icons/dist/ias-icons.css"
             ]
           },
           "configurations": {

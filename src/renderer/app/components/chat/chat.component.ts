@@ -1,10 +1,6 @@
 import { Component, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
 import { CopilotService } from '../../services/copilot.service';
-import { FileTreeComponent, FileNode } from '../file-tree/file-tree.component';
-import { WorkflowBuilderViewerComponent } from '../workflow-builder-viewer/workflow-builder-viewer.component';
-import { FormioBuilderViewerComponent } from '../formio-builder-viewer/formio-builder-viewer.component';
+import { FileNode } from '../file-tree/file-tree.component';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -14,8 +10,7 @@ interface Message {
 
 @Component({
   selector: 'app-chat',
-  standalone: true,
-  imports: [CommonModule, FormsModule, FileTreeComponent, WorkflowBuilderViewerComponent, FormioBuilderViewerComponent],
+  standalone: false,
   templateUrl: './chat.component.html',
   styleUrls: ['./chat.component.css']
 })
