@@ -1,28 +1,15 @@
-  import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { lspClient } from './lspClient';
 import { tokenManager } from './tokenManager';
-import { getModels, streamChatCompletion, chatWithTools, ChatMessage } from './copilotChatApi';
+import { getModels, streamChatCompletion, ChatMessage } from './copilotChatApi';
 import http from 'http';
 import https from 'https';
-import { vcdSignIn, vcdStatus, vcdSignOut } from './vcdAuth';
-import {
-  createVmFromTemplate,
-  powerOnVm,
-  powerOffVm,
-  deleteVm,
-  getVmDetails,
-  allocateFreeIp,
-  createSnapshot,
-  revertSnapshot,
-  createVmCopy,
-  listAllSnapshots,
-  listVApps,
-} from './vcdApi';
-import { getVcdContext } from './vcdStore';
-import { deleteTerminalSession, listSavedTerminalSessions, saveTerminalSession } from './terminalSessionsStore';
 import { checkForUpdates } from './autoUpdater';
-import { listVms } from './vcdApi';
 import { logApi } from './apiLogger';
+import path from 'path';
+import fs from 'fs/promises';
+import { runWorkflowAgent } from './workflow/agent';
+import { getWorkflowOutputDir, setWorkflowOutputDir } from './workflow/storage';
 // DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
 // import {
 //   connectTerminalFileSession,
@@ -55,29 +42,76 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+type FileNode = {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  children?: FileNode[];
+};
+
+function slugify(input: string): string {
+  const normalized = input
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-_]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return normalized.slice(0, 60) || 'workflow';
+}
+
+function isWithin(baseDir: string, targetPath: string): boolean {
+  const resolvedBase = path.resolve(baseDir) + path.sep;
+  const resolvedTarget = path.resolve(targetPath);
+  return resolvedTarget.startsWith(resolvedBase);
+}
+
+async function buildTree(dir: string): Promise<FileNode[]> {
+  try {
+    console.log('[buildTree] Reading directory:', dir);
+    const stat = await fs.stat(dir);
+    if (!stat.isDirectory()) {
+      console.error('[buildTree] Path is not a directory:', dir);
+      return [];
+    }
+    
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    console.log('[buildTree] Found', entries.length, 'entries in', dir);
+    
+    const nodes: FileNode[] = [];
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        nodes.push({
+          name: entry.name,
+          path: fullPath,
+          isDirectory: true,
+          children: await buildTree(fullPath),
+        });
+      } else {
+        nodes.push({
+          name: entry.name,
+          path: fullPath,
+          isDirectory: false,
+        });
+      }
+    }
+    const sorted = nodes.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    console.log('[buildTree] Sorted nodes:', sorted.length);
+    return sorted;
+  } catch (err) {
+    console.error('[buildTree] Error building tree for', dir, ':', err);
+    return [];
+  }
+}
+
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
-      // Manual update check from renderer
-      ipcMain.on('check-for-update', async () => {
-        checkForUpdates(mainWindow);
-      });
-    // VCD: List VMs (direct, not via LLM)
-    ipcMain.handle('vcd:listVms', async () => {
-      try {
-        const result = await listVms(200);
-        return result;
-      } catch (err) {
-        return { vms: [], error: err instanceof Error ? err.message : String(err) };
-      }
-    });
-    // VCD: List vApps (direct, not via LLM)
-    ipcMain.handle('vcd:listVapps', async () => {
-      try {
-        const result = await listVApps(200);
-        return result;
-      } catch (err) {
-        return { vapps: [], error: err instanceof Error ? err.message : String(err) };
-      }
-    });
+  // Manual update check from renderer
+  ipcMain.on('check-for-update', async () => {
+    checkForUpdates(mainWindow);
+  });
   // Initialize LSP on startup
   lspClient.start();
   lspClient.initialize().catch((e) => console.error('[IPC] LSP init error:', e));
@@ -151,43 +185,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     return getModels();
   });
 
-  ipcMain.handle('terminal:sessions:list', async () => {
-    try {
-      return { success: true, sessions: listSavedTerminalSessions() };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err), sessions: [] };
-    }
-  });
-
-  ipcMain.handle('terminal:sessions:save', async (_event, input: { id?: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: 'vm' | 'manual' }) => {
-    try {
-      const session = saveTerminalSession({
-        id: input.id,
-        label: input.label,
-        command: input.command,
-        host: input.host,
-        username: input.username,
-        port: input.port,
-        password: input.password,
-        vmName: input.vmName,
-        ip: input.ip,
-        source: input.source,
-        lastUsedAt: Date.now(),
-      });
-      return { success: true, session };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  ipcMain.handle('terminal:sessions:delete', async (_event, input: { id: string }) => {
-    try {
-      return deleteTerminalSession(input.id);
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
   // Chat: Send message and stream response
   ipcMain.handle('copilot:sendChatMessage', async (_event, modelId: string, messages: ChatMessage[]) => {
     streamChatCompletion(
@@ -205,103 +202,119 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     );
     return { started: true };
   });
+  ipcMain.handle('workflow:chooseOutputDir', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory', 'createDirectory'],
+    });
 
-  // Chat: Send message with tool calling support
-  ipcMain.handle('copilot:sendChatMessageWithTools', async (_event, modelId: string, messages: ChatMessage[]) => {
+    if (result.canceled || result.filePaths.length === 0) {
+      console.log('[IPC] Directory selection cancelled');
+      return { cancelled: true };
+    }
+
+    const outputDir = result.filePaths[0];
+    console.log('[IPC] Selected output directory:', outputDir);
+    await setWorkflowOutputDir(outputDir);
+    console.log('[IPC] Saved output directory to storage');
+    return { cancelled: false, path: outputDir };
+  });
+
+  ipcMain.handle('workflow:getOutputDir', async () => {
+    const outputDir = await getWorkflowOutputDir();
+    return { path: outputDir };
+  });
+
+  ipcMain.handle('workflow:listTree', async () => {
     try {
-      console.log('[IPC] sendChatMessageWithTools called');
-      await chatWithTools(
-        modelId,
-        messages,
-        (chunk, type) => {
-          mainWindow.webContents.send('chat:stream-chunk', chunk, type);
-        },
-        () => {
-          mainWindow.webContents.send('chat:stream-end');
-        },
-        (err) => {
-          mainWindow.webContents.send('chat:stream-error', err.message);
-        },
-        (form) => {
-          console.log('[IPC] onVmDraft callback triggered, emitting chat:vm-draft event');
-          console.log('[IPC] Form data:', JSON.stringify(form, null, 2));
-          mainWindow.webContents.send('chat:vm-draft', form);
-        },
-        (form) => {
-          console.log('[IPC] onVmCopyDraft callback triggered, emitting chat:vm-copy-draft event');
-          console.log('[IPC] Copy form data:', JSON.stringify(form, null, 2));
-          mainWindow.webContents.send('chat:vm-copy-draft', form);
-        }
-      );
-      return { started: true };
+      const outputDir = await getWorkflowOutputDir();
+      console.log('[IPC] workflow:listTree, outputDir:', outputDir);
+      if (!outputDir) {
+        console.warn('[IPC] No output folder selected');
+        return { success: false, error: 'No output folder selected.' };
+      }
+      const tree = await buildTree(outputDir);
+      console.log('[IPC] Tree built with', tree.length, 'root items');
+      return { success: true, root: outputDir, tree };
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      mainWindow.webContents.send('chat:stream-error', errorMsg);
-      return { started: false, error: errorMsg };
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[IPC] workflow:listTree failed:', errMsg);
+      return { success: false, error: errMsg };
     }
   });
 
-  // Deploy VM directly from the reviewed form (no LLM involved)
-  ipcMain.handle('vcd:deployVm', async (_event, form: {
-    vm_name: string;
-    template_id: string;
-    template_name?: string;
-    network_name?: string;
-    ip_address?: string;
-    ip_allocation_mode?: string;
-    gateway?: string;
-    dns_servers?: string;
-    power_on?: boolean;
-    storage_profile_id?: string;
-    compute_policy_id?: string;
-    setup_ilm?: boolean;
-    ilm_version?: string;
-    custom_shell_script?: string;
-    custom_env_content?: string;
-  }) => {
+  ipcMain.handle('workflow:readFile', async (_event, filePath: string) => {
+    const outputDir = await getWorkflowOutputDir();
+    if (!outputDir) {
+      return { success: false, error: 'No output folder selected.' };
+    }
+    if (!filePath || !isWithin(outputDir, filePath)) {
+      return { success: false, error: 'Invalid file path.' };
+    }
+    const content = await fs.readFile(filePath, 'utf8');
+    return { success: true, content };
+  });
+
+  ipcMain.handle('workflow:saveFile', async (_event, filePath: string, content: string) => {
+    const outputDir = await getWorkflowOutputDir();
+    if (!outputDir) {
+      return { success: false, error: 'No output folder selected.' };
+    }
+    if (!filePath || !isWithin(outputDir, filePath)) {
+      return { success: false, error: 'Invalid file path.' };
+    }
     try {
-      const ctx = getVcdContext();
-      if (!ctx.vdcId) throw new Error('Missing VDC ID in context.');
-      const dnsList = form.dns_servers
-        ? form.dns_servers.split(',').map((s: string) => s.trim()).filter(Boolean)
-        : ctx.dnsServers || ['15.122.222.53'];
-      const result = await createVmFromTemplate({
-        vdc_id: ctx.vdcId,
-        template_vm_id: form.template_id,
-        vm_name: form.vm_name,
-        template_name: form.template_name || '',
-        org_name: ctx.orgName,
-        org_uuid: ctx.orgUuid,
-        network_name: form.network_name || ctx.networkName || '',
-        ip_address: form.ip_address || '',
-        gateway: form.gateway || ctx.gateway || '',
-        dns_servers: dnsList,
-        power_on: form.power_on ?? true,
-        ip_allocation_mode: form.ip_allocation_mode || 'DHCP',
-        network_adapter_type: 'VMXNET3',
-        storage_profile_id: form.storage_profile_id || ctx.storageProfileId || '',
-        compute_policy_id: form.compute_policy_id || ctx.computePolicyId || '',
-        setup_ilm: form.setup_ilm,
-        ilm_version: form.ilm_version,
-        custom_shell_script: form.custom_shell_script,
-        custom_env_content: form.custom_env_content,
-      });
-      return { success: true, result };
+      await fs.writeFile(filePath, content, 'utf8');
+      return { success: true };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle('vcd:signIn', async (_event, input) => {
-    return vcdSignIn(input);
+  ipcMain.handle('workflow:openOutputDir', async (_event, outputDir: string) => {
+    if (!outputDir) {
+      return { success: false, error: 'Missing output folder path.' };
+    }
+    const result = await shell.openPath(outputDir);
+    if (result) {
+      return { success: false, error: result };
+    }
+    return { success: true };
   });
 
-  ipcMain.handle('vcd:status', async () => {
-    return vcdStatus();
-  });
+  ipcMain.handle('workflow:generate', async (_event, input: { modelId: string; request: string; outputDir?: string }) => {
+    try {
+      const baseOutputDir = input.outputDir || (await getWorkflowOutputDir());
+      if (!baseOutputDir) {
+        throw new Error('No output folder selected. Choose an output directory first.');
+      }
 
-  ipcMain.handle('vcd:signOut', async () => {
-    return vcdSignOut();
+      const { workflowXml, formsJson, critique, plan, folderName = 'workflow' } = await runWorkflowAgent(input.request, input.modelId);
+      
+      // Use LLM-suggested folder name with timestamp to ensure uniqueness
+      const uniqueFolderName = `${folderName}-${Date.now()}`;
+      const outputDir = path.join(baseOutputDir, uniqueFolderName);
+
+      await fs.mkdir(outputDir, { recursive: true });
+      const workflowPath = path.join(outputDir, 'workflow.xml');
+      const formsPath = path.join(outputDir, 'forms.json');
+      await fs.writeFile(workflowPath, workflowXml, 'utf8');
+      await fs.writeFile(formsPath, formsJson, 'utf8');
+
+      return {
+        success: true,
+        outputDir,
+        critique,
+        plan,
+        files: {
+          workflowPath,
+          formsPath,
+        },
+        workflowXml,
+        formsJson,
+      };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle('proxy:http', async (_event, options: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => {
@@ -363,118 +376,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     });
   });
 
-  // VCD: Power on VM (direct API)
-  ipcMain.handle('vcd:powerOnVm', async (_event, vmHref: string) => {
-    try {
-      const result = await powerOnVm(vmHref);
-      return { success: true, result };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // VCD: Power off VM (direct API)
-  ipcMain.handle('vcd:powerOffVm', async (_event, vmHref: string) => {
-    try {
-      const result = await powerOffVm(vmHref);
-      return { success: true, result };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // VCD: Delete VM (stop first, then delete)
-  ipcMain.handle('vcd:deleteVm', async (_event, input: { href: string; powered_on?: boolean }) => {
-    try {
-      const vmHref = input?.href;
-      if (!vmHref) throw new Error('Missing VM href for delete');
-
-      if (input.powered_on) {
-        await powerOffVm(vmHref);
-      }
-
-      // Wait until VM is powered off before delete (best effort)
-      try {
-        const vmId = vmHref.includes('/vm-') ? vmHref.split('/vm-')[1] : '';
-        if (vmId) {
-          for (let i = 0; i < 20; i += 1) {
-            const details = await getVmDetails(vmId);
-            if (details.status === 8 || details.status === '8') break;
-            await new Promise((r) => setTimeout(r, 3000));
-          }
-        }
-      } catch {
-        // Ignore status polling errors; delete may still succeed
-      }
-
-      const result = await deleteVm(vmHref);
-      return { success: true, result };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // VCD: Allocate free IP from registrar
-  ipcMain.handle('vcd:allocateFreeIp', async () => {
-    try {
-      const result = await allocateFreeIp();
-      return result;
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // VCD: Create snapshot
-  ipcMain.handle('vcd:createSnapshot', async (_event, input: { vmNameOrHref: string; name?: string; description?: string; memory?: boolean; quiesce?: boolean }) => {
-    try {
-      const snapshotName = input.name ?? input.description;
-      const result = await createSnapshot(
-        input.vmNameOrHref,
-        snapshotName,
-        input.memory ?? false,
-        input.quiesce ?? false
-      );
-      return { success: true, result };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // VCD: Revert to latest/current snapshot
-  ipcMain.handle('vcd:revertSnapshot', async (_event, input: { vmNameOrHref: string }) => {
-    try {
-      const result = await revertSnapshot(input.vmNameOrHref);
-      return { success: true, result };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // VCD: Create copy/clone of a VM (via vApp recompose)
-  ipcMain.handle('vcd:createVmCopy', async (_event, input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => {
-    try {
-      const result = await createVmCopy(
-        input.vmNameOrHref,
-        input.newVmName,
-        input.targetVappHref,
-        input.powerOn ?? false,
-        input.description
-      );
-      return { success: true, result };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // VCD: List snapshots across tenant
-  ipcMain.handle('vcd:listSnapshots', async () => {
-    try {
-      const result = await listAllSnapshots(200);
-      return { success: true, ...result };
-    } catch (err) {
-      return { success: false, snapshots: [], error: err instanceof Error ? err.message : String(err) };
-    }
-  });
+  // Legacy VCD and VM handlers removed.
 
   // DISABLED: SSH2/SFTP file handlers disabled to prevent antivirus quarantine
   // ipcMain.handle('file:connect', async (_event, options: { terminalId: string; command: string; password?: string }) => {

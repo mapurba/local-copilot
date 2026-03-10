@@ -5,36 +5,28 @@ export interface CopilotAPI {
   signOut: () => Promise<{ success: boolean }>;
   getModels: () => Promise<string[]>;
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
-  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
   onChatStream: (callback: (event: unknown, text: string, type?: string) => void) => () => void;
   onChatEnd: (callback: (event: unknown) => void) => () => void;
   onChatError: (callback: (event: unknown, message: string) => void) => () => void;
-  onVmDraft: (callback: (event: unknown, form: Record<string, unknown>) => void) => () => void;
-  onVmCopyDraft: (callback: (event: unknown, form: Record<string, unknown>) => void) => () => void;
-  deployVm: (form: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
-  listVms: () => Promise<{ count?: number; vms?: Array<Record<string, unknown>>; error?: string }>;
-  listVapps: () => Promise<{ count?: number; vapps?: Array<Record<string, unknown>>; error?: string }>;
-  powerOnVm: (vmHref: string) => Promise<{ success: boolean; result?: unknown; error?: string }>;
-  powerOffVm: (vmHref: string) => Promise<{ success: boolean; result?: unknown; error?: string }>;
-  deleteVm: (input: { href: string; powered_on?: boolean }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
-  allocateFreeIp: () => Promise<{ success: boolean; ip?: string; error?: string }>;
-  createSnapshot: (input: { vmNameOrHref: string; name?: string; description?: string; memory?: boolean; quiesce?: boolean }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
-  revertSnapshot: (input: { vmNameOrHref: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
-  createVmCopy: (input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
-  listSnapshots: () => Promise<{ success: boolean; count?: number; snapshots?: Array<Record<string, unknown>>; error?: string }>;
   proxyRequest: (options: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; headers: Record<string, unknown>; body: string }>;
-  vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
-  vcdStatus: () => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
-  vcdSignOut: () => Promise<{ connected: boolean }>;
-  // DISABLED: Terminal methods removed to prevent antivirus quarantine
-  // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) => Promise<{ success: boolean; terminalId?: string; error?: string }>;
-  // terminalInput: (options: { terminalId: string; data: string }) => Promise<{ success: boolean; error?: string }>;
-  // terminalResize: (options: { terminalId: string; cols: number; rows: number }) => Promise<{ success: boolean; error?: string }>;
-  // terminalClose: (options: { terminalId: string }) => Promise<{ success: boolean; error?: string }>;
-  // terminalQueryCwd: (options: { terminalId: string }) => Promise<{ success: boolean; cwd?: string; error?: string }>;
-  // terminalQuerySshContext: (options: { terminalId: string }) => Promise<{ success: boolean; connected?: boolean; username?: string; host?: string; port?: number; error?: string }>;
-  // onTerminalData: (callback: (event: unknown, data: { terminalId: string; data: string }) => void) => () => void;
-  // listSavedTerminalSessions: () => Promise<{ success: boolean; sessions: Array<{ id: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: string; createdAt: number; lastUsedAt?: number }>; error?: string }>;
-  // saveTerminalSession: (input: { id?: string; label: string; command: string; host?: string; username?: string; port?: number; password?: string; vmName?: string; ip?: string; source?: 'vm' | 'manual' }) => Promise<{ success: boolean; session?: { id: string }; error?: string }>;
-  // deleteTerminalSession: (input: { id: string }) => Promise<{ success: boolean; error?: string }>;
+  chooseWorkflowOutputDir: () => Promise<{ cancelled: boolean; path?: string }>;
+  getWorkflowOutputDir: () => Promise<{ path?: string }>;
+  openWorkflowOutputDir: (outputDir: string) => Promise<{ success: boolean; error?: string }>;
+  listWorkflowTree: () => Promise<{ success: boolean; root?: string; tree?: any[]; error?: string }>;
+  readWorkflowFile: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+  saveWorkflowFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
+  generateWorkflow: (input: { modelId: string; request: string; outputDir?: string }) => Promise<{
+    success: boolean;
+    outputDir?: string;
+    critique?: string;
+    workflowXml?: string;
+    formsJson?: string;
+    plan?: {
+      forms: Array<{ id: string; components: any[] }>;
+      activities: Array<{ id: string; type: string; attributes: Record<string, unknown> }>;
+      flows: Array<{ source: string; target: string }>;
+    };
+    files?: { workflowPath: string; formsPath: string };
+    error?: string;
+  }>;
 }

@@ -1,0 +1,145 @@
+<div class="flex flex-col h-full bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+  <!-- Output Directory Bar -->
+  <div class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-3 py-2 flex items-center justify-between text-xs">
+    <div class="flex items-center gap-2 flex-1 min-w-0">
+      <span class="text-gray-600 dark:text-gray-400 whitespace-nowrap">Output:</span>
+      <p class="font-mono text-blue-600 dark:text-blue-400 truncate text-xs m-0">{{ outputDir || '(not set)' }}</p>
+    </div>
+    <div class="flex gap-1 ml-2">
+      <button
+        (click)="chooseOutputDir()"
+        class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-medium transition whitespace-nowrap">
+        Choose
+      </button>
+      <button
+        [disabled]="!outputDir"
+        (click)="openOutputDir()"
+        class="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-500 text-white rounded text-xs font-medium transition whitespace-nowrap">
+        Open
+      </button>
+    </div>
+  </div>
+
+  <div class="flex-1 min-h-0 flex">
+    <!-- File Tree -->
+    <div class="w-60 min-w-[13rem] border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-2 overflow-auto">
+      <div class="text-[11px] uppercase tracking-wide font-semibold text-gray-500 dark:text-gray-400 mb-2 px-1">Files</div>
+      <div class="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1">
+        <app-file-tree [nodes]="fileTree" [activeFilePath]="activeFilePath" (fileSelected)="onFileSelected($event)"></app-file-tree>
+      </div>
+    </div>
+
+    <!-- Viewer + Chat -->
+    <div class="flex-1 min-h-0 flex flex-col">
+      <!-- Tab Bar -->
+      <div class="flex border-gray-200 dark:border-gray-700  overflow-x-auto bg-gray-50 dark:bg-gray-900">
+        <button
+          (click)="switchToChatTab()"
+          class="px-3 py-1.5 text-xs rounded-t-md border border-b-0 transition-colors whitespace-nowrap"
+          [ngClass]="activeTab === 'chat' ? 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 -mb-px' : 'bg-gray-100 dark:bg-gray-900 border-transparent text-gray-600 dark:text-gray-400 mb-px hover:bg-gray-200 dark:hover:bg-gray-800'">
+          Chat
+        </button>
+
+        <button
+          *ngFor="let f of openFiles"
+          (click)="setActiveFile(f.path)"
+          class="px-3 py-1.5 text-xs rounded-t-md border border-b-0 transition-colors whitespace-nowrap max-w-40"
+          [ngClass]="activeFilePath === f.path && activeTab === 'files' ? 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 -mb-px' : 'bg-gray-100 dark:bg-gray-900 border-transparent text-gray-600 dark:text-gray-400 mb-px hover:bg-gray-200 dark:hover:bg-gray-800'">
+          <span class="truncate inline-block max-w-28 align-middle">{{ f.name }}</span>
+          <span
+            class="ml-2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+            (click)="closeFile(f.path); $event.stopPropagation()">x</span>
+        </button>
+      </div>
+
+      <div class="flex-1 min-h-0 p-2 overflow-hidden">
+        <div *ngIf="activeTab === 'files'" class="h-full flex flex-col border border-gray-200 dark:border-gray-700 rounded overflow-hidden bg-white dark:bg-gray-800">
+          <!-- File action bar -->
+          <div *ngIf="activeFile" class="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-medium text-gray-700 dark:text-gray-300">{{ activeFile.name }}</span>
+              <span *ngIf="activeFile.hasChanges" class="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300 rounded">Modified</span>
+            </div>
+            <button
+              *ngIf="activeFile.hasChanges"
+              (click)="saveActiveFile()"
+              class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-medium transition">
+              Save
+            </button>
+          </div>
+
+          <!-- File content viewers -->
+          <div class="flex-1 min-h-0">
+            <ng-container *ngIf="activeFile && activeFile.kind === 'xml'">
+              <app-workflow-builder-viewer
+                [xml]="activeFile.xml || ''"
+                (xmlChanged)="onWorkflowXmlChanged($event)"
+                (hasChangesUpdate)="onWorkflowHasChangesUpdate($event)">
+              </app-workflow-builder-viewer>
+            </ng-container>
+            <ng-container *ngIf="activeFile && activeFile.kind === 'json'">
+              <app-formio-builder-viewer
+                [formJsonSchema]="activeFile.formSchema ?? null"
+                [formioOptions]="formioOptions"
+                [renderOptions]="formioRenderOptions"
+                (formChanged)="onFormSchemaChanged($event)">
+              </app-formio-builder-viewer>
+            </ng-container>
+            <ng-container *ngIf="!activeFile">
+              <div class="text-sm text-gray-500 dark:text-gray-400 p-4 flex items-center justify-center h-full">Select a file to preview</div>
+            </ng-container>
+          </div>
+        </div>
+
+        <div *ngIf="activeTab === 'chat'" class="chat-shell h-full border border-gray-200 dark:border-gray-700 rounded overflow-hidden bg-white dark:bg-gray-800">
+          <div class="chat-scroll flex-1 overflow-y-auto p-4">
+            <div *ngIf="!messages.length && !isLoading" class="chat-empty">
+              <div class="chat-empty-title">Ask anything or generate a workflow</div>
+              <div class="chat-empty-subtitle">Try: "Create a new hire onboarding workflow with manager approval"</div>
+            </div>
+
+            <div *ngFor="let msg of messages" class="chat-row" [ngClass]="msg.role === 'user' ? 'is-user' : 'is-assistant'">
+              <div class="chat-bubble" [ngClass]="msg.role === 'user' ? 'bubble-user' : 'bubble-assistant'">
+                <p class="chat-text">{{ msg.content }}</p>
+                <p class="chat-time">{{ msg.timestamp | date:'HH:mm:ss' }}</p>
+              </div>
+            </div>
+
+            <div *ngIf="isLoading" class="chat-row is-assistant">
+              <div class="chat-bubble bubble-assistant">
+                <p class="chat-text">Working on it...</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer border-t border-gray-200 dark:border-gray-700 p-3 bg-gray-50 dark:bg-gray-900">
+            <div class="mb-2">
+              <select
+                [(ngModel)]="selectedModel"
+                [disabled]="isLoading"
+                class="p-0 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-xs text-gray-900 dark:text-white">
+                <option *ngFor="let model of models" [value]="model.id">{{ model.label || model.id || 'Model' }}</option>
+              </select>
+            </div>
+
+            <div class="flex gap-2 items-end">
+              <textarea
+                [(ngModel)]="inputText"
+                (keydown)="onKeyDown($event)"
+                [disabled]="isLoading"
+                placeholder="Describe the workflow..."
+                class="flex-1 min-h-[2.5rem] max-h-24 px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 resize-none"
+                rows="2"></textarea>
+              <button
+                (click)="sendMessage()"
+                [disabled]="!inputText.trim() || isLoading"
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 rounded-md text-sm font-semibold transition whitespace-nowrap text-white">
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
