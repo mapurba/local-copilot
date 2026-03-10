@@ -1,4 +1,5 @@
 ﻿import React, { useState, useRef, useEffect, useCallback } from 'react';
+import EditorPane from './EditorPane';
 import ConfirmDialog from './ConfirmDialog';
 import ModelSelector from './ModelSelector';
 import ResponseRenderer from './ResponseRenderer';
@@ -25,6 +26,7 @@ interface VmDraftForm {
   setup_ilm?: boolean;
   ilm_version?: string;
   custom_env_content?: string;
+  custom_shell_script?: string;
 }
 
 interface VmCopyDraftForm {
@@ -83,12 +85,16 @@ const ChatPane: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [useTools, setUseTools] = useState(true);
   const [pendingForm, setPendingForm] = useState<VmDraftForm | null>(null);
+  // Store last known template list for local lookup
+  const lastTemplatesRef = useRef<Array<{ id: string; name: string }>>([]);
   const [pendingCopyForm, setPendingCopyForm] = useState<VmCopyDraftForm | null>(null);
   const [vapps, setVapps] = useState<VApp[]>([]);
   const [vappsLoading, setVappsLoading] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
   const [isCopyingVm, setIsCopyingVm] = useState(false);
   const [fetchingIp, setFetchingIp] = useState(false);
+  const [showShellEditor, setShowShellEditor] = useState(false);
+  const [shellScriptDraft, setShellScriptDraft] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void)[]>([]);
 
@@ -124,6 +130,10 @@ const ChatPane: React.FC = () => {
       console.log('[ChatPane] Form data:', form);
       setIsStreaming(false);
       setPendingCopyForm(null);
+      // If template list is present, store for local lookup
+      if (Array.isArray(form.templates)) {
+        lastTemplatesRef.current = form.templates.map((t: any) => ({ id: String(t.id), name: String(t.name) }));
+      }
       setPendingForm({
         vm_name: String(form.vm_name || ''),
         template_id: String(form.template_id || ''),
@@ -237,6 +247,32 @@ const ChatPane: React.FC = () => {
       updateForm('custom_env_content', content);
     };
     reader.readAsText(file);
+  };
+
+  const handleShellFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !pendingForm) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result;
+      const content = typeof result === 'string' ? result : '';
+      updateForm('custom_shell_script', content);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleEditShellScript = () => {
+    setShellScriptDraft(pendingForm?.custom_shell_script || '');
+    setShowShellEditor(true);
+  };
+
+  const handleSaveShellScript = () => {
+    updateForm('custom_shell_script', shellScriptDraft);
+    setShowShellEditor(false);
+  };
+
+  const handleCancelShellEdit = () => {
+    setShowShellEditor(false);
   };
 
   const updateCopyForm = (key: keyof VmCopyDraftForm, value: string | boolean) => {
@@ -444,7 +480,7 @@ const ChatPane: React.FC = () => {
               </div>
 
               <div className="p-5 space-y-3">
-                {/* VM Name + Template ID */}
+                {/* VM NAME row */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-400 mb-1">VM NAME</label>
@@ -455,6 +491,9 @@ const ChatPane: React.FC = () => {
                       className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                   </div>
+                </div>
+                {/* TEMPLATE ID + TEMPLATE NAME row (no auto-fetch) */}
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-400 mb-1">TEMPLATE ID</label>
                     <input
@@ -462,6 +501,15 @@ const ChatPane: React.FC = () => {
                       value={pendingForm.template_id}
                       onChange={(e) => updateForm('template_id', e.target.value)}
                       className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">TEMPLATE NAME</label>
+                    <input
+                      type="text"
+                      value={pendingForm.template_name || ''}
+                      readOnly
+                      className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 opacity-80 cursor-not-allowed font-mono"
                     />
                   </div>
                 </div>
@@ -590,6 +638,40 @@ const ChatPane: React.FC = () => {
                     </div>
                   </>
                 )}
+
+                {/* Custom Shell Script Upload/Edit */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">CUSTOM SHELL SCRIPT (optional, Linux VMs only)</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="file"
+                      accept=".sh,text/x-shellscript,text/plain"
+                      onChange={handleShellFileChange}
+                      className="text-xs text-gray-400"
+                    />
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded bg-gray-700 text-gray-200 text-xs font-medium hover:bg-gray-600 border border-gray-600"
+                      onClick={handleEditShellScript}
+                    >
+                      {pendingForm.custom_shell_script ? 'Edit Script' : 'Add/Edit Script'}
+                    </button>
+                  </div>
+                  {pendingForm.custom_shell_script && (
+                    <div className="mt-1 text-xs text-green-400">Shell script loaded ({pendingForm.custom_shell_script.length} chars)</div>
+                  )}
+                </div>
+                      {/* Monaco Editor Modal for Shell Script */}
+                      {showShellEditor && (
+                        <EditorPane
+                          language="shell"
+                          value={shellScriptDraft}
+                          onChange={setShellScriptDraft}
+                          onSave={handleSaveShellScript}
+                          onCancel={handleCancelShellEdit}
+                          title="Edit Custom Shell Script"
+                        />
+                      )}
               </div>
 
               {/* Actions */}

@@ -382,40 +382,127 @@ export async function deleteVm(vmHref: string): Promise<Record<string, unknown>>
   return { status: 'success', action: 'delete', vm_href: vmHref };
 }
 
-export async function listTemplates(nameFilter = ''): Promise<Record<string, unknown>> {
+
+// Utility: extract likely OS and version keywords from user query
+function extractOsAndVersionKeywords(userQuery: string): { os: string[], versions: string[] } {
+  const osPatterns = [
+    /ubuntu/i,
+    /sles/i,
+    /suse/i,
+    /centos/i,
+    /rhel/i,
+    /windows/i,
+    /debian/i,
+    /oracle/i,
+    /almalinux/i,
+    /rocky/i,
+    /red ?hat/i,
+    /kali/i,
+    /fedora/i,
+    /opensuse/i,
+    /amazon/i,
+    /arch/i,
+    /macos/i,
+    /osx/i
+  ];
+  const versionPatterns = [
+    /\b\d{2}\.\d{2}\b/g, // e.g. 22.04
+    /\b\d{1,2}(?: SP\d+)?\b/gi, // e.g. 15 SP7, 7 SP2
+    /\b\d{4}\b/g, // e.g. 2022
+    /sp\d+/gi // e.g. sp7
+  ];
+  const os: string[] = [];
+  for (const pat of osPatterns) {
+    const m = userQuery.match(pat);
+    if (m) os.push(m[0].toLowerCase());
+  }
+  const versions: string[] = [];
+  for (const pat of versionPatterns) {
+    const found = userQuery.match(pat);
+    if (found) versions.push(...found.map((v) => v.toLowerCase()));
+  }
+  return { os, versions };
+}
+
+export async function listTemplates(userQuery = ''): Promise<Record<string, unknown>> {
   const ctx = getVcdContext();
-  const filter = nameFilter.trim()
-    ? `((isExpired==false);(name==*${nameFilter.trim()}*))`
-    : '((isExpired==false))';
+  const { os, versions } = extractOsAndVersionKeywords(userQuery);
+  let templates: any[] = [];
+  let total = 0;
+  let count = 0;
+  let triedAll = false;
 
-  const url = new URL(`https://${ctx.host}/api/query`);
-  url.searchParams.set('type', 'vAppTemplate');
-  url.searchParams.set('format', 'records');
-  url.searchParams.set('page', '1');
-  url.searchParams.set('pageSize', '15');
-  url.searchParams.set('filterEncoded', 'true');
-  url.searchParams.set('filter', filter);
-  url.searchParams.set('sortAsc', 'name');
-  url.searchParams.set('links', 'true');
-
-  const headers = addTenantHeaders(
-    {
-      ...baseHeaders(ctx.apiVersion, ctx.accessToken || ctx.token, `application/*+json;version=${ctx.apiVersion}`),
-      ...(ctx.sessionToken || ctx.token ? { 'X-vCloud-Authorization': ctx.sessionToken || ctx.token } : {}),
-    },
-    ctx.orgName,
-    ctx.orgUuid
-  );
-  const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
-
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`list_templates failed: HTTP ${result.status}`);
+  // Helper to fetch a page of templates
+  async function fetchTemplatesPage(nameFilter: string, page: number = 1): Promise<{ records: any[], total: number }> {
+    const filter = nameFilter.trim()
+      ? `((isExpired==false);(name==*${nameFilter.trim()}*))`
+      : '((isExpired==false))';
+    const url = new URL(`https://${ctx.host}/api/query`);
+    url.searchParams.set('type', 'vAppTemplate');
+    url.searchParams.set('format', 'records');
+    url.searchParams.set('page', String(page)); // Always set page for pagination
+    url.searchParams.set('pageSize', '100');
+    url.searchParams.set('filterEncoded', 'true');
+    url.searchParams.set('filter', filter);
+    url.searchParams.set('sortAsc', 'name');
+    url.searchParams.set('links', 'true');
+    const headers = addTenantHeaders(
+      {
+        ...baseHeaders(ctx.apiVersion, ctx.accessToken || ctx.token, `application/*+json;version=${ctx.apiVersion}`),
+        ...(ctx.sessionToken || ctx.token ? { 'X-vCloud-Authorization': ctx.sessionToken || ctx.token } : {}),
+      },
+      ctx.orgName,
+      ctx.orgUuid
+    );
+    const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+    if (result.status < 200 || result.status >= 300) {
+      throw new Error(`list_templates failed: HTTP ${result.status}`);
+    }
+    const data = jsonParseSafe(result.body) as { record?: Record<string, unknown>[]; total?: number } | null;
+    return { records: data?.record || [], total: data?.total ?? 0 };
   }
 
-  const data = jsonParseSafe(result.body) as { record?: Record<string, unknown>[]; total?: number } | null;
-  const records = data?.record || [];
+  // 1. Try searching by OS keyword(s)
+  for (const osKey of os) {
+    const { records, total: t } = await fetchTemplatesPage(osKey, 1);
+    if (records.length > 0) {
+      templates = records;
+      total = t;
+      count = records.length;
+      break;
+    }
+  }
 
-  const templates = records.map((t) => {
+  // 2. If found, optionally filter by version keyword(s)
+  if (templates.length > 0 && versions.length > 0) {
+    const lowerVersions = versions.map((v) => v.toLowerCase());
+    templates = templates.filter((tpl) => {
+      const name = String(tpl.name || '').toLowerCase();
+      return lowerVersions.some((ver) => name.includes(ver));
+    });
+    count = templates.length;
+  }
+
+  // 3. If nothing found, fetch all pages (no filter)
+  if (templates.length === 0) {
+    triedAll = true;
+    let page = 1;
+    let allRecords: any[] = [];
+    let totalAll = 0;
+    while (true) {
+      const { records, total: t } = await fetchTemplatesPage('', page);
+      if (page === 1) totalAll = t;
+      allRecords = allRecords.concat(records);
+      if (records.length < 100) break;
+      page++;
+    }
+    templates = allRecords;
+    total = totalAll;
+    count = allRecords.length;
+  }
+
+  // Map to output structure
+  const mapped = templates.map((t) => {
     const href = String(t.href || '');
     let templateId = href.includes('/vAppTemplate/') ? href.split('/vAppTemplate/').pop() || '' : '';
     for (const prefix of ['vappTemplate-', 'vm-']) {
@@ -436,7 +523,7 @@ export async function listTemplates(nameFilter = ''): Promise<Record<string, unk
     };
   });
 
-  return { count: templates.length, total: data?.total ?? templates.length, templates };
+  return { count, total, templates: mapped, triedAll };
 }
 
 async function resolveTemplateVmHref(vappTemplateUuid: string): Promise<string> {
@@ -464,7 +551,8 @@ function getUnifiedCustomizationScript(
   dnsServers: string[],
   setupIlm = false,
   ilmVersion = 'latest',
-  customEnvContent?: string
+  customEnvContent?: string,
+  customShellScript?: string
 ): string {
   const ipWithCidr = ipAddress.includes('/') ? ipAddress : `${ipAddress}/21`;
   const dnsPrimary = dnsServers.length ? dnsServers[0] : '15.122.222.53';
@@ -863,6 +951,11 @@ if [ -f /root/linuxsysprep.sh ]; then
     exec /root/linuxsysprep.sh
 fi
 
+# ============================================================================
+# CUSTOM USER SHELL SCRIPT (if provided by user)
+# ============================================================================
+__CUSTOM_SHELL_SCRIPT_INJECTION__
+
 echo "VCD Customization Completed" >> "$LOG"
 `;
 
@@ -871,6 +964,12 @@ echo "VCD Customization Completed" >> "$LOG"
     ? `if [ "$SETUP_ILM" = "true" ]; then\n  echo "Writing custom .env file..." >> "$LOG"\n  cat > /root/uploaded.env <<'EOF_ENV'\n${customEnvContent.replace(/\\/g, '\\\\').replace(/`/g, '\`').replace(/\$/g, '\$')}\nEOF_ENV\n  echo "Custom .env file written." >> "$LOG"\nfi`
     : `# No custom .env provided; will use default .env from compose zip`;
   script = script.replace(/__CUSTOM_ENV_INJECTION__/g, envInjectionBlock);
+
+  // Replace custom shell script injection placeholder
+  const customShellScriptBlock = customShellScript
+    ? `echo "Executing custom user shell script..." >> "$LOG"\n${customShellScript.replace(/\\/g, '\\\\').replace(/`/g, '\`').replace(/\$/g, '\$')}\necho "Custom user shell script completed." >> "$LOG"`
+    : `# No custom shell script provided`;
+  script = script.replace(/__CUSTOM_SHELL_SCRIPT_INJECTION__/g, customShellScriptBlock);
   
   script = script
     .replace(/__IP_WITH_CIDR__/g, ipWithCidr)
@@ -1464,6 +1563,7 @@ export async function createVmFromTemplate(params: {
   setup_ilm?: boolean;
   ilm_version?: string;
   custom_script?: string;
+  custom_shell_script?: string;
   custom_env_content?: string;
 }): Promise<Record<string, unknown>> {
   const ctx = getVcdContext();
@@ -1532,7 +1632,8 @@ export async function createVmFromTemplate(params: {
       params.dns_servers,
       params.setup_ilm,
       params.ilm_version,
-      updatedEnvContent
+      updatedEnvContent,
+      params.custom_shell_script
     );
   }
 
@@ -1879,4 +1980,72 @@ export async function allocateFreeIp(): Promise<{ success: boolean; ip?: string;
     req.write(payload);
     req.end();
   });
+}
+
+/**
+ * Fetch template details by template ID (UUID, not href)
+ * Returns { template_id, name, catalog, status, description, cpus, memory_mb }
+ */
+export async function getTemplateDetailById(templateId: string): Promise<Record<string, unknown>> {
+  const ctx = getVcdContext();
+  if (!templateId) throw new Error('Missing templateId');
+  // Compose href for vAppTemplate
+  const href = `https://${ctx.host}/api/vAppTemplate/vappTemplate-${templateId}`;
+  const headers = {
+    ...baseHeaders(ctx.apiVersion, ctx.accessToken || ctx.token, `application/*+json;version=${ctx.apiVersion}`),
+    ...(ctx.sessionToken || ctx.token ? { 'X-vCloud-Authorization': ctx.sessionToken || ctx.token } : {}),
+    ...(ctx.orgUuid && ctx.orgUuid.trim() ? { 'X-VMWARE-VCLOUD-TENANT-CONTEXT': ctx.orgUuid } : {}),
+    ...(ctx.orgName ? { 'X-VMWARE-VCLOUD-AUTH-CONTEXT': ctx.orgName } : {}),
+  };
+  const result = await httpsRequest(href, 'GET', headers, undefined, 20000, ctx.rejectUnauthorized);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`getTemplateDetailById failed: HTTP ${result.status}`);
+  }
+  // Try JSON first
+  const data = jsonParseSafe(result.body) as Record<string, unknown> | null;
+  let name = '', description = '', catalog = '', status = '', cpus = '', memory_mb = '';
+  if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+    if (typeof data.name === 'string') name = data.name;
+    if (typeof data.description === 'string') description = data.description;
+    if (typeof data.catalogName === 'string') catalog = data.catalogName;
+    if (typeof data.status === 'string') status = data.status;
+    if (data.VirtualHardwareSection && typeof data.VirtualHardwareSection === 'object') {
+      const hw = data.VirtualHardwareSection as Record<string, unknown>;
+      if (typeof hw['NumberOfCpus'] === 'string' || typeof hw['NumberOfCpus'] === 'number') cpus = String(hw['NumberOfCpus']);
+      else if (typeof hw['numberOfCpus'] === 'string' || typeof hw['numberOfCpus'] === 'number') cpus = String(hw['numberOfCpus']);
+      if (typeof hw['MemoryMB'] === 'string' || typeof hw['MemoryMB'] === 'number') memory_mb = String(hw['MemoryMB']);
+      else if (typeof hw['memoryAllocationMB'] === 'string' || typeof hw['memoryAllocationMB'] === 'number') memory_mb = String(hw['memoryAllocationMB']);
+    }
+  } else {
+    // Fallback: try to parse as XML
+    try {
+      const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '', allowBooleanAttributes: true });
+      const xml = parser.parse(result.body);
+      // vAppTemplate root
+      const tpl = xml && (xml.VAppTemplate || xml['VAppTemplate']) ? (xml.VAppTemplate || xml['VAppTemplate']) : xml;
+      if (typeof tpl.name === 'string') name = tpl.name;
+      else if (typeof tpl['@_name'] === 'string') name = tpl['@_name'];
+      if (typeof tpl.Description === 'string') description = tpl.Description;
+      if (typeof tpl.catalogName === 'string') catalog = tpl.catalogName;
+      if (typeof tpl.status === 'string') status = tpl.status;
+      if (tpl.VirtualHardwareSection) {
+        const hw = tpl.VirtualHardwareSection;
+        if (typeof hw.NumberOfCpus === 'string' || typeof hw.NumberOfCpus === 'number') cpus = String(hw.NumberOfCpus);
+        else if (typeof hw.numberOfCpus === 'string' || typeof hw.numberOfCpus === 'number') cpus = String(hw.numberOfCpus);
+        if (typeof hw.MemoryMB === 'string' || typeof hw.MemoryMB === 'number') memory_mb = String(hw.MemoryMB);
+        else if (typeof hw.memoryAllocationMB === 'string' || typeof hw.memoryAllocationMB === 'number') memory_mb = String(hw.memoryAllocationMB);
+      }
+    } catch {
+      // Parsing failed
+    }
+  }
+  return {
+    template_id: templateId,
+    name,
+    catalog,
+    status,
+    description,
+    cpus,
+    memory_mb,
+  };
 }

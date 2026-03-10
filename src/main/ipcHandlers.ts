@@ -256,6 +256,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     compute_policy_id?: string;
     setup_ilm?: boolean;
     ilm_version?: string;
+    custom_shell_script?: string;
     custom_env_content?: string;
   }) => {
     try {
@@ -282,6 +283,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         compute_policy_id: form.compute_policy_id || ctx.computePolicyId || '',
         setup_ilm: form.setup_ilm,
         ilm_version: form.ilm_version,
+        custom_shell_script: form.custom_shell_script,
         custom_env_content: form.custom_env_content,
       });
       return { success: true, result };

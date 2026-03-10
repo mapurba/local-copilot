@@ -37,7 +37,15 @@ const {
 } = require('@langchain/core/messages');
 
 const CHAT_API_BASE = 'api.githubcopilot.com';
-
+import { ipcMain } from 'electron';
+ipcMain.handle('vcd:getTemplateDetailById', async (_event, templateId: string) => {
+  try {
+    const detail = await getTemplateDetailById(templateId);
+    return detail;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+});
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -177,15 +185,28 @@ const listStoppedVmsTool = lcTool(
 
 const listTemplatesTool = lcTool(
   async (args) => {
-    console.log(`[TOOL] list_templates called with name_filter="${args.name_filter ?? ''}"`);
-    const result = await listTemplates(args.name_filter ?? '');
-    return JSON.stringify(result);
+    // Pass the user's name_filter (if present) as the userQuery to listTemplates
+    const userQuery = args.name_filter ?? '';
+    console.log(`[TOOL] list_templates called with userQuery="${userQuery}"`);
+    const result = await listTemplates(userQuery);
+    // Only return key properties to the LLM for selection
+    const templates = Array.isArray(result?.templates) ? result.templates : result;
+    // Map to a minimal structure for LLM reasoning (match vcdApi.ts property names)
+    const minimalTemplates = templates.map((tpl) => ({
+      id: tpl.template_id,
+      name: tpl.name,
+      cpu: tpl.cpus,
+      memory: tpl.memory_mb,
+      catalog: tpl.catalog,
+      description: tpl.description,
+    }));
+    return JSON.stringify({ templates: minimalTemplates });
   },
   {
     name: 'list_templates',
-    description: 'List vApp templates. Optional name filter (e.g., "ubuntu" or "sles").',
+    description: 'List vApp templates. Uses name_filter or user query for best match. Returns key properties for LLM selection.',
     schema: z.object({
-      name_filter: z.string().optional().describe('Template name filter'),
+      name_filter: z.string().optional().describe('Template name filter or user query'),
     }),
   }
 );
