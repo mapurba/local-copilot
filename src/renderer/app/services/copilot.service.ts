@@ -89,6 +89,26 @@ export class CopilotService {
     });
   }
 
+  onToolCalled(callback: (toolName: string, result: any) => void): () => void {
+    if (!this.api?.onToolCalled) {
+      console.warn('Tool callbacks not available');
+      return () => {};
+    }
+    return this.api.onToolCalled((_event: unknown, data: { toolName: string; result: any }) => {
+      callback(data.toolName, data.result);
+    });
+  }
+
+  onToolError(callback: (toolName: string, error: string) => void): () => void {
+    if (!this.api?.onToolError) {
+      console.warn('Tool error callbacks not available');
+      return () => {};
+    }
+    return this.api.onToolError((_event: unknown, data: { toolName: string; error: string }) => {
+      callback(data.toolName, data.error);
+    });
+  }
+
   async getModels(): Promise<Array<{ id: string; label: string }>> {
     const models = await this.api?.getModels?.();
     if (Array.isArray(models) && typeof models[0] === 'string') {
@@ -97,8 +117,77 @@ export class CopilotService {
     return models ?? [];
   }
 
+  async getAvailableTools(): Promise<Array<{ name: string; category: string; description: string }>> {
+    if (!this.api?.toolsList) throw new Error('Tools API not available');
+    return this.api.toolsList();
+  }
+
+  async callTool(toolName: string, ...args: any[]): Promise<any> {
+    if (!this.api?.callTool) throw new Error('Tools API not available');
+    return this.api.callTool(toolName, ...args);
+  }
+
   checkForUpdate(): void {
     this.api?.checkForUpdate?.();
+  }
+
+  // Math tools
+  async mathAdd(a: number, b: number): Promise<{ result: number }> {
+    if (!this.api?.mathAdd) throw new Error('Math API not available');
+    return this.api.mathAdd(a, b);
+  }
+
+  async mathSubtract(a: number, b: number): Promise<{ result: number }> {
+    if (!this.api?.mathSubtract) throw new Error('Math API not available');
+    return this.api.mathSubtract(a, b);
+  }
+
+  async mathMultiply(a: number, b: number): Promise<{ result: number }> {
+    if (!this.api?.mathMultiply) throw new Error('Math API not available');
+    return this.api.mathMultiply(a, b);
+  }
+
+  async mathDivide(a: number, b: number): Promise<{ result: number; error?: string }> {
+    if (!this.api?.mathDivide) throw new Error('Math API not available');
+    return this.api.mathDivide(a, b);
+  }
+
+  async mathSolveLinear(a: number, b: number): Promise<{ root: number; error?: string }> {
+    if (!this.api?.mathSolveLinear) throw new Error('Math API not available');
+    return this.api.mathSolveLinear(a, b);
+  }
+
+  async mathSolveLineEquation(a: number, b: number, c: number): Promise<{ x: number; error?: string }> {
+    if (!this.api?.mathSolveLineEquation) throw new Error('Math API not available');
+    return this.api.mathSolveLineEquation(a, b, c);
+  }
+
+  async mathSolveQuadratic(
+    a: number,
+    b: number,
+    c: number
+  ): Promise<{
+    discriminant: number;
+    roots: number[];
+    realRoots: number[];
+    complexRoots?: Array<{ real: number; imaginary: number }>;
+  }> {
+    if (!this.api?.mathSolveQuadratic) throw new Error('Math API not available');
+    return this.api.mathSolveQuadratic(a, b, c);
+  }
+
+  async mathEvaluatePolynomial(coefficients: number[], x: number): Promise<{ value: number; error?: string }> {
+    if (!this.api?.mathEvaluatePolynomial) throw new Error('Math API not available');
+    return this.api.mathEvaluatePolynomial(coefficients, x);
+  }
+
+  async mathFindPolynomialRoots(
+    coefficients: number[],
+    initialGuess: number = 0,
+    iterations: number = 10
+  ): Promise<{ roots: number[]; attempts: number; converged: boolean; error?: string }> {
+    if (!this.api?.mathFindPolynomialRoots) throw new Error('Math API not available');
+    return this.api.mathFindPolynomialRoots(coefficients, initialGuess, iterations);
   }
 
   isAvailable(): boolean {

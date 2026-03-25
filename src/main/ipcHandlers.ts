@@ -6,6 +6,7 @@ import http from 'http';
 import https from 'https';
 import { checkForUpdates } from './autoUpdater';
 import { logApi } from './apiLogger';
+import { toolRegistry, initializeDefaultTools } from './tools';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -26,6 +27,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
+  // Initialize tools registry
+  initializeDefaultTools();
+
   // Manual update check from renderer
   ipcMain.on('check-for-update', async () => {
     checkForUpdates(mainWindow);
@@ -119,6 +123,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       },
       (err) => {
         mainWindow.webContents.send('chat:stream-error', err.message);
+      },
+      async (toolName: string, toolArgs: any) => {
+        // Handle tool calls from the LLM
+        try {
+          const result = await toolRegistry.call(toolName, ...(Array.isArray(toolArgs) ? toolArgs : [toolArgs]));
+          mainWindow.webContents.send('chat:tool-called', { toolName, result });
+          return result;
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          mainWindow.webContents.send('chat:tool-error', { toolName, error });
+          throw new Error(error);
+        }
       }
     );
     return { started: true };
@@ -188,12 +204,61 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   // ============================================================================
+  // TOOLS HANDLER (Generic dispatcher for all registered tools)
+  // ============================================================================
+  ipcMain.handle('tools:call', async (_event, toolName: string, ...args: any[]) => {
+    return toolRegistry.call(toolName, ...args);
+  });
+
+  ipcMain.handle('tools:list', async (_event) => {
+    return toolRegistry.list();
+  });
+
+  // ============================================================================
+  // MATH TOOLS (Legacy direct handlers - maintained for backwards compatibility)
+  // ============================================================================
+  ipcMain.handle('custom:mathAdd', async (_event, a: number, b: number) => {
+    return toolRegistry.call('custom:mathAdd', a, b);
+  });
+
+  ipcMain.handle('custom:mathSubtract', async (_event, a: number, b: number) => {
+    return toolRegistry.call('custom:mathSubtract', a, b);
+  });
+
+  ipcMain.handle('custom:mathMultiply', async (_event, a: number, b: number) => {
+    return toolRegistry.call('custom:mathMultiply', a, b);
+  });
+
+  ipcMain.handle('custom:mathDivide', async (_event, a: number, b: number) => {
+    return toolRegistry.call('custom:mathDivide', a, b);
+  });
+
+  ipcMain.handle('custom:mathSolveLinear', async (_event, a: number, b: number) => {
+    return toolRegistry.call('custom:mathSolveLinear', a, b);
+  });
+
+  ipcMain.handle('custom:mathSolveLineEquation', async (_event, a: number, b: number, c: number) => {
+    return toolRegistry.call('custom:mathSolveLineEquation', a, b, c);
+  });
+
+  ipcMain.handle('custom:mathSolveQuadratic', async (_event, a: number, b: number, c: number) => {
+    return toolRegistry.call('custom:mathSolveQuadratic', a, b, c);
+  });
+
+  ipcMain.handle('custom:mathEvaluatePolynomial', async (_event, coefficients: number[], x: number) => {
+    return toolRegistry.call('custom:mathEvaluatePolynomial', coefficients, x);
+  });
+
+  ipcMain.handle('custom:mathFindPolynomialRoots', async (_event, coefficients: number[], initialGuess?: number, iterations?: number) => {
+    return toolRegistry.call('custom:mathFindPolynomialRoots', coefficients, initialGuess, iterations);
+  });
+
+  // ============================================================================
   // EXTENSION POINT FOR CUSTOM HANDLERS
   // ============================================================================
-  // Add your custom IPC handlers here. Example:
-  //
-  // ipcMain.handle('custom:myHandler', async (_event, param: string) => {
-  //   console.log('Custom handler called with:', param);
-  //   return { success: true, message: 'Handler executed' };
-  // });
+  // To add a new tool category, create a module in src/main/tools/, then:
+  // 1. Import it in src/main/tools/registry.ts
+  // 2. Register tools in initializeDefaultTools()
+  // 3. Expose them in src/preload/preload.ts
+  // See docs/CUSTOM_TOOLS_GUIDE.md for full walkthrough.
 }

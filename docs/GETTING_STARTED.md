@@ -82,6 +82,8 @@ Keep the same pattern:
 3. Wrap it in `src/renderer/app/services/copilot.service.ts`.
 4. Call it from an Angular component.
 
+For a full beginner walkthrough, see [docs/CUSTOM_TOOLS_GUIDE.md](./CUSTOM_TOOLS_GUIDE.md).
+
 ## Cleanup Policy
 
 This repo intentionally avoids:

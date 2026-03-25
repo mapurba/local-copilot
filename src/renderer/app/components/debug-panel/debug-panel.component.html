@@ -1,0 +1,68 @@
+<div class="debug-panel" [class.collapsed]="!isExpanded">
+  <!-- Header -->
+  <div class="debug-header">
+    <div class="debug-header-title">
+      <button (click)="togglePanel()" class="debug-toggle-btn">
+        {{ isExpanded ? '▼' : '▶' }} DEBUG CONSOLE
+      </button>
+    </div>
+    <div class="debug-header-actions">
+      <button (click)="clearLogs()" class="debug-action-btn" title="Clear logs">
+        Clear
+      </button>
+      <button (click)="exportLogs()" class="debug-action-btn" title="Export logs">
+        Export
+      </button>
+    </div>
+  </div>
+
+  <!-- Panel Content -->
+  <div *ngIf="isExpanded" class="debug-content">
+    <!-- Toolbar -->
+    <div class="debug-toolbar">
+      <div class="debug-search">
+        <input
+          type="text"
+          placeholder="Search logs..."
+          [(ngModel)]="searchText"
+          (input)="onSearchChange(searchText)"
+          class="debug-search-input"
+        />
+      </div>
+      <div class="debug-filters">
+        <button
+          *ngFor="let filter of filterOptions"
+          (click)="onFilterChange(filter)"
+          [class.active]="selectedFilter === filter"
+          class="debug-filter-btn">
+          {{ filter | uppercase }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Logs Container -->
+    <div class="debug-logs-scroll">
+      <div *ngIf="filteredLogs.length === 0" class="debug-empty">
+        <p>No logs to display</p>
+      </div>
+
+      <div *ngFor="let log of filteredLogs" [attr.data-type]="log.type" class="debug-log-entry">
+        <!-- Log Header -->
+        <div class="debug-log-header" (click)="toggleLog(log.id)">
+          <span class="debug-log-icon">{{ getLogIcon(log.type) }}</span>
+          <span class="debug-log-time">{{ log.timestamp | date:'HH:mm:ss.SSS' }}</span>
+          <span class="debug-log-type" [class]="'type-' + log.type">{{ log.type }}</span>
+          <span class="debug-log-message">{{ log.message }}</span>
+          <span *ngIf="log.details" class="debug-log-expand">
+            {{ isLogExpanded(log.id) ? '▼' : '▶' }}
+          </span>
+        </div>
+
+        <!-- Log Details -->
+        <div *ngIf="isLogExpanded(log.id) && log.details" class="debug-log-details">
+          <pre>{{ log.details | json }}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,6 +1,7 @@
 import https from 'https';
 import { tokenManager } from './tokenManager';
 import { logApi } from './apiLogger';
+import { toolRegistry } from './tools';
 
 const CHAT_API_BASE = 'api.githubcopilot.com';
 
@@ -196,28 +197,36 @@ function extractChunkContent(payload: string): string {
 }
 
 function createChatBody(modelId: string, messages: ChatMessage[]) {
-  return {
+  const body: any = {
     model: modelId,
     temperature: 0,
     stream: false,
     messages,
   };
-}
 
-export async function getModels(): Promise<string[]> {
-  try {
-    const token = await getValidToken();
-    const response = await httpsGet('/models', getHeaders(token)) as { data?: Array<{ id: string }> };
-
-    if (response?.data && Array.isArray(response.data)) {
-      return response.data.map((m) => m.id);
-    }
-
-    return ['gpt-4', 'gpt-4o', 'claude-3.5-sonnet', 'o1-preview'];
-  } catch (e) {
-    console.error('[ChatAPI] getModels error:', e);
-    return ['gpt-4', 'gpt-4o', 'claude-3.5-sonnet', 'o1-preview'];
+  // Add available tools to the request
+  const tools = toolRegistry.list();
+  if (tools.length > 0) {
+    body.tools = tools.map((tool) => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: {
+          type: 'object',
+          properties: {
+            // Tools are dynamically defined; accept flexible parameters
+            args: {
+              type: 'array',
+              description: 'Arguments to pass to the tool',
+            },
+          },
+        },
+      },
+    }));
   }
+
+  return body;
 }
 
 export function streamChatCompletion(
@@ -226,7 +235,8 @@ export function streamChatCompletion(
   onChunk: (chunk: string) => void,
   onEnd: () => void,
   onError: (err: Error) => void,
-  systemPrompt = 'You are a helpful assistant.'
+  onToolCall?: (toolName: string, args: any) => Promise<any>,
+  systemPrompt = 'You are a helpful assistant. You have access to various tools for math calculations and other tasks. When a user asks a question that can be solved with a tool, use the appropriate tool and explain the result.'
 ): void {
   getValidToken()
     .then((token) => {
@@ -337,6 +347,22 @@ export function streamChatCompletion(
       }
       onError(new Error(errorMessage));
     });
+}
+
+export async function getModels(): Promise<string[]> {
+  try {
+    const token = await getValidToken();
+    const response = await httpsGet('/models', getHeaders(token)) as { data?: Array<{ id: string }> };
+
+    if (response?.data && Array.isArray(response.data)) {
+      return response.data.map((m) => m.id);
+    }
+
+    return ['gpt-4', 'gpt-4o', 'claude-3.5-sonnet', 'o1-preview'];
+  } catch (e) {
+    console.error('[ChatAPI] getModels error:', e);
+    return ['gpt-4', 'gpt-4o', 'claude-3.5-sonnet', 'o1-preview'];
+  }
 }
 
 function parseJsonFromResponse(text: string): unknown {

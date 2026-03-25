@@ -22,6 +22,7 @@ npm run build:electron
 - Angular renderer with a single chat screen
 - Preload bridge exposing a small API surface
 - One concise setup guide in [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md)
+- Beginner custom tool guide in [docs/CUSTOM_TOOLS_GUIDE.md](./docs/CUSTOM_TOOLS_GUIDE.md)
 
 ## Project Layout
 
