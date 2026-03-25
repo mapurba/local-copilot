@@ -1,9 +1,8 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, DestroyRef, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DebugLoggerService, DebugLog } from '../../services/debug-logger.service';
-import { Subject } from 'rxjs';
-import { takeUntil } from 'rxjs/operators';
 
 @Component({
   selector: 'app-debug-panel',
@@ -12,7 +11,7 @@ import { takeUntil } from 'rxjs/operators';
   templateUrl: './debug-panel.component.html',
   styleUrls: ['./debug-panel.component.css']
 })
-export class DebugPanelComponent implements OnInit, OnDestroy {
+export class DebugPanelComponent implements OnInit {
   logs: DebugLog[] = [];
   filteredLogs: DebugLog[] = [];
   selectedFilter: 'all' | 'info' | 'debug' | 'error' | 'tool' | 'api' | 'thinking' = 'all';
@@ -28,7 +27,7 @@ export class DebugPanelComponent implements OnInit, OnDestroy {
   searchText = '';
   isExpanded = true;
   expandedLogs: Set<string> = new Set();
-  private destroy$ = new Subject<void>();
+  private readonly destroyRef = inject(DestroyRef);
 
   constructor(private debugLogger: DebugLoggerService) {}
 
@@ -38,25 +37,21 @@ export class DebugPanelComponent implements OnInit, OnDestroy {
     this.applyFilters();
 
     // Subscribe to new logs
-    this.debugLogger.logs$.pipe(takeUntil(this.destroy$)).subscribe(log => {
-      this.logs.push(log);
-      if (this.logs.length > 500) {
-        this.logs = this.logs.slice(-500);
-      }
-      this.applyFilters();
-      // Auto-scroll to bottom
-      setTimeout(() => {
-        const scrollContainer = document.querySelector('.debug-logs-scroll');
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    this.debugLogger.logs$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((log) => {
+        this.logs.push(log);
+        if (this.logs.length > 500) {
+          this.logs = this.logs.slice(-500);
         }
-      }, 0);
-    });
-  }
-
-  ngOnDestroy(): void {
-    this.destroy$.next();
-    this.destroy$.complete();
+        this.applyFilters();
+        queueMicrotask(() => {
+          const scrollContainer = document.querySelector<HTMLElement>('.debug-logs-scroll');
+          if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }
+        });
+      });
   }
 
   applyFilters(): void {

@@ -3,4 +3,3 @@
  */
 
 export { toolRegistry, initializeDefaultTools } from './registry';
-export * as mathTools from './math';

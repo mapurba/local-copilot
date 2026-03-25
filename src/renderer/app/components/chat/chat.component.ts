@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CopilotService } from '../../services/copilot.service';
@@ -18,7 +18,7 @@ interface Message {
   templateUrl: './chat.component.html',
   styleUrls: ['./chat.component.css']
 })
-export class ChatComponent implements OnInit {
+export class ChatComponent implements OnInit, OnDestroy {
   messages: Message[] = [];
   inputText = '';
   isLoading = false;
@@ -29,6 +29,8 @@ export class ChatComponent implements OnInit {
   toolResult: any = null;
   selectedTool: string | null = null;
   toolsInUse: Map<string, any> = new Map();
+  private toolPromptSuffix = '';
+  private readonly teardownCallbacks: Array<() => void> = [];
 
   constructor(private copilotService: CopilotService, private debugLogger: DebugLoggerService) {}
 
@@ -39,21 +41,23 @@ export class ChatComponent implements OnInit {
     this.subscribeToToolEvents();
   }
 
+  ngOnDestroy() {
+    for (const teardown of this.teardownCallbacks) {
+      teardown();
+    }
+    this.teardownCallbacks.length = 0;
+  }
+
   subscribeToToolEvents() {
     // Listen for tool calls made by the LLM
-    this.copilotService.onToolCalled((toolName, result) => {
+    const toolCalledOff = this.copilotService.onToolCalled((toolName, result, args) => {
       this.toolsInUse.set(toolName, result);
-      this.debugLogger.logTool(toolName, [], result);
-      this.messages.push({
-        role: 'assistant',
-        content: `🔧 Used tool: ${toolName}\nResult: ${JSON.stringify(result, null, 2)}`,
-        timestamp: new Date()
-      });
+      this.debugLogger.logTool(toolName, args ?? [], result);
       console.log('[Chat] Tool called by LLM:', toolName, result);
     });
 
     // Listen for tool errors
-    this.copilotService.onToolError((toolName, error) => {
+    const toolErrorOff = this.copilotService.onToolError((toolName, error) => {
       this.debugLogger.logError(`Tool error in ${toolName}`, error);
       this.messages.push({
         role: 'assistant',
@@ -62,6 +66,8 @@ export class ChatComponent implements OnInit {
       });
       console.log('[Chat] Tool error:', toolName, error);
     });
+
+    this.teardownCallbacks.push(toolCalledOff, toolErrorOff);
   }
 
   onKeyDown(event: KeyboardEvent) {
@@ -95,6 +101,11 @@ export class ChatComponent implements OnInit {
     try {
       this.debugLogger.startTimer('load-tools');
       this.availableTools = await this.copilotService.getAvailableTools();
+      this.toolPromptSuffix = this.availableTools.length > 0
+        ? `\n\nAvailable tools you can use:\n${this.availableTools
+            .map((tool) => `- ${tool.name}: ${tool.description}`)
+            .join('\n')}`
+        : '';
       this.debugLogger.endTimer('load-tools', 'info', 'Tools loaded', { count: this.availableTools.length, tools: this.availableTools.map(t => t.name) });
     } catch (error) {
       this.debugLogger.logError('Failed to load tools', error);
@@ -129,7 +140,7 @@ export class ChatComponent implements OnInit {
       });
 
       // Call the tool - tools are already bound via service
-      const result = await this.copilotService.callTool(toolName, ...(args ? Object.values(args) : []));
+      const result = await this.copilotService.invokeTool(toolName, args);
 
       this.debugLogger.endTimer(`tool-${toolName}`, 'tool', `Tool result: ${toolName}`, result);
       this.toolResult = result;
@@ -170,26 +181,46 @@ export class ChatComponent implements OnInit {
 
     try {
       // Build a system message that includes available tools
-      const toolsDescription = this.availableTools.length > 0
-        ? `\n\nAvailable tools you can use:\n${this.availableTools
-            .map((t) => `- ${t.name}: ${t.description}`)
-            .join('\n')}`
-        : '';
-
-      const enhancedPrompt = input + toolsDescription;
+      const enhancedPrompt = input + this.toolPromptSuffix;
+      let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
 
       this.debugLogger.startTimer(`llm-request-${this.selectedModel}`);
-      this.debugLogger.logApiCall('POST', '/chat/completions', {
+      this.debugLogger.logApiCall('invoke', 'LangGraph → ChatOpenAI (baseURL: api.githubcopilot.com)', {
         model: this.selectedModel,
         promptLength: enhancedPrompt.length,
         toolsCount: this.availableTools.length
       });
 
-      const llmReply = await this.copilotService.askLlm(this.selectedModel, enhancedPrompt);
+      const llmReply = await this.copilotService.askLlm(this.selectedModel, enhancedPrompt, (chunk, type) => {
+        if (!chunk.trim()) {
+          return;
+        }
+
+        if (type === 'thinking') {
+          this.debugLogger.logThinking(chunk);
+          return;
+        }
+
+        if (type === 'tool') {
+          this.debugLogger.addLog('tool', chunk);
+          return;
+        }
+
+        if (type === 'usage') {
+          try {
+            tokenUsage = JSON.parse(chunk) as { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+          } catch {
+            // Ignore malformed usage chunk; do not fail chat flow.
+          }
+        }
+      });
       
       this.debugLogger.endTimer(`llm-request-${this.selectedModel}`, 'api', 'LLM response received', {
         responseLength: llmReply?.length || 0,
-        model: this.selectedModel
+        model: this.selectedModel,
+        promptTokens: tokenUsage?.promptTokens,
+        completionTokens: tokenUsage?.completionTokens,
+        totalTokens: tokenUsage?.totalTokens,
       });
 
       this.debugLogger.addLog('debug', `LLM Reply: ${llmReply?.substring(0, 100)}...`);

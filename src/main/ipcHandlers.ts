@@ -115,8 +115,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     streamChatCompletion(
       modelId,
       messages,
-      (chunk) => {
-        mainWindow.webContents.send('chat:stream-chunk', chunk);
+      (chunk, type) => {
+        mainWindow.webContents.send('chat:stream-chunk', chunk, type);
       },
       () => {
         mainWindow.webContents.send('chat:stream-end');
@@ -127,8 +127,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       async (toolName: string, toolArgs: any) => {
         // Handle tool calls from the LLM
         try {
-          const result = await toolRegistry.call(toolName, ...(Array.isArray(toolArgs) ? toolArgs : [toolArgs]));
-          mainWindow.webContents.send('chat:tool-called', { toolName, result });
+          const args = Array.isArray(toolArgs) ? toolArgs : (toolArgs === undefined ? [] : [toolArgs]);
+          const result = await toolRegistry.call(toolName, ...args);
+          mainWindow.webContents.send('chat:tool-called', { toolName, args, result });
           return result;
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
@@ -212,45 +213,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
 
   ipcMain.handle('tools:list', async (_event) => {
     return toolRegistry.list();
-  });
-
-  // ============================================================================
-  // MATH TOOLS (Legacy direct handlers - maintained for backwards compatibility)
-  // ============================================================================
-  ipcMain.handle('custom:mathAdd', async (_event, a: number, b: number) => {
-    return toolRegistry.call('custom:mathAdd', a, b);
-  });
-
-  ipcMain.handle('custom:mathSubtract', async (_event, a: number, b: number) => {
-    return toolRegistry.call('custom:mathSubtract', a, b);
-  });
-
-  ipcMain.handle('custom:mathMultiply', async (_event, a: number, b: number) => {
-    return toolRegistry.call('custom:mathMultiply', a, b);
-  });
-
-  ipcMain.handle('custom:mathDivide', async (_event, a: number, b: number) => {
-    return toolRegistry.call('custom:mathDivide', a, b);
-  });
-
-  ipcMain.handle('custom:mathSolveLinear', async (_event, a: number, b: number) => {
-    return toolRegistry.call('custom:mathSolveLinear', a, b);
-  });
-
-  ipcMain.handle('custom:mathSolveLineEquation', async (_event, a: number, b: number, c: number) => {
-    return toolRegistry.call('custom:mathSolveLineEquation', a, b, c);
-  });
-
-  ipcMain.handle('custom:mathSolveQuadratic', async (_event, a: number, b: number, c: number) => {
-    return toolRegistry.call('custom:mathSolveQuadratic', a, b, c);
-  });
-
-  ipcMain.handle('custom:mathEvaluatePolynomial', async (_event, coefficients: number[], x: number) => {
-    return toolRegistry.call('custom:mathEvaluatePolynomial', coefficients, x);
-  });
-
-  ipcMain.handle('custom:mathFindPolynomialRoots', async (_event, coefficients: number[], initialGuess?: number, iterations?: number) => {
-    return toolRegistry.call('custom:mathFindPolynomialRoots', coefficients, initialGuess, iterations);
   });
 
   // ============================================================================
