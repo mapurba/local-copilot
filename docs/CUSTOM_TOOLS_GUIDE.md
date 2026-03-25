@@ -4,7 +4,17 @@ Tools are functions the **LLM can call autonomously** during a chat response, an
 
 ---
 
-## How tools work
+## Workspace Context
+
+All file tools (read, search, edit) operate within a **workspace directory**. By default, the workspace is:
+
+- **Windows**: `C:\Users\<username>\AppData\Roaming\local-copilot\workspace`
+- **macOS**: `~/Library/Application Support/local-copilot/workspace`
+- **Linux**: `~/.local/share/local-copilot/workspace`
+
+File paths in tools are resolved **relative to the workspace root**. Use `CopilotService.getWorkspacePath()` to retrieve it, or `setWorkspacePath(path)` to change it at runtime.
+
+---
 
 When the LLM decides to use a tool it emits a JSON tool-call chunk. `copilotChatApi.ts` intercepts it and calls `toolRegistry.call(toolName, ...args)`. The result is returned to the LLM so it can continue the response. The debug panel shows every tool call and result in real time.
 
@@ -62,10 +72,11 @@ export async function webFetch(url: string): Promise<{ body: string; status: num
 }
 ```
 
-Rules:
+**Important notes:**
 - Functions **must** return `{ ... }` objects (not primitives) so the LLM gets structured output
 - Validate/guard edge cases inside the function and return `{ error: '...' }` rather than throwing for expected failures
 - Async is fine — the registry always awaits the result
+- Tools that deal with files (read, write, search) have workspace-relative paths automatically resolved via `workspaceContext`
 
 ---
 

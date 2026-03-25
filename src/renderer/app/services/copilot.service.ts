@@ -187,6 +187,18 @@ export class CopilotService {
     return Object.values(args);
   }
 
+  // ── Workspace Methods ────────────────────────────────────────────────────
+
+  async getWorkspacePath(): Promise<string> {
+    if (!this.api?.workspaceGetPath) throw new Error('Workspace API not available');
+    return this.api.workspaceGetPath();
+  }
+
+  async setWorkspacePath(path: string): Promise<{ success: boolean; path?: string; error?: string }> {
+    if (!this.api?.workspaceSetPath) throw new Error('Workspace API not available');
+    return this.api.workspaceSetPath(path);
+  }
+
   checkForUpdate(): void {
     this.api?.checkForUpdate?.();
   }

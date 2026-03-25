@@ -38,6 +38,7 @@ Renderer (Angular)         Preload          Main (Node/Electron)
 ChatComponent         window.copilot       ipcHandlers.ts
 CopilotService    ←── contextBridge    ←── toolRegistry
 DebugPanelComponent   (preload.ts)         copilotChatApi.ts
+                                           ▼ workspaceContext
                                            lspClient.ts
 ```
 
@@ -45,6 +46,7 @@ DebugPanelComponent   (preload.ts)         copilotChatApi.ts
 - **Preload** (`src/preload/preload.ts`) exposes typed methods via `contextBridge`
 - **Main** (`src/main/ipcHandlers.ts`) receives `ipcRenderer.invoke(...)` calls and runs privileged code
 - **Tools** live entirely in the main process (`src/main/tools/`) and are invoked by the LLM during chat
+- **Workspace** is a parent directory where all file tools (read, write, search, edit) operate. Paths are relative to the workspace. Defaults to user's local AppData/Application Support/XDG_DATA_HOME, configurable at runtime via `CopilotService.setWorkspacePath()`
 
 ## Key source files
 

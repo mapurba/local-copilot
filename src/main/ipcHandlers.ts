@@ -7,6 +7,7 @@ import https from 'https';
 import { checkForUpdates } from './autoUpdater';
 import { logApi } from './apiLogger';
 import { toolRegistry, initializeDefaultTools } from './tools';
+import { workspaceContext } from './workspaceContext';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -27,6 +28,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
+  // Initialize workspace
+  (async () => {
+    try {
+      await workspaceContext.initialize();
+    } catch (err) {
+      console.error('[IPC] Failed to initialize workspace:', err);
+    }
+  })();
+
   // Initialize tools registry
   initializeDefaultTools();
 
@@ -213,6 +223,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
 
   ipcMain.handle('tools:list', async (_event) => {
     return toolRegistry.list();
+  });
+
+  // ============================================================================
+  // WORKSPACE HANDLERS
+  // ============================================================================
+  ipcMain.handle('workspace:getPath', async () => {
+    return workspaceContext.getWorkspacePath();
+  });
+
+  ipcMain.handle('workspace:setPath', async (_event, newPath: string) => {
+    try {
+      await workspaceContext.setWorkspacePath(newPath);
+      return { success: true, path: workspaceContext.getWorkspacePath() };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   // ============================================================================

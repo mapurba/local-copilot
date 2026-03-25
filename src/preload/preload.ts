@@ -20,6 +20,10 @@ export interface CopilotAPI {
   toolsList: () => Promise<Array<{ name: string; category: string; description: string }>>;
   callTool: (toolName: string, ...args: any[]) => Promise<any>;
 
+  // Workspace
+  workspaceGetPath: () => Promise<string>;
+  workspaceSetPath: (path: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+
   // Utility methods
   proxyRequest: (options: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; headers: Record<string, unknown>; body: string }>;
   checkForUpdate: () => void;
@@ -62,6 +66,10 @@ contextBridge.exposeInMainWorld('copilot', {
   // Tools
   toolsList: () => ipcRenderer.invoke('tools:list'),
   callTool: (toolName: string, ...args: any[]) => ipcRenderer.invoke('tools:call', toolName, ...args),
+
+  // Workspace
+  workspaceGetPath: () => ipcRenderer.invoke('workspace:getPath'),
+  workspaceSetPath: (path: string) => ipcRenderer.invoke('workspace:setPath', path),
 
   // Utilities
   proxyRequest: (options: { url: string; method?: string; headers?: Record<string, string>; body?: string }) =>
