@@ -1,102 +1,65 @@
 # Getting Started
 
-This repository is a stripped-down desktop chat client for GitHub Copilot.
+## Prerequisites
 
-## Stack
+- Node.js 18+
+- A GitHub account with Copilot access
 
-- Electron for the desktop shell
-- Angular for the UI
-- TypeScript across main, preload, and renderer
-
-## Install
+## Install & Run
 
 ```bash
 npm install
-```
-
-## Run In Development
-
-```bash
 npm run dev
 ```
 
-This starts Angular on `http://localhost:4100` and launches Electron against it.
+This compiles TypeScript, starts the Angular renderer on `http://localhost:4100`, and launches the Electron shell. Both processes hot-reload on file changes.
 
-## Build
+## Build for production
 
 ```bash
-npm run build
-npm run build:electron
+npm run build          # compiles everything
+npm run build:electron # Electron main process only
 ```
 
-## Main Folders
+## Sign in
 
-```text
-src/main
-  Electron app bootstrap, Copilot auth, chat IPC handlers
+1. Click **Sign In** in the app
+2. A device code is shown — open the verification URL in your browser and enter the code
+3. Click **I've Authorized** back in the app
+4. The app authenticates via GitHub Copilot LSP and stores the token
 
-src/preload
-  Small `window.copilot` bridge exposed to the renderer
+## Architecture in 60 seconds
 
-src/renderer
-  Angular app with a single chat-first screen
+This is an **Electron + Angular** app. The process boundary is important:
+
+```
+Renderer (Angular)         Preload          Main (Node/Electron)
+─────────────────    ─────────────────    ─────────────────────
+ChatComponent         window.copilot       ipcHandlers.ts
+CopilotService    ←── contextBridge    ←── toolRegistry
+DebugPanelComponent   (preload.ts)         copilotChatApi.ts
+                                           lspClient.ts
 ```
 
-## Core Files
+- **Renderer** cannot call Node APIs directly — it goes through `window.copilot`
+- **Preload** (`src/preload/preload.ts`) exposes typed methods via `contextBridge`
+- **Main** (`src/main/ipcHandlers.ts`) receives `ipcRenderer.invoke(...)` calls and runs privileged code
+- **Tools** live entirely in the main process (`src/main/tools/`) and are invoked by the LLM during chat
 
-- `src/main/index.ts`: creates the Electron window
-- `src/main/ipcHandlers.ts`: auth, chat, and proxy handlers
-- `src/preload/preload.ts`: renderer API bridge
-- `src/renderer/app/app.ts`: top-level shell and auth controls
-- `src/renderer/app/components/chat/chat.component.ts`: chat UI logic
-- `src/renderer/app/services/copilot.service.ts`: renderer wrapper around preload APIs
+## Key source files
 
-## Supported Flow
+| File | Role |
+|---|---|
+| `src/main/index.ts` | Electron entry, creates BrowserWindow |
+| `src/main/ipcHandlers.ts` | All IPC channels: auth, chat, tools, proxy |
+| `src/main/copilotChatApi.ts` | GitHub Copilot API streaming, tool dispatch |
+| `src/main/tools/registry.ts` | Tool registration and call dispatch |
+| `src/main/tools/math.ts` | Built-in math tools (example implementation) |
+| `src/preload/preload.ts` | `window.copilot` bridge with full TypeScript types |
+| `src/renderer/app/services/copilot.service.ts` | Angular service wrapping the bridge API |
+| `src/renderer/app/components/chat/chat.component.ts` | Main chat UI, streams LLM responses |
+| `src/renderer/app/components/debug-panel/` | Debug/log panel (toggleable, resizable) |
 
-1. Open the app.
-2. Click `Sign In`.
-3. Complete GitHub device auth in the browser.
-4. Click `I've Authorized`.
-5. Start chatting.
+## Debug panel
 
-## Exposed Renderer API
-
-- `status()`
-- `signIn()`
-- `signInConfirm()`
-- `signOut()`
-- `getModels()`
-- `sendChatMessage()`
-- `onChatStream()`
-- `onChatEnd()`
-- `onChatError()`
-- `proxyRequest()`
-- `checkForUpdate()`
-
-## Adding Your Own Feature
-
-Keep the same pattern:
-
-1. Add a new IPC handler in `src/main/ipcHandlers.ts` or a dedicated main-process module.
-2. Expose it from `src/preload/preload.ts`.
-3. Wrap it in `src/renderer/app/services/copilot.service.ts`.
-4. Call it from an Angular component.
-
-For a full beginner walkthrough, see [docs/CUSTOM_TOOLS_GUIDE.md](./CUSTOM_TOOLS_GUIDE.md).
-
-## Cleanup Policy
-
-This repo intentionally avoids:
-
-- workflow builders
-- file tree viewers
-- Monaco editor integration
-- FormIO integration
-- duplicate renderer implementations
-- generated build artifacts checked into source
-
-## Troubleshooting
-
-- If auth fails, restart the app and retry the device login flow.
-- If the UI is blank, run `npm run build` once and check terminal errors.
-- If dependencies drift, delete generated output folders and run `npm install` again.
+The debug panel (bottom or right side) shows all tool calls, thinking chains, and API logs in real time. Toggle it with the button in the top-right of the chat UI. It can be dragged to resize and moved between bottom and right positions.

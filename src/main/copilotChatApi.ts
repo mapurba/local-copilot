@@ -346,7 +346,7 @@ async function streamChatCompletionViaLangGraph(
   };
 
   const callModel = async (state: any) => {
-    onChunk('LangGraph node: agent', 'thinking');
+    onChunk(JSON.stringify({ node: 'agent', messageCount: state.messages.length }), 'thinking');
     const response = await llmWithTools.invoke(state.messages);
 
     const usage = extractUsageFromResponse(response);
@@ -371,16 +371,17 @@ async function streamChatCompletionViaLangGraph(
   };
 
   const callTools = async (state: any) => {
-    onChunk('LangGraph node: tools', 'thinking');
     const lastMessage = state.messages[state.messages.length - 1];
     const toolCalls = extractToolCallsFromAiMessage(lastMessage);
+    onChunk(JSON.stringify({ node: 'tools', toolCount: toolCalls.length, tools: toolCalls.map((tc: any) => sanitizedToOriginal[tc.name] ?? tc.name) }), 'thinking');
     const toolMessages: any[] = [];
 
     for (const toolCall of toolCalls) {
       // Resolve sanitized name back to the original registry name
       const originalName = sanitizedToOriginal[toolCall.name] ?? toolCall.name;
-      onChunk(`Tool call: ${originalName}`, 'tool');
       const normalizedArgs = normalizeToolArgs(toolCall.args);
+      // Emit structured tool-start chunk with name and args
+      onChunk(JSON.stringify({ phase: 'start', name: originalName, args: normalizedArgs }), 'tool');
 
       let result: any;
       if (onToolCall) {
@@ -388,6 +389,9 @@ async function streamChatCompletionViaLangGraph(
       } else {
         result = await toolRegistry.call(originalName, ...normalizedArgs);
       }
+
+      // Emit structured tool-result chunk
+      onChunk(JSON.stringify({ phase: 'result', name: originalName, args: normalizedArgs, result }), 'tool');
 
       toolMessages.push(
         new ToolMessage({

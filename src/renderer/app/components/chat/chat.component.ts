@@ -28,6 +28,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   showSettings = false;
   toolResult: any = null;
   selectedTool: string | null = null;
+  debugPanelPosition: 'bottom' | 'right' = 'bottom';
   toolsInUse: Map<string, any> = new Map();
   private toolPromptSuffix = '';
   private readonly teardownCallbacks: Array<() => void> = [];
@@ -170,7 +171,8 @@ export class ChatComponent implements OnInit, OnDestroy {
       return;
     }
 
-    this.debugLogger.addLog('info', `Message sent: "${input.substring(0, 50)}..."`);
+    // Log the user message once
+    this.debugLogger.addLog('info', `User: ${input.substring(0, 60)}${input.length > 60 ? '...' : ''}`);
     this.messages.push({
       role: 'user',
       content: input,
@@ -180,50 +182,129 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.isLoading = true;
 
     try {
-      // Build a system message that includes available tools
+      // Build enhanced prompt with tool info
       const enhancedPrompt = input + this.toolPromptSuffix;
       let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
 
+      // Start fresh thinking chain for this request
+      this.debugLogger.startThinkingChain();
+
+      // Log initial analysis
+      this.debugLogger.addThinkingStep(
+        `Processing: "${input.substring(0, 80)}..."`,
+        'analysis',
+        { inputLength: input.length, toolsAvailable: this.availableTools.length }
+      );
+
+      // Log that we're about to invoke the LLM
       this.debugLogger.startTimer(`llm-request-${this.selectedModel}`);
-      this.debugLogger.logApiCall('invoke', 'LangGraph → ChatOpenAI (baseURL: api.githubcopilot.com)', {
-        model: this.selectedModel,
-        promptLength: enhancedPrompt.length,
-        toolsCount: this.availableTools.length
-      });
 
-      const llmReply = await this.copilotService.askLlm(this.selectedModel, enhancedPrompt, (chunk, type) => {
-        if (!chunk.trim()) {
-          return;
-        }
+      const llmReply = await this.copilotService.askLlm(
+        this.selectedModel,
+        enhancedPrompt,
+        (chunk, type) => {
+          if (!chunk.trim()) {
+            return;
+          }
 
-        if (type === 'thinking') {
-          this.debugLogger.logThinking(chunk);
-          return;
-        }
+          if (type === 'thinking') {
+            // Try to parse structured JSON from LangGraph node events
+            let thinkingContent = chunk.trim();
+            let category: 'analysis' | 'planning' | 'decision' | 'reasoning' | 'synthesis' = 'reasoning';
+            let metadata: Record<string, any> = { source: 'llm_stream' };
 
-        if (type === 'tool') {
-          this.debugLogger.addLog('tool', chunk);
-          return;
-        }
+            try {
+              const parsed = JSON.parse(thinkingContent);
+              if (parsed.node === 'agent') {
+                thinkingContent = `LangGraph agent node (${parsed.messageCount} messages in state)`;
+                category = 'analysis';
+                metadata = { node: 'agent', messageCount: parsed.messageCount };
+              } else if (parsed.node === 'tools') {
+                thinkingContent = `LangGraph tools node — invoking ${parsed.toolCount} tool(s): ${(parsed.tools || []).join(', ')}`;
+                category = 'decision';
+                metadata = { node: 'tools', toolCount: parsed.toolCount, tools: parsed.tools };
+              } else {
+                metadata = { ...metadata, ...parsed };
+              }
+            } catch {
+              // Plain text thinking chunk — categorize by content
+              const lower = thinkingContent.toLowerCase();
+              if (lower.includes('analyze') || lower.includes('understand')) {
+                category = 'analysis';
+              } else if (lower.includes('plan') || lower.includes('approach') || lower.includes('need to')) {
+                category = 'planning';
+              } else if (lower.includes('decid') || lower.includes('choose') || lower.includes('select')) {
+                category = 'decision';
+              } else if (lower.includes('conclude') || lower.includes('therefore') || lower.includes('result') || lower.includes('final')) {
+                category = 'synthesis';
+              }
+            }
 
-        if (type === 'usage') {
-          try {
-            tokenUsage = JSON.parse(chunk) as { promptTokens?: number; completionTokens?: number; totalTokens?: number };
-          } catch {
-            // Ignore malformed usage chunk; do not fail chat flow.
+            this.debugLogger.addThinkingStep(
+              thinkingContent,
+              category,
+              metadata,
+              Math.ceil(thinkingContent.split(' ').length)
+            );
+            return;
+          }
+
+          if (type === 'tool') {
+            try {
+              const parsed = JSON.parse(chunk);
+              if (parsed.phase === 'start') {
+                this.debugLogger.addThinkingStep(
+                  `Calling tool: ${parsed.name}`,
+                  'decision',
+                  { toolName: parsed.name, arguments: parsed.args, phase: 'invoking' }
+                );
+              } else if (parsed.phase === 'result') {
+                this.debugLogger.addThinkingStep(
+                  `Tool result: ${parsed.name}`,
+                  'synthesis',
+                  { toolName: parsed.name, arguments: parsed.args, result: parsed.result, phase: 'completed' }
+                );
+              }
+            } catch {
+              // Fallback for plain text tool chunk
+              this.debugLogger.addThinkingStep(
+                `Tool: ${chunk}`,
+                'decision',
+                { toolCall: true, raw: chunk }
+              );
+            }
+            return;
+          }
+
+          if (type === 'usage') {
+            try {
+              tokenUsage = JSON.parse(chunk) as { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+            } catch {
+              // Ignore malformed usage
+            }
           }
         }
-      });
-      
+      );
+
+      // Log completion with stats (not a duplicate thanks to deduplication)
       this.debugLogger.endTimer(`llm-request-${this.selectedModel}`, 'api', 'LLM response received', {
         responseLength: llmReply?.length || 0,
         model: this.selectedModel,
-        promptTokens: tokenUsage?.promptTokens,
-        completionTokens: tokenUsage?.completionTokens,
-        totalTokens: tokenUsage?.totalTokens,
+        tokens: tokenUsage?.totalTokens
       });
 
-      this.debugLogger.addLog('debug', `LLM Reply: ${llmReply?.substring(0, 100)}...`);
+      // Add synthesis thinking step
+      this.debugLogger.addThinkingStep(
+        `Generated response (${llmReply?.length || 0} chars)`,
+        'synthesis',
+        { model: this.selectedModel }
+      );
+
+      // Log reasoning stats once
+      const stats = this.debugLogger.getThinkingStats();
+      if (stats.stepCount > 0) {
+        this.debugLogger.addLog('info', `Reasoning: ${stats.stepCount} steps, ${stats.totalTokens} tokens`, stats.byCategory);
+      }
 
       this.messages.push({
         role: 'assistant',
@@ -233,6 +314,11 @@ export class ChatComponent implements OnInit, OnDestroy {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error occurred';
       this.debugLogger.logError('LLM request failed', error);
+      this.debugLogger.addThinkingStep(
+        `Failed: ${message}`,
+        'synthesis',
+        { error: true }
+      );
       this.messages.push({
         role: 'assistant',
         content: `Error: ${message}`,

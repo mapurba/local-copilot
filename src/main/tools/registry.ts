@@ -11,43 +11,59 @@
 
 import * as mathTools from './math';
 
+type ToolHandler = (...args: unknown[]) => Promise<unknown> | unknown;
+
 interface Tool {
-  handler: (...args: any[]) => Promise<any> | any;
+  handler: ToolHandler;
+  category: string;
+  description: string;
+}
+
+interface ToolSummary {
+  name: string;
   category: string;
   description: string;
 }
 
 class ToolRegistry {
-  private tools = new Map<string, Tool>();
+  private readonly tools = new Map<string, Tool>();
 
-  register(name: string, handler: (...args: any[]) => any, category: string, description: string) {
-    this.tools.set(name, { handler, category, description });
+  get size(): number {
+    return this.tools.size;
+  }
+
+  register<TArgs extends unknown[], TResult>(
+    name: string,
+    handler: (...args: TArgs) => TResult | Promise<TResult>,
+    category: string,
+    description: string
+  ) {
+    this.tools.set(name, { handler: handler as ToolHandler, category, description });
     console.log(`[Tools] ✓ ${name} (${category})`);
   }
 
-  async call(name: string, ...args: any[]): Promise<any> {
+  async call<TResult = unknown>(name: string, ...args: unknown[]): Promise<TResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Tool '${name}' not found. Use toolRegistry.list() to see available tools.`);
     }
     try {
-      return await Promise.resolve(tool.handler(...args));
+      return await Promise.resolve(tool.handler(...args)) as TResult;
     } catch (err) {
       console.error(`[Tools] Error calling '${name}':`, err);
       throw err;
     }
   }
 
-  list() {
-    const items = Array.from(this.tools.entries()).map(([name, tool]) => ({
+  list(): ToolSummary[] {
+    return Array.from(this.tools.entries()).map(([name, tool]) => ({
       name,
       category: tool.category,
       description: tool.description,
     }));
-    return items;
   }
 
-  listByCategory(category: string) {
+  listByCategory(category: string): ToolSummary[] {
     return this.list().filter((t) => t.category === category);
   }
 }
@@ -58,46 +74,28 @@ export const toolRegistry = new ToolRegistry();
  * Initialize all available tools
  */
 export function initializeDefaultTools() {
+  if (toolRegistry.size > 0) {
+    return;
+  }
+
   console.log('\n[Tools] Initializing...');
 
-  // Arithmetic tools
-  toolRegistry.register('custom:mathAdd', (a: number, b: number) => mathTools.mathAdd(a, b), 'math', 'Add: a + b');
-
-  toolRegistry.register('custom:mathSubtract', (a: number, b: number) => mathTools.mathSubtract(a, b), 'math', 'Subtract: a - b');
-
-  toolRegistry.register('custom:mathMultiply', (a: number, b: number) => mathTools.mathMultiply(a, b), 'math', 'Multiply: a * b');
-
-  toolRegistry.register('custom:mathDivide', (a: number, b: number) => mathTools.mathDivide(a, b), 'math', 'Divide: a / b (safe)');
-
-  // Equation solving
-  toolRegistry.register('custom:mathSolveLinear', (a: number, b: number) => mathTools.mathSolveLinear(a, b), 'math', 'Solve linear: ax + b = 0');
-
-  toolRegistry.register(
-    'custom:mathSolveLineEquation',
-    (a: number, b: number, c: number) => mathTools.mathSolveLineEquation(a, b, c),
-    'math',
-    'Solve line equation: ax + b = c'
-  );
-
+  toolRegistry.register('custom:mathAdd', mathTools.mathAdd, 'math', 'Add: a + b');
+  toolRegistry.register('custom:mathSubtract', mathTools.mathSubtract, 'math', 'Subtract: a - b');
+  toolRegistry.register('custom:mathMultiply', mathTools.mathMultiply, 'math', 'Multiply: a * b');
+  toolRegistry.register('custom:mathDivide', mathTools.mathDivide, 'math', 'Divide: a / b (safe)');
+  toolRegistry.register('custom:mathSolveLinear', mathTools.mathSolveLinear, 'math', 'Solve linear: ax + b = 0');
+  toolRegistry.register('custom:mathSolveLineEquation', mathTools.mathSolveLineEquation, 'math', 'Solve line equation: ax + b = c');
   toolRegistry.register(
     'custom:mathSolveQuadratic',
-    (a: number, b: number, c: number) => mathTools.mathSolveQuadratic(a, b, c),
+    mathTools.mathSolveQuadratic,
     'math',
     'Solve quadratic: ax² + bx + c = 0 (real & complex roots)'
   );
-
-  // Polynomial tools
-  toolRegistry.register(
-    'custom:mathEvaluatePolynomial',
-    (coefficients: number[], x: number) => mathTools.mathEvaluatePolynomial(coefficients, x),
-    'math',
-    'Evaluate polynomial at x'
-  );
-
+  toolRegistry.register('custom:mathEvaluatePolynomial', mathTools.mathEvaluatePolynomial, 'math', 'Evaluate polynomial at x');
   toolRegistry.register(
     'custom:mathFindPolynomialRoots',
-    (coefficients: number[], initialGuess?: number, iterations?: number) =>
-      mathTools.mathFindPolynomialRoots(coefficients, initialGuess, iterations),
+    mathTools.mathFindPolynomialRoots,
     'math',
     'Find polynomial roots (Newton-Raphson)'
   );

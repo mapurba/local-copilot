@@ -1,4 +1,5 @@
-<div class="chat-container h-full overflow-hidden flex flex-col rounded-xl">
+<div class="chat-container h-full overflow-hidden rounded-xl" [class.panel-right]="debugPanelPosition === 'right'">
+  <div class="chat-main-row">
   <div class="chat-shell flex-1 overflow-hidden rounded-t-xl bg-slate-50 dark:bg-slate-950">
     <!-- Header with Settings Button -->
     <div class="header-bar flex items-center justify-between px-4 sm:px-6 py-3 border-b border-slate-200 dark:border-slate-800 dark:bg-slate-900">
@@ -64,8 +65,27 @@
     </div>
   </div>
 
-  <!-- Debug Panel -->
-  <app-debug-panel></app-debug-panel>
+  </div><!-- end chat-shell -->
+
+  <!-- Debug Panel (right position) -->
+  @defer (on idle) {
+    <app-debug-panel
+      *ngIf="debugPanelPosition === 'right'"
+      [class]="'panel-right'"
+      [position]="debugPanelPosition"
+      (positionChange)="debugPanelPosition = $event">
+    </app-debug-panel>
+  }
+  </div><!-- end chat-main-row -->
+
+  <!-- Debug Panel (bottom position) -->
+  @defer (on idle) {
+    <app-debug-panel
+      *ngIf="debugPanelPosition === 'bottom'"
+      [position]="debugPanelPosition"
+      (positionChange)="debugPanelPosition = $event">
+    </app-debug-panel>
+  }
 
   <!-- Settings Modal -->
   <div *ngIf="showSettings" class="settings-modal" (click)="closeSettings($event)">

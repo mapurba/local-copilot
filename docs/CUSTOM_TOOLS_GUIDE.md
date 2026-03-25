@@ -1,189 +1,180 @@
-# Custom Tools Guide 
+# Custom Tools Guide
 
-This guide shows how to add a new tool end-to-end in this app.
+Tools are functions the **LLM can call autonomously** during a chat response, and also functions you can call directly from the Angular renderer. This guide explains both paths end-to-end.
 
-## Overview
+---
 
-Tools in this project are organized in a dedicated folder with a clean registry system:
+## How tools work
 
-```text
-src/main/tools/
-  ├── index.ts          # Main export point
-  ├── registry.ts       # Tool registry (simplified & elegant)
-  ├── math.ts           # Math tools (add, subtract, quadratic, etc.)
-  └── [future]/ string/, file/, etc.
+When the LLM decides to use a tool it emits a JSON tool-call chunk. `copilotChatApi.ts` intercepts it and calls `toolRegistry.call(toolName, ...args)`. The result is returned to the LLM so it can continue the response. The debug panel shows every tool call and result in real time.
+
+```
+LLM response stream
+  └─ tool call chunk detected (copilotChatApi.ts)
+       └─ toolRegistry.call(name, ...args)  (registry.ts)
+            └─ your handler function         (your file.ts)
+                 └─ result emitted via IPC → renderer debug panel
 ```
 
-Tool calls flow:
+For **renderer-initiated** calls (e.g., a button click):
 
-1. **UI component** → calls `CopilotService.mathSolveLineEquation(5, 5, 20)`
-2. **Service** → calls `window.copilot.mathSolveLineEquation(5, 5, 20)`
-3. **Preload** → maps to `ipcRenderer.invoke('custom:mathSolveLineEquation', 5, 5, 20)`
-4. **Main process** → dispatches to `toolRegistry.call('custom:mathSolveLineEquation', 5, 5, 20)`
-5. **Tool handler** → returns `{ x: 3 }`
+```
+Angular component
+  └─ CopilotService.invokeTool(name, args)
+       └─ window.copilot.callTool(name, ...args)   (preload bridge)
+            └─ ipcMain 'tools:call'  (ipcHandlers.ts)
+                 └─ toolRegistry.call(name, ...args)
+                      └─ your handler
+```
 
-## Worked Example: Line Equation Solver
+---
 
-This app includes a real working tool: **Solve Line Equations** (`ax + b = c`).
+## Step 1 — Create your tool file
 
-### What It Does
-
-Solves equations like:
-- `5x + 5 = 20` → `x = 3`
-- `2x + 10 = 30` → `x = 10`  
-- Handles edge cases: no solution, infinite solutions
-
-### Try It Now
-
-From any Angular component:
+Create `src/main/tools/mytools.ts`. Each exported function is one tool. Return plain JSON-serializable objects.
 
 ```ts
+// src/main/tools/mytools.ts
+
+/** Reverse a string */
+export function stringReverse(input: string): { result: string } {
+  return { result: input.split('').reverse().join('') };
+}
+
+/** Word count for text */
+export function stringWordCount(text: string): { words: number; chars: number } {
+  return {
+    words: text.trim().split(/\s+/).filter(Boolean).length,
+    chars: text.length,
+  };
+}
+
+/** Fetch and return plain text from a URL (main process has Node access) */
+export async function webFetch(url: string): Promise<{ body: string; status: number }> {
+  const https = await import('https');
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => resolve({ body: data, status: res.statusCode ?? 0 }));
+    }).on('error', reject);
+  });
+}
+```
+
+Rules:
+- Functions **must** return `{ ... }` objects (not primitives) so the LLM gets structured output
+- Validate/guard edge cases inside the function and return `{ error: '...' }` rather than throwing for expected failures
+- Async is fine — the registry always awaits the result
+
+---
+
+## Step 2 — Register in the registry
+
+Open `src/main/tools/registry.ts`, import your file, and add `toolRegistry.register(...)` calls inside `initializeDefaultTools()`.
+
+```ts
+// registry.ts — add import at the top
+import * as myTools from './mytools';
+
+// inside initializeDefaultTools()
+toolRegistry.register('custom:stringReverse',  myTools.stringReverse,  'strings', 'Reverse a string');
+toolRegistry.register('custom:stringWordCount', myTools.stringWordCount, 'strings', 'Count words and characters');
+toolRegistry.register('custom:webFetch',        myTools.webFetch,        'web',     'Fetch URL contents');
+```
+
+`register(name, handler, category, description)`
+
+| Param | Convention |
+|---|---|
+| `name` | Always prefix `custom:` + camelCase topic |
+| `handler` | Direct function reference — no wrapper needed |
+| `category` | Short group label (`math`, `strings`, `files`, `web`, …) |
+| `description` | One line shown in the debug panel and tool listings |
+
+---
+
+## Step 3 — Expose via IPC (already done for you)
+
+The generic `tools:call` and `tools:list` IPC channels in `ipcHandlers.ts` route all tool calls through the registry automatically — **you do not need to add new IPC handlers** for tools:
+
+```ts
+// ipcHandlers.ts — already present, no changes needed
+ipcMain.handle('tools:call', async (_event, toolName, ...args) => {
+  return toolRegistry.call(toolName, ...args);
+});
+ipcMain.handle('tools:list', async () => toolRegistry.list());
+```
+
+The preload bridge (`src/preload/preload.ts`) already exposes `window.copilot.callTool` and `window.copilot.toolsList` — also no changes needed.
+
+---
+
+## Step 4 — Call from the renderer (optional)
+
+Use `CopilotService` from any Angular component:
+
+```ts
+// In a component or service
 constructor(private copilot: CopilotService) {}
 
-async solveEquation() {
-  // Solve: 5x + 5 = 20
-  const result = await this.copilot.mathSolveLineEquation(5, 5, 20);
-  if (result.error) {
-    console.log('Error:', result.error);
-  } else {
-    console.log('x =', result.x); // 3
-  }
+async reverseWord(word: string) {
+  // invokeTool accepts either positional array or named object
+  const result = await this.copilot.invokeTool('custom:stringReverse', [word]);
+  console.log(result.result); // reversed string
+}
+
+async countWords(text: string) {
+  const { words, chars } = await this.copilot.invokeTool('custom:stringWordCount', [text]);
 }
 ```
 
-### How It Was Built
-
-#### 1. Tool Logic (Main Process)
+Or call `getAvailableTools()` to list all registered tools dynamically:
 
 ```ts
-async getProjectSummary(options: { includeFiles?: boolean }): Promise<{ summary: string; fileCount: number }> {
-  if (!this.api?.projectSummary) {
-    throw new Error('Project summary API is not available');
-  }
-  return this.api.projectSummary(options);
-}
+const tools = await this.copilot.getAvailableTools();
+// [{ name: 'custom:stringReverse', category: 'strings', description: '...' }, ...]
 ```
 
-Why this layer helps:
+---
 
-1. Keeps UI components simple.
-2. Centralizes API errors and fallback logic.
-3. Makes future refactors easier.
+## Step 5 — Let the LLM use the tool
 
-## 6. Use It in a Component
+The LLM discovers tools via the registered name and description. In `copilotChatApi.ts`, the registered tools are passed to the Copilot API as the `tools` array. The LLM will call `custom:stringReverse` when the user asks to reverse something, automatically.
 
-In your component:
+You can also prompt it explicitly: *"Use the stringReverse tool to reverse 'hello'"*. The debug panel will show the call and result.
 
-1. Inject `CopilotService`.
-2. Call service method on user action.
-3. Show loading, success, and error states.
+---
 
-```ts
-isLoading = false;
-summary = '';
-error = '';
+## File checklist for a new tool file
 
-async loadSummary() {
-  this.isLoading = true;
-  this.error = '';
-  try {
-    const result = await this.copilot.getProjectSummary({ includeFiles: true });
-    this.summary = result.summary;
-  } catch (e) {
-    this.error = e instanceof Error ? e.message : 'Failed to load summary';
-  } finally {
-    this.isLoading = false;
-  }
-}
+```
+1. src/main/tools/mytools.ts          ← create, export functions
+2. src/main/tools/registry.ts         ← import + register in initializeDefaultTools()
 ```
 
-## 7. Add Streaming Tools (Optional)
+That's all that's required. IPC, preload, and service wiring already exist.
 
-Use the same pattern as chat when tool output is large:
+---
 
-1. Main sends chunks with `mainWindow.webContents.send(...)`.
-2. Preload exposes `onXxxStream`, `onXxxEnd`, `onXxxError` listeners.
-3. Service aggregates chunks into final output.
-4. Component renders progressive updates.
+## Naming conventions
 
-Reference stream events in [src/main/ipcHandlers.ts](../src/main/ipcHandlers.ts):
+| Item | Pattern | Example |
+|---|---|---|
+| Tool name | `custom:categoryVerb` | `custom:stringReverse` |
+| File | category noun | `strings.ts` |
+| Function | camelCase verb+noun | `stringReverse` |
+| Category | one lowercase word | `strings` |
 
-- `chat:stream-chunk`
-- `chat:stream-end`
-- `chat:stream-error`
+---
 
-## 8. How to Design Custom Implementations
+## Verification
 
-When the feature is not obvious, use this framework:
+```bash
+npm run dev
+```
 
-1. Start from user intent, not from API shape.
-2. Build the smallest useful version first.
-3. Add one extension point at a time.
-4. Keep transport contract stable; evolve internals freely.
-
-A practical sequence:
-
-1. V1 returns static/mock data.
-2. V2 wires real data source.
-3. V3 adds validation + retry + timeout.
-4. V4 adds observability (logging, timing, metrics).
-
-## 9. Interaction with Code (Safe Pattern)
-
-If your tool needs to inspect or modify project code:
-
-1. Do code scanning in main process only.
-2. Never expose raw filesystem power to renderer directly.
-3. Add narrowly scoped preload methods.
-4. Return concise structured results to UI.
-
-Good example method names:
-
-- `custom:listProjectFiles`
-- `custom:searchInProject`
-- `custom:generatePatchPreview`
-
-Avoid broad methods like:
-
-- `custom:runAnyCommand`
-- `custom:readAnyPath`
-
-## 10. Manual Test Checklist
-
-After adding a tool:
-
-1. Start app with `npm run dev`.
-2. Trigger the feature from UI.
-3. Confirm success path response.
-4. Confirm error path behavior (bad input or no auth).
-5. Confirm no renderer crash when API is unavailable.
-6. Run `npm run build`.
-
-## 11. Naming and Conventions
-
-Use these conventions for consistency:
-
-1. IPC channel: `custom:<featureName>`
-2. Preload method: camelCase (`projectSummary`)
-3. Service method: verb-based (`getProjectSummary`, `runProjectSummary`)
-4. Result objects: include explicit fields, avoid ambiguous strings
-
-## 12. Common Mistakes
-
-1. Adding handler in main but forgetting preload exposure.
-2. Adding preload method but forgetting service wrapper.
-3. Returning non-serializable objects over IPC.
-4. Skipping error handling in component state.
-5. Using unclear channel names.
-
-## 13. Quick Template
-
-Copy this sequence each time:
-
-1. Main: add `ipcMain.handle('custom:feature', ...)`.
-2. Preload: add `feature(...) => ipcRenderer.invoke('custom:feature', ...)`.
-3. Service: add typed wrapper `runFeature(...)`.
-4. Component: call wrapper and render states.
-5. Build: run `npm run build`.
-
-This keeps custom tool development predictable and easy for new contributors.
+1. Open the app and check the debug panel — registered tools appear in the tool list
+2. Send a message asking the LLM to use your tool; watch the debug panel for the call + result
+3. Call it from a component button to verify the renderer path
+4. `npm run build` — confirm zero TypeScript errors

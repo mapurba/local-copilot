@@ -4,6 +4,31 @@
   height: 100%;
 }
 
+/* Layout containers */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-main-row {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Right panel layout */
+.chat-container.panel-right .chat-main-row {
+  flex-direction: row;
+}
+
+.chat-container.panel-right .chat-shell {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0;
+}
+
 .chat-shell {
   display: flex;
   flex-direction: column;

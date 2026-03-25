@@ -1,57 +1,29 @@
 # Copilot Chat
 
-Minimal Electron plus Angular boilerplate for GitHub Copilot sign-in and chat.
+Minimal Electron + Angular desktop client for GitHub Copilot chat.
 
 ## Quick Start
 
-```bash
-npm install
-npm run dev
-```
+- Install: npm install
+- Dev: npm run dev
+- Build renderer: npm run build
+- Build Electron package: npm run build:electron
 
-## Build
+## Docs
 
-```bash
-npm run build
-npm run build:electron
-```
+- Setup: docs/GETTING_STARTED.md
+- Custom tools: docs/CUSTOM_TOOLS_GUIDE.md
+- Thinking logs: docs/THINKING_LOGS_QUICK_REFERENCE.md
+- Dedup logs: docs/LOG_DEDUPLICATION_SUMMARY.md
 
-## What Stays In This Repo
+## Structure
 
-- Electron main process for auth, IPC, and chat streaming
-- Angular renderer with a single chat screen
-- Preload bridge exposing a small API surface
-- One concise setup guide in [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md)
-- Beginner custom tool guide in [docs/CUSTOM_TOOLS_GUIDE.md](./docs/CUSTOM_TOOLS_GUIDE.md)
-
-## Project Layout
-
-```text
-src/
-  main/       Electron main process
-  preload/    secure renderer bridge
-  renderer/   Angular UI
-docs/
-  GETTING_STARTED.md
-```
-
-## Runtime Scripts
-
-```bash
-npm run dev
-npm run start
-npm run build
-npm run build:watch
-npm run build:electron
-npm run lint
-```
+- src/main: Electron main process (auth, IPC, chat stream)
+- src/preload: secure bridge exposed to renderer
+- src/renderer: Angular UI
 
 ## Notes
 
-- The app opens on port `4100` in development.
-- Production renderer output is `dist/renderer-angular`.
-- Generated folders like `dist`, `dist-electron`, and `release` are safe to delete.
-
-## License
-
-MIT
+- Dev renderer runs on http://localhost:4100
+- Renderer build output: dist/renderer-angular
+- Safe to delete generated folders: dist, dist-electron, release
