@@ -1,0 +1,1528 @@
+<prov-req-defn flow-strategy="SingleFlow" grant="true"
+    prov-category="customTemplates" prov-id="Unlock User"
+    revoke="false"
+    status="Active"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="">
+    <display-name
+        xml:lang="en">Lock / Unlock User</display-name>
+    <display-name
+        xml:lang="pt">Bloquear / Desbloquear Usuário</display-name>
+    <display-name
+        xml:lang="es">Bloquear / Desbloquear Usuario</display-name>
+    <description
+        xml:lang="en">Form to unlock / lock the access of users.</description>
+    <description
+        xml:lang="de">Form to unlock / lock the access of users.</description>
+    <description
+        xml:lang="zh-TW">Form to unlock / lock the access of
+        users.</description>
+    <description
+        xml:lang="it">Form to unlock / lock the access of users.</description>
+    <description
+        xml:lang="pt">Formulário para desbloquear / bloquear os
+        acessos dos usuários.</description>
+    <description
+        xml:lang="sv">Form to unlock / lock the access of users.</description>
+    <description
+        xml:lang="fr">Form to unlock / lock the access of users.</description>
+    <description
+        xml:lang="ru">Form to unlock / lock the access of users.</description>
+    <description
+        xml:lang="zh-CN">Form to unlock / lock the access of
+        users.</description>
+    <description
+        xml:lang="es">Formulario para desbloquear / bloquear el
+        acceso de los usuarios.</description>
+    <description
+        xml:lang="ja">Form to unlock / lock the access of users.</description>
+    <description
+        xml:lang="nl">Form to unlock / lock the access of users.</description>
+    <prov-resource-ref>None</prov-resource-ref>
+    <workflow-ref />
+    <trustees>
+        <trustee>
+            cn=ADMUsuario-Acindar,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=ADMUsuario-Acindar,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=ADMUsuario-Acindar,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=ADMUsuario-CostaRica,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=ADMUsuario-CostaRica,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=ADMUsuario-CostaRica,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=ADMUsuario-VS,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=ADMUsuario-VS,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=ADMUsuario-VS,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=ADMUsuariosa47a2c9cb5044c6cb882b7ca30cd91f9,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=ADMUsuariosa47a2c9cb5044c6cb882b7ca30cd91f9,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=ADMUsuariosa47a2c9cb5044c6cb882b7ca30cd91f9,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=ContactClient,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=ContactClient,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=ContactClient,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My Contractors
+            Flat,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My Contractors
+            Flat,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My Contractors
+            Flat,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=My Contractors
+            Flat,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My
+            Contractors,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My
+            Contractors,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My
+            Contractors,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=My
+            Contractors,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My Employees
+            Acindar,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My Employees
+            Acindar,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My Employees
+            Acindar,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=My Employees
+            Acindar,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My Employees Costa
+            Rica,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My Employees Costa
+            Rica,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My Employees Costa
+            Rica,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=My Employees Costa
+            Rica,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My Employees
+            Flat,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My Employees
+            Flat,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My Employees
+            Flat,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=My Employees
+            Flat,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My Employees
+            Long,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My Employees
+            Long,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My Employees
+            Long,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=My Employees
+            Long,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My Employees
+            Wire,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My Employees
+            Wire,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My Employees
+            Wire,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=My Employees
+            Wire,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My
+            Team,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My
+            Team,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My
+            Team,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+        <trustee>
+            cn=My
+            Team,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrViewRunningPRD</trustee>
+        <trustee>
+            cn=My supervised Contractors
+            Team,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessDelegateConfigure</trustee>
+        <trustee>
+            cn=My supervised Contractors
+            Team,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrInitiatePRD</trustee>
+        <trustee>
+            cn=My supervised Contractors
+            Team,cn=TeamDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,ou=idm,ou=service,o=mid#nrfAccessMgrRetractPRD</trustee>
+    </trustees>
+    <xml-data>
+        <design-params
+            digital-signature-type="not-required" grant="true"
+            notify-addressee="true"
+            prov-id="Unlock User">
+            <form-title>
+                <display-label
+                    xml:lang="en">Unlock User</display-label>
+                <description
+                    xml:lang="en">Unlock User</description>
+            </form-title>
+            <prov-resource
+                name="None" />
+            <workflow />
+            <legal-disclaimers />
+            <links>
+                <link
+                    source="Activity4" target="Finish"
+                    type="forward" />
+                <link source="Activity3"
+                    target="Activity5" type="denied" />
+                <link
+                    source="Activity5" target="Finish"
+                    type="forward" />
+                <link source="Activity2"
+                    target="Activity7" type="true" />
+                <link
+                    source="Activity7" target="Activity3"
+                    type="true" />
+                <link source="Activity1"
+                    target="Activity9" type="forward" />
+                <link
+                    source="Activity6" target="Activity11"
+                    type="false" />
+                <link source="Activity11"
+                    target="Activity12" type="forward" />
+                <link
+                    source="Activity12" target="Activity8"
+                    type="approved" />
+                <link source="Activity13"
+                    target="Activity14" type="forward" />
+                <link
+                    source="Activity14" target="Activity1"
+                    type="approved" />
+                <link source="Activity2"
+                    target="Activity6" type="false" />
+                <link
+                    source="Activity3" target="Activity6"
+                    type="approved" />
+                <link source="Activity7"
+                    target="Activity6" type="false" />
+                <link
+                    source="Activity6" target="Activity"
+                    type="true" />
+                <link source="Activity"
+                    target="Activity10" type="forward" />
+                <link
+                    source="Activity10" target="Activity13"
+                    type="approved" />
+                <link source="Start"
+                    target="Activity15" type="forward" />
+                <link
+                    source="Activity15" target="Activity16"
+                    type="forward" />
+                <link source="Activity16"
+                    target="Activity2" type="forward" />
+                <link
+                    source="Activity8" target="Activity17"
+                    type="forward" />
+                <link source="Activity17"
+                    target="Activity18" type="true" />
+                <link
+                    source="Activity18" target="Activity4"
+                    type="forward" />
+                <link source="Activity9"
+                    target="Activity19" type="forward" />
+                <link
+                    source="Activity19" target="Activity20"
+                    type="true" />
+                <link source="Activity20"
+                    target="Activity4" type="forward" />
+                <link
+                    source="Activity19" target="Activity4"
+                    type="false" />
+                <link source="Activity17"
+                    target="Activity4"
+                    type="false" />
+            </links>
+            <user-activity
+                activity-id="Activity3"
+                digital-signature-type="not-required"
+                ontimeout="denied"
+                timeout="1000" timeout-units="days">
+                <display-label
+                    xml:lang="pt">Primeira aprovação</display-label>
+                <display-label
+                    xml:lang="en">First approval</display-label>
+                <display-label
+                    xml:lang="es">Primera aprobación</display-label>
+                <addressee
+                    value="(function()&#xd;&#xa;{&#xd;&#xa;   try {&#xd;&#xa;  &#x9;&#x9;var vEmpresa=IDVault.get(initiator , 'user', 'midSAP-user-empresa');&#xd;&#xa;            return 'CN=GRP-'  +  vEmpresa + '-UNLK-APROVADOR,OU=GRUPOS,O=mid';&#xd;&#xa;   } catch (error) {&#xd;&#xa;&#x9;&#x9;return 'CN=UserApp37,O=mid';&#xd;&#xa;  }&#xd;&#xa;&#xd;&#xa;})()&#xd;&#xa;" />
+                <notify
+                    template="cn=Rede - Solicitacao de Recurso IDM Corporativo,cn=Default Notification Collection,cn=Security">
+                    <map
+                        source="IDVault.get(recipient , 'user', 'workforceID')"
+                        target="workforceid" />
+                    <map
+                        source="'Colaborador,'"
+                        target="initiatorFullName" />
+                    <map source="' '"
+                        target="userFirstName" />
+                    <map
+                        source="IDVault.get(recipient , 'user', 'FullName')"
+                        target="recipientFullName" />
+                    <map
+                        source="'Desbloquear Usuário'"
+                        target="requestTitle" />
+                    <map source="_default_"
+                        target="TO" />
+                </notify>
+                <retry attempts=""
+                    interval="">
+                    <addressee
+                        value="" />
+                </retry>
+            </user-activity>
+            <user-activity
+                activity-id="Activity12"
+                digital-signature-type="not-required"
+                ontimeout="approved" timeout="5000"
+                timeout-units="milliseconds">
+                <display-label
+                    xml:lang="en">Processing time</display-label>
+                <addressee
+                    value="'CN=userapplication,O=mid'" />
+                <notify
+                    template="cn=Provisioning Notification,cn=Default Notification Collection,cn=Security">
+                    <map
+                        source="_default_" target="TO" />
+                </notify>
+                <retry
+                    attempts="" interval="">
+                    <addressee
+                        value="" />
+                </retry>
+            </user-activity>
+            <user-activity
+                activity-id="Activity14"
+                digital-signature-type="not-required"
+                ontimeout="approved" timeout="5000"
+                timeout-units="milliseconds">
+                <display-label
+                    xml:lang="en">Processing time</display-label>
+                <addressee
+                    value="'CN=userapplication,O=mid'" />
+                <notify
+                    template="cn=Provisioning Notification,cn=Default Notification Collection,cn=Security">
+                    <map
+                        source="_default_" target="TO" />
+                </notify>
+                <retry
+                    attempts="" interval="">
+                    <addressee
+                        value="" />
+                </retry>
+            </user-activity>
+            <user-activity
+                activity-id="Activity10"
+                digital-signature-type="not-required"
+                ontimeout="approved" timeout="5000"
+                timeout-units="milliseconds">
+                <display-label
+                    xml:lang="en">Processing</display-label>
+                <addressee
+                    value="'CN=userapplication,O=mid'" />
+                <notify
+                    template="cn=Provisioning Notification,cn=Default Notification Collection,cn=Security">
+                    <map
+                        source="_default_" target="TO" />
+                </notify>
+                <retry
+                    attempts="" interval="">
+                    <addressee
+                        value="" />
+                </retry>
+            </user-activity>
+        </design-params>
+        <resource-data-binding />
+    </xml-data>
+    <process
+        generate-comments="false"
+        id="cn=Unlock User,cn=RequestDefs,cn=AppConfig,cn=UserApplication,cn=driverset_idm01,cn=idm,cn=service,o=mid"
+        setnotify="true" version="4.5.0"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="ApprovalProcess3_6_1.xsd">
+        <display-name
+            xml:lang="en">Lock / Unlock User</display-name>
+        <display-name
+            xml:lang="pt">Bloquear / Desbloquear Usuário</display-name>
+        <display-name
+            xml:lang="es">Bloquear / Desbloquear Usuario</display-name>
+        <form
+            form-id="approval_form">
+            <content>
+                <field
+                    data-type="dn" name="initiator"
+                    visible="true">
+                    <control control-type="DNDisplay"
+                        editable="false">
+                        <props>
+                            <prop
+                                name="display-exp">
+                                <value>workforceID - FullName </value>
+                            </prop>
+                            <prop
+                                name="display-entitydef">
+                                <value>user</value>
+                            </prop>
+                        </props>
+                    </control>
+                    <display-label
+                        xml:lang="zh-TW">申請者：</display-label>
+                    <display-label
+                        xml:lang="de">Angefordert von:</display-label>
+                    <display-label
+                        xml:lang="en">Requested by:</display-label>
+                    <display-label
+                        xml:lang="es">Petición de:</display-label>
+                    <display-label
+                        xml:lang="fr">Demandé par :</display-label>
+                    <display-label
+                        xml:lang="ja">要求元:</display-label>
+                    <display-label
+                        xml:lang="it">Richiesta da:</display-label>
+                    <display-label
+                        xml:lang="nl">Aangevraagd door:</display-label>
+                    <display-label
+                        xml:lang="pt">Solicitado por:</display-label>
+                    <display-label
+                        xml:lang="ru">Запрашивающий:</display-label>
+                    <display-label
+                        xml:lang="sv">Begäran skickad av:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">请求人：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <field
+                    data-type="dn" name="recipient"
+                    visible="true">
+                    <control control-type="DNDisplay"
+                        editable="false">
+                        <props>
+                            <prop
+                                name="display-exp">
+                                <value>workforceID - FullName </value>
+                            </prop>
+                            <prop
+                                name="display-entitydef">
+                                <value>user</value>
+                            </prop>
+                        </props>
+                    </control>
+                    <display-label
+                        xml:lang="zh-TW">收件者：</display-label>
+                    <display-label
+                        xml:lang="de">Empfänger:</display-label>
+                    <display-label
+                        xml:lang="en">Recipient:</display-label>
+                    <display-label
+                        xml:lang="es">Destinatario:</display-label>
+                    <display-label
+                        xml:lang="fr">Destinataire :</display-label>
+                    <display-label
+                        xml:lang="ja">受信者:</display-label>
+                    <display-label
+                        xml:lang="it">Destinatario:</display-label>
+                    <display-label
+                        xml:lang="nl">Ontvanger:</display-label>
+                    <display-label
+                        xml:lang="pt">Destinatário:</display-label>
+                    <display-label
+                        xml:lang="ru">Получатель:</display-label>
+                    <display-label
+                        xml:lang="sv">Mottagare:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">收件人：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <field
+                    data-type="string" name="reason"
+                    visible="true">
+                    <control control-type="Text"
+                        editable="false"
+                        required="false" />
+                    <display-label
+                        xml:lang="zh-TW">原因：</display-label>
+                    <display-label
+                        xml:lang="de">Ursache:</display-label>
+                    <display-label
+                        xml:lang="en">Reason:</display-label>
+                    <display-label
+                        xml:lang="es">Razón:</display-label>
+                    <display-label
+                        xml:lang="fr">Raison :</display-label>
+                    <display-label
+                        xml:lang="ja">理由:</display-label>
+                    <display-label
+                        xml:lang="it">Motivo:</display-label>
+                    <display-label
+                        xml:lang="nl">Reden:</display-label>
+                    <display-label
+                        xml:lang="pt">Razão:</display-label>
+                    <display-label
+                        xml:lang="ru">Причина:</display-label>
+                    <display-label
+                        xml:lang="sv">Orsak:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">原因：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <field
+                    data-type="string" name="apwaComment"
+                    visible="true">
+                    <control control-type="TextArea"
+                        editable="true" required="false" />
+                    <display-label
+                        xml:lang="zh-TW">備註：</display-label>
+                    <display-label
+                        xml:lang="de">Kommentar:</display-label>
+                    <display-label
+                        xml:lang="en">Comment:</display-label>
+                    <display-label
+                        xml:lang="es">Comentario:</display-label>
+                    <display-label
+                        xml:lang="fr">Commentaire :</display-label>
+                    <display-label
+                        xml:lang="ja">コメント:</display-label>
+                    <display-label
+                        xml:lang="it">Commento:</display-label>
+                    <display-label
+                        xml:lang="nl">Opmerking:</display-label>
+                    <display-label
+                        xml:lang="pt">Comentário:</display-label>
+                    <display-label
+                        xml:lang="ru">Комментарий:</display-label>
+                    <display-label
+                        xml:lang="sv">Kommentar:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">注释：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <actions
+                    location="bottom">
+                    <action block-on-error="false"
+                        name="CommentAction">
+                        <control
+                            control-type="Button" />
+                        <display-label
+                            xml:lang="zh-TW">檢視備註歷程</display-label>
+                        <display-label
+                            xml:lang="de">Kommentarverlauf
+                            anzeigen</display-label>
+                        <display-label
+                            xml:lang="en">View Comment History</display-label>
+                        <display-label
+                            xml:lang="es">Ver historial de
+                            comentarios</display-label>
+                        <display-label
+                            xml:lang="fr">Afficher l'historique
+                            des commentaires</display-label>
+                        <display-label
+                            xml:lang="ja">コメント履歴の表示</display-label>
+                        <display-label
+                            xml:lang="it">Visualizza cronologia
+                            commenti</display-label>
+                        <display-label
+                            xml:lang="nl">Opmerkingshistorie
+                            weergeven</display-label>
+                        <display-label
+                            xml:lang="pt">Ver Histórico de
+                            Comentários</display-label>
+                        <display-label
+                            xml:lang="ru">Просмотр протокола
+                            комментариев</display-label>
+                        <display-label
+                            xml:lang="sv">Visa
+                            kommentarshistorik</display-label>
+                        <display-label
+                            xml:lang="zh-CN">查看注释历史</display-label>
+                    </action>
+                    <field>
+                        <control
+                            control-type="LineBreak" />
+                    </field>
+                    <action
+                        hide-if-readonly="true"
+                        name="DenyAction">
+                        <control
+                            control-type="Button" />
+                        <display-label
+                            xml:lang="zh-TW">拒絕</display-label>
+                        <display-label
+                            xml:lang="de">Verweigern</display-label>
+                        <display-label
+                            xml:lang="en">Deny</display-label>
+                        <display-label
+                            xml:lang="es">Denegar</display-label>
+                        <display-label
+                            xml:lang="fr">Refuser</display-label>
+                        <display-label
+                            xml:lang="ja">却下</display-label>
+                        <display-label
+                            xml:lang="it">Rifiuta</display-label>
+                        <display-label
+                            xml:lang="nl">Afwijzen</display-label>
+                        <display-label
+                            xml:lang="pt">Negar</display-label>
+                        <display-label
+                            xml:lang="ru">Запретить</display-label>
+                        <display-label
+                            xml:lang="sv">Avslå</display-label>
+                        <display-label
+                            xml:lang="zh-CN">拒绝</display-label>
+                    </action>
+                    <action
+                        hide-if-readonly="true"
+                        name="ApprovalAction">
+                        <control
+                            control-type="Button" />
+                        <display-label
+                            xml:lang="zh-TW">核准</display-label>
+                        <display-label
+                            xml:lang="de">Genehmigen</display-label>
+                        <display-label
+                            xml:lang="en">Approve</display-label>
+                        <display-label
+                            xml:lang="es">Aprobar</display-label>
+                        <display-label
+                            xml:lang="fr">Approuver</display-label>
+                        <display-label
+                            xml:lang="ja">承認</display-label>
+                        <display-label
+                            xml:lang="it">Approva</display-label>
+                        <display-label
+                            xml:lang="nl">Goedkeuren</display-label>
+                        <display-label
+                            xml:lang="pt">Aprovar</display-label>
+                        <display-label
+                            xml:lang="ru">Подтвердить</display-label>
+                        <display-label
+                            xml:lang="sv">Godkänn</display-label>
+                        <display-label
+                            xml:lang="zh-CN">批准</display-label>
+                    </action>
+                </actions>
+            </content>
+        </form>
+        <form
+            form-id="approval_form1">
+            <content>
+                <field
+                    data-type="dn" name="initiator"
+                    visible="true">
+                    <control control-type="DNDisplay"
+                        editable="false">
+                        <props>
+                            <prop
+                                name="display-exp">
+                                <value>FirstName LastName</value>
+                            </prop>
+                            <prop
+                                name="display-entitydef">
+                                <value>user</value>
+                            </prop>
+                        </props>
+                    </control>
+                    <display-label
+                        xml:lang="zh-TW">申請者：</display-label>
+                    <display-label
+                        xml:lang="de">Angefordert von:</display-label>
+                    <display-label
+                        xml:lang="en">Requested by:</display-label>
+                    <display-label
+                        xml:lang="es">Petición de:</display-label>
+                    <display-label
+                        xml:lang="fr">Demandé par :</display-label>
+                    <display-label
+                        xml:lang="ja">要求元:</display-label>
+                    <display-label
+                        xml:lang="it">Richiesta da:</display-label>
+                    <display-label
+                        xml:lang="nl">Aangevraagd door:</display-label>
+                    <display-label
+                        xml:lang="pt">Solicitado por:</display-label>
+                    <display-label
+                        xml:lang="ru">Запрашивающий:</display-label>
+                    <display-label
+                        xml:lang="sv">Begäran skickad av:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">请求人：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <field
+                    data-type="dn" name="recipient"
+                    visible="true">
+                    <control control-type="DNDisplay"
+                        editable="false">
+                        <props>
+                            <prop
+                                name="display-exp">
+                                <value>FirstName LastName</value>
+                            </prop>
+                            <prop
+                                name="display-entitydef">
+                                <value>user</value>
+                            </prop>
+                        </props>
+                    </control>
+                    <display-label
+                        xml:lang="zh-TW">收件者：</display-label>
+                    <display-label
+                        xml:lang="de">Empfänger:</display-label>
+                    <display-label
+                        xml:lang="en">Recipient:</display-label>
+                    <display-label
+                        xml:lang="es">Destinatario:</display-label>
+                    <display-label
+                        xml:lang="fr">Destinataire :</display-label>
+                    <display-label
+                        xml:lang="ja">受信者:</display-label>
+                    <display-label
+                        xml:lang="it">Destinatario:</display-label>
+                    <display-label
+                        xml:lang="nl">Ontvanger:</display-label>
+                    <display-label
+                        xml:lang="pt">Destinatário:</display-label>
+                    <display-label
+                        xml:lang="ru">Получатель:</display-label>
+                    <display-label
+                        xml:lang="sv">Mottagare:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">收件人：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <field
+                    data-type="date" name="initiatedTime"
+                    visible="true">
+                    <control
+                        control-type="DatePicker"
+                        editable="false">
+                        <props>
+                            <prop
+                                name="dayHeaders">
+                                <value
+                                    xml:lang="zh-TW">
+                                    '日','一','二','三','四','五','六'</value>
+                                <value
+                                    xml:lang="de">
+                                    'S','M','D','M','D','F','S'</value>
+                                <value
+                                    xml:lang="en">
+                                    'S','M','T','W','T','F','S'</value>
+                                <value
+                                    xml:lang="es">
+                                    'D','L','M','M','J','V','S'</value>
+                                <value
+                                    xml:lang="fr">
+                                    'D','L','M','M','J','V','S'</value>
+                                <value
+                                    xml:lang="ja">
+                                    '日','月','火','水','木','金','土'</value>
+                                <value
+                                    xml:lang="it">
+                                    'D','L','M','M','G','V','S'</value>
+                                <value
+                                    xml:lang="nl">
+                                    'z','m','d','w','d','v','z'</value>
+                                <value
+                                    xml:lang="pt">
+                                    'D','S','T','Q','Q','S','S'</value>
+                                <value
+                                    xml:lang="ru">
+                                    'В','П','В','С','Ч','П','С'</value>
+                                <value
+                                    xml:lang="sv">
+                                    'S','M','T','O','T','F','L'</value>
+                                <value
+                                    xml:lang="zh-CN">
+                                    '日','一','二','三','四','五','六'</value>
+                            </prop>
+                            <prop
+                                name="monthNames">
+                                <value
+                                    xml:lang="zh-TW">'1 月','2
+                                    月','3 月','4 月','5 月','6
+                                    月','7 月','8 月','9 月','10
+                                    月','11 月','12 月'</value>
+                                <value
+                                    xml:lang="de">
+                                    'Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'</value>
+                                <value
+                                    xml:lang="en">
+                                    'January','February','March','April','May','June','July','August','September','October','November','December'</value>
+                                <value
+                                    xml:lang="es">
+                                    'Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'</value>
+                                <value
+                                    xml:lang="fr">
+                                    'Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'</value>
+                                <value
+                                    xml:lang="ja">
+                                    '1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'</value>
+                                <value
+                                    xml:lang="it">
+                                    'gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'</value>
+                                <value
+                                    xml:lang="nl">
+                                    'januari','februari','maart','april','mei','juni','juli','augustus','september','oktober','november','december'</value>
+                                <value
+                                    xml:lang="pt">
+                                    'Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'</value>
+                                <value
+                                    xml:lang="ru">
+                                    'Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август',Сентябрь','Октябрь','Ноябрь','Декабрь'</value>
+                                <value
+                                    xml:lang="sv">
+                                    'Januari','Februari','Mars','April','Maj','Juni','Juli','Augusti','September','Oktober','November','December'</value>
+                                <value
+                                    xml:lang="zh-CN">
+                                    '一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月'</value>
+                            </prop>
+                        </props>
+                    </control>
+                    <display-label
+                        xml:lang="zh-TW">申請日：</display-label>
+                    <display-label
+                        xml:lang="de">Anforderungsdatum</display-label>
+                    <display-label
+                        xml:lang="en">Request Date:</display-label>
+                    <display-label
+                        xml:lang="es">Fecha de la petición:</display-label>
+                    <display-label
+                        xml:lang="fr">Date de la requête :</display-label>
+                    <display-label
+                        xml:lang="ja">要求日:</display-label>
+                    <display-label
+                        xml:lang="it">Data della richiesta:</display-label>
+                    <display-label
+                        xml:lang="nl">Datum van aanvraag:</display-label>
+                    <display-label
+                        xml:lang="pt">Data de Solicitação:</display-label>
+                    <display-label
+                        xml:lang="ru">Дата запроса:</display-label>
+                    <display-label
+                        xml:lang="sv">Begäran skickad den:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">请求日期：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <field
+                    data-type="string" name="reason"
+                    visible="true">
+                    <control control-type="Text"
+                        editable="false" />
+                    <display-label
+                        xml:lang="zh-TW">原因：</display-label>
+                    <display-label
+                        xml:lang="de">Ursache:</display-label>
+                    <display-label
+                        xml:lang="en">Reason:</display-label>
+                    <display-label
+                        xml:lang="es">Razón:</display-label>
+                    <display-label
+                        xml:lang="fr">Raison :</display-label>
+                    <display-label
+                        xml:lang="ja">理由:</display-label>
+                    <display-label
+                        xml:lang="it">Motivo:</display-label>
+                    <display-label
+                        xml:lang="nl">Reden:</display-label>
+                    <display-label
+                        xml:lang="pt">Razão:</display-label>
+                    <display-label
+                        xml:lang="ru">Причина:</display-label>
+                    <display-label
+                        xml:lang="sv">Orsak:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">原因：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <field
+                    data-type="string" name="apwaComment"
+                    visible="true">
+                    <control control-type="TextArea"
+                        editable="true" required="false" />
+                    <display-label
+                        xml:lang="zh-TW">備註：</display-label>
+                    <display-label
+                        xml:lang="de">Kommentar:</display-label>
+                    <display-label
+                        xml:lang="en">Comment:</display-label>
+                    <display-label
+                        xml:lang="es">Comentario:</display-label>
+                    <display-label
+                        xml:lang="fr">Commentaire :</display-label>
+                    <display-label
+                        xml:lang="ja">コメント:</display-label>
+                    <display-label
+                        xml:lang="it">Commento:</display-label>
+                    <display-label
+                        xml:lang="nl">Opmerking:</display-label>
+                    <display-label
+                        xml:lang="pt">Comentário:</display-label>
+                    <display-label
+                        xml:lang="ru">Комментарий:</display-label>
+                    <display-label
+                        xml:lang="sv">Kommentar:</display-label>
+                    <display-label
+                        xml:lang="zh-CN">注释：</display-label>
+                </field>
+                <field>
+                    <control
+                        control-type="LineBreak" />
+                </field>
+                <actions
+                    location="bottom">
+                    <action block-on-error="false"
+                        name="CommentAction">
+                        <control
+                            control-type="Button" />
+                        <display-label
+                            xml:lang="zh-TW">檢視備註歷程</display-label>
+                        <display-label
+                            xml:lang="de">Kommentarverlauf
+                            anzeigen</display-label>
+                        <display-label
+                            xml:lang="en">View Comment History</display-label>
+                        <display-label
+                            xml:lang="es">Ver historial de
+                            comentarios</display-label>
+                        <display-label
+                            xml:lang="fr">Afficher l'historique
+                            des commentaires</display-label>
+                        <display-label
+                            xml:lang="ja">コメント履歴の表示</display-label>
+                        <display-label
+                            xml:lang="it">Visualizza cronologia
+                            commenti</display-label>
+                        <display-label
+                            xml:lang="nl">Opmerkingshistorie
+                            weergeven</display-label>
+                        <display-label
+                            xml:lang="pt">Ver Histórico de
+                            Comentários</display-label>
+                        <display-label
+                            xml:lang="ru">Просмотр протокола
+                            комментариев</display-label>
+                        <display-label
+                            xml:lang="sv">Visa
+                            kommentarshistorik</display-label>
+                        <display-label
+                            xml:lang="zh-CN">查看注释历史</display-label>
+                    </action>
+                    <field>
+                        <control
+                            control-type="LineBreak" />
+                    </field>
+                    <action
+                        hide-if-readonly="true"
+                        name="DenyAction">
+                        <control
+                            control-type="Button" />
+                        <display-label
+                            xml:lang="zh-TW">拒絕</display-label>
+                        <display-label
+                            xml:lang="de">Verweigern</display-label>
+                        <display-label
+                            xml:lang="en">Deny</display-label>
+                        <display-label
+                            xml:lang="es">Denegar</display-label>
+                        <display-label
+                            xml:lang="fr">Refuser</display-label>
+                        <display-label
+                            xml:lang="ja">却下</display-label>
+                        <display-label
+                            xml:lang="it">Rifiuta</display-label>
+                        <display-label
+                            xml:lang="nl">Afwijzen</display-label>
+                        <display-label
+                            xml:lang="pt">Negar</display-label>
+                        <display-label
+                            xml:lang="ru">Запретить</display-label>
+                        <display-label
+                            xml:lang="sv">Avslå</display-label>
+                        <display-label
+                            xml:lang="zh-CN">拒绝</display-label>
+                    </action>
+                    <action
+                        hide-if-readonly="true"
+                        name="ApprovalAction">
+                        <control
+                            control-type="Button" />
+                        <display-label
+                            xml:lang="zh-TW">核准</display-label>
+                        <display-label
+                            xml:lang="de">Genehmigen</display-label>
+                        <display-label
+                            xml:lang="en">Approve</display-label>
+                        <display-label
+                            xml:lang="es">Aprobar</display-label>
+                        <display-label
+                            xml:lang="fr">Approuver</display-label>
+                        <display-label
+                            xml:lang="ja">承認</display-label>
+                        <display-label
+                            xml:lang="it">Approva</display-label>
+                        <display-label
+                            xml:lang="nl">Goedkeuren</display-label>
+                        <display-label
+                            xml:lang="pt">Aprovar</display-label>
+                        <display-label
+                            xml:lang="ru">Подтвердить</display-label>
+                        <display-label
+                            xml:lang="sv">Godkänn</display-label>
+                        <display-label
+                            xml:lang="zh-CN">批准</display-label>
+                    </action>
+                </actions>
+            </content>
+        </form>
+        <form-binding
+            activity-id="Activity3"
+            form-id="approval_form" />
+        <form-binding
+            activity-id="Activity12"
+            form-id="approval_form1" />
+        <form-binding
+            activity-id="Activity14"
+            form-id="approval_form1" />
+        <form-binding
+            activity-id="Activity10"
+            form-id="approval_form1" />
+        <data-items
+            activity-id="Activity3">
+            <data-item data-type="dn"
+                name="recipient" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="reason"
+                source="flowdata.get('Start/request_form/reason')"
+                target-type="single-value" />
+        </data-items>
+        <data-items
+            activity-id="Activity1">
+            <data-item data-type="string"
+                name="dn" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="employeeStatus"
+                source="'A'"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="jackNumber" source="''"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="LoginDisabled"
+                source="'FALSE'"
+                target-type="single-value" />
+            <data-item
+                data-type="string"
+                name="midBloqueioAdministrativo"
+                source="''"
+                target-type="single-value" />
+        </data-items>
+        <data-items
+            activity-id="Activity8">
+            <data-item data-type="string"
+                name="dn" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="description"
+                source="process.getTimestamp() + ' - ' + process.getName() +  ' - Lock User por: ' + IDVault.get(initiator , 'user', 'workforceID') + ' - ' + IDVault.get(initiator , 'user', 'FullName')"
+                target-type="multi-value-list-item" />
+        </data-items>
+        <data-items
+            activity-id="Activity9">
+            <data-item data-type="string"
+                name="dn" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="description"
+                source="process.getTimestamp() + ' - ' + process.getName() +  ' - unLock User por: ' + IDVault.get(initiator , 'user', 'workforceID') + ' - ' + IDVault.get(initiator , 'user', 'FullName')"
+                target-type="multi-value-list-item" />
+        </data-items>
+        <data-items
+            activity-id="Activity11">
+            <data-item data-type="string"
+                name="dn" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="LoginDisabled"
+                source="'TRUE'"
+                target-type="single-value" />
+        </data-items>
+        <data-items
+            activity-id="Activity13">
+            <data-item data-type="string"
+                name="dn" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="jackNumber"
+                source="'unlock'"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="LoginDisabled"
+                source="'TRUE'"
+                target-type="single-value" />
+        </data-items>
+        <data-items
+            activity-id="Activity">
+            <data-item data-type="string"
+                name="dn" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="jackNumber"
+                source="'unlock'"
+                target-type="single-value" />
+        </data-items>
+        <data-items
+            activity-id="Activity4">
+            <data-item data-type="string"
+                name="approvalstatus" source="'approved'"
+                target="flowdata.IDM_COMPLETED_APPROVAL_STATUS" />
+        </data-items>
+        <data-items
+            activity-id="Activity5">
+            <data-item data-type="string"
+                name="approvalstatus" source="'denied'"
+                target="flowdata.IDM_COMPLETED_APPROVAL_STATUS" />
+        </data-items>
+        <data-items
+            activity-id="Activity18">
+            <data-item data-type="string"
+                name="dn" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="midTipoContratoPessoa"
+                source="&quot;blockedAdmin&quot;"
+                target-type="single-value" />
+        </data-items>
+        <data-items
+            activity-id="Activity20">
+            <data-item data-type="string"
+                name="dn" source="recipient"
+                target-type="single-value" />
+            <data-item
+                data-type="string" name="midTipoContratoPessoa"
+                source="&quot;&quot;"
+                target-type="single-value" />
+        </data-items>
+        <start-activity
+            activity-id="Start">
+            <display-name
+                xml:lang="en">Start</display-name>
+            <display-name
+                xml:lang="en">Start</display-name>
+        </start-activity>
+        <condition-activity
+            activity-id="Activity2">
+            <display-name
+                xml:lang="pt">Verifica evento</display-name>
+            <display-name
+                xml:lang="en">Check Action</display-name>
+            <display-name
+                xml:lang="es">Verifica evento</display-name>
+            <expression>flowdata.get('Start/request_form/Acao').toLowerCase()
+                == 'true'</expression>
+        </condition-activity>
+        <user-activity
+            activity-id="Activity3" ontimeout="denied"
+            timeout="86400000000">
+            <display-name
+                xml:lang="pt">Primeira aprovação</display-name>
+            <display-name
+                xml:lang="en">First approval</display-name>
+            <display-name
+                xml:lang="es">Primera aprobación</display-name>
+            <addressee>(function()&#xd;
+                {&#xd;
+                try {&#xd;
+                var vEmpresa=IDVault.get(initiator , 'user',
+                'midSAP-user-empresa');&#xd;
+                return 'CN=GRP-' + vEmpresa +
+                '-UNLK-APROVADOR,OU=GRUPOS,O=mid';&#xd;
+                } catch (error) {&#xd;
+                return 'CN=UserApp37,O=mid';&#xd;
+                }&#xd;
+                &#xd;
+                })()&#xd;
+            </addressee>
+            <notify
+                template="cn=Rede - Solicitacao de Recurso IDM Corporativo,cn=Default Notification Collection,cn=Security">
+                <map
+                    source="IDVault.get(recipient , 'user', 'workforceID')"
+                    target="workforceid" />
+                <map source="'Colaborador,'"
+                    target="initiatorFullName" />
+                <map source="' '"
+                    target="userFirstName" />
+                <map
+                    source="IDVault.get(recipient , 'user', 'FullName')"
+                    target="recipientFullName" />
+                <map
+                    source="'Desbloquear Usuário'"
+                    target="requestTitle" />
+                <map source="_default_"
+                    target="TO" />
+            </notify>
+            <retry attempts=""
+                interval="">
+                <addressee />
+            </retry>
+        </user-activity>
+        <mapping-activity
+            activity-id="Activity4">
+            <display-name
+                xml:lang="en">Workflow Status</display-name>
+            <display-name
+                xml:lang="es">Workflow Status</display-name>
+        </mapping-activity>
+        <mapping-activity
+            activity-id="Activity5">
+            <display-name
+                xml:lang="en">Workflow Status Denied</display-name>
+            <display-name
+                xml:lang="es">Workflow Status Negó</display-name>
+        </mapping-activity>
+        <condition-activity
+            activity-id="Activity6">
+            <display-name
+                xml:lang="pt">Desbloquear?</display-name>
+            <display-name
+                xml:lang="en">Unlocked?</display-name>
+            <display-name
+                xml:lang="es">Desbloquear?</display-name>
+            <expression>flowdata.get('Start/request_form/Acao').toLowerCase()
+                == 'true'</expression>
+        </condition-activity>
+        <condition-activity
+            activity-id="Activity7">
+            <display-name
+                xml:lang="pt">Bloqueio Administrativo?</display-name>
+            <display-name
+                xml:lang="en">Administrative Lock?</display-name>
+            <display-name
+                xml:lang="es">Bloqueio Administrativo?</display-name>
+            <expression>IDVault.get(recipient , 'user',
+                'midBloqueioAdministrativo') == 'TRUE'</expression>
+        </condition-activity>
+        <user-activity
+            activity-id="Activity12" ontimeout="approved"
+            setnotify="false" timeout="5000">
+            <display-name
+                xml:lang="en">Processing time</display-name>
+            <addressee>'CN=userapplication,O=mid'</addressee>
+            <notify
+                template="cn=Provisioning Notification,cn=Default Notification Collection,cn=Security">
+                <map
+                    source="_default_" target="TO" />
+            </notify>
+            <retry
+                attempts=""
+                interval="">
+                <addressee />
+            </retry>
+        </user-activity>
+        <user-activity
+            activity-id="Activity14" ontimeout="approved"
+            setnotify="false" timeout="5000">
+            <display-name
+                xml:lang="en">Processing time</display-name>
+            <addressee>'CN=userapplication,O=mid'</addressee>
+            <notify
+                template="cn=Provisioning Notification,cn=Default Notification Collection,cn=Security">
+                <map
+                    source="_default_" target="TO" />
+            </notify>
+            <retry
+                attempts=""
+                interval="">
+                <addressee />
+            </retry>
+        </user-activity>
+        <user-activity
+            activity-id="Activity10" ontimeout="approved"
+            setnotify="false" timeout="5000">
+            <display-name
+                xml:lang="en">Processing</display-name>
+            <addressee>'CN=userapplication,O=mid'</addressee>
+            <notify
+                template="cn=Provisioning Notification,cn=Default Notification Collection,cn=Security">
+                <map
+                    source="_default_" target="TO" />
+            </notify>
+            <retry
+                attempts=""
+                interval="">
+                <addressee />
+            </retry>
+        </user-activity>
+        <log-activity
+            activity-id="Activity15" audit="true">
+            <display-name
+                xml:lang="pt">Descrição da solicitação:</display-name>
+            <display-name
+                xml:lang="en">Request description:</display-name>
+            <display-name
+                xml:lang="es">Descripción de la solicitud:</display-name>
+            <author>IDVault.get(initiator, 'user', 'FullName')</author>
+            <message>function retornaMSG() {&#xd;
+                &#xd;
+                var MSG;&#xd;
+                if(flowdata.get('Start/request_form/Acao') ==
+                'false') MSG = "Ação / Action: Bloquear usuário
+                / Lock User.";&#xd;
+                else MSG = "Ação / Action: Desbloquear usuário /
+                Unlock User."&#xd;
+                &#xd;
+                return MSG;&#xd;
+                }&#xd;
+                retornaMSG();&#xd;
+            </message>
+            <comment>function retornaMSG() {&#xd;
+                &#xd;
+                var MSG;&#xd;
+                if(flowdata.get('Start/request_form/Acao') ==
+                'false') MSG = "Ação / Action: Bloquear usuário
+                / Lock User.";&#xd;
+                else MSG = "Ação / Action: Desbloquear usuário /
+                Unlock User."&#xd;
+                &#xd;
+                return MSG;&#xd;
+                }&#xd;
+                retornaMSG();&#xd;
+            </comment>
+        </log-activity>
+        <log-activity
+            activity-id="Activity16">
+            <display-name
+                xml:lang="pt">Motivo da solicitação:</display-name>
+            <display-name
+                xml:lang="en">Request reason:</display-name>
+            <display-name
+                xml:lang="es">Motivo de la solicitud:</display-name>
+            <author>IDVault.get(initiator, 'user', 'FullName')</author>
+            <message>flowdata.get('Start/request_form/reason')</message>
+            <comment>flowdata.get('Start/request_form/reason')</comment>
+        </log-activity>
+        <condition-activity
+            activity-id="Activity17">
+            <display-name
+                xml:lang="en">is Admin account?</display-name>
+            <expression>(IDVault.get(recipient, 'user',
+                'employeeType') == "S")</expression>
+        </condition-activity>
+        <condition-activity
+            activity-id="Activity19">
+            <display-name
+                xml:lang="en">is Admin account?</display-name>
+            <expression>(IDVault.get(recipient, 'user',
+                'employeeType') == "S")</expression>
+        </condition-activity>
+        <provision-activity
+            activity-id="Activity1" category="nonit_asset"
+            entity-type="user" operation="grant">
+            <display-name
+                xml:lang="pt">Desbloqueia usuario</display-name>
+            <display-name
+                xml:lang="en">Unlock User</display-name>
+            <display-name
+                xml:lang="es">Desbloqueia usuario</display-name>
+        </provision-activity>
+        <provision-activity
+            activity-id="Activity8" category="nonit_asset"
+            entity-type="userUpdate" operation="grant">
+            <display-name
+                xml:lang="pt">Bloqueia usuario</display-name>
+            <display-name
+                xml:lang="en">Lock User</display-name>
+            <display-name
+                xml:lang="es">Bloqueia usuario</display-name>
+        </provision-activity>
+        <provision-activity
+            activity-id="Activity9" category="nonit_asset"
+            entity-type="userUpdate" operation="grant"
+            set-completed-approval-status="false">
+            <display-name
+                xml:lang="pt">Grava historico</display-name>
+            <display-name
+                xml:lang="en">set Description</display-name>
+            <display-name
+                xml:lang="es">Grava historico</display-name>
+        </provision-activity>
+        <provision-activity
+            activity-id="Activity11" category="nonit_asset"
+            entity-type="user" operation="grant"
+            set-completed-approval-status="true">
+            <display-name
+                xml:lang="pt">Executa acao</display-name>
+            <display-name
+                xml:lang="en">Executing action</display-name>
+            <display-name
+                xml:lang="es">Executa acao</display-name>
+        </provision-activity>
+        <provision-activity
+            activity-id="Activity13" category="nonit_asset"
+            entity-type="user" operation="grant"
+            set-completed-approval-status="true">
+            <display-name
+                xml:lang="pt">Executa acao</display-name>
+            <display-name
+                xml:lang="en">Executing action</display-name>
+            <display-name
+                xml:lang="es">Executa acao</display-name>
+        </provision-activity>
+        <provision-activity
+            activity-id="Activity" category="nonit_asset"
+            entity-type="user" operation="grant"
+            set-completed-approval-status="true">
+            <display-name
+                xml:lang="pt">Executa</display-name>
+            <display-name
+                xml:lang="en">Execute</display-name>
+            <display-name
+                xml:lang="es">Executa</display-name>
+        </provision-activity>
+        <provision-activity
+            activity-id="Activity18" category="nonit_asset"
+            entity-type="user" operation="grant"
+            set-completed-approval-status="true">
+            <display-name
+                xml:lang="en">lock Admin flag</display-name>
+        </provision-activity>
+        <provision-activity
+            activity-id="Activity20" category="nonit_asset"
+            entity-type="user" operation="grant"
+            set-completed-approval-status="true">
+            <display-name
+                xml:lang="en">unlock admin flag</display-name>
+        </provision-activity>
+        <finish-activity
+            activity-id="Finish" setnotify="false">
+            <display-name
+                xml:lang="en">Finish</display-name>
+            <display-name
+                xml:lang="en">Finish</display-name>
+            <notify
+                template="cn=Provisioning Approval Completed Notification,cn=Default Notification Collection,cn=Security">
+                <map
+                    source="_default_"
+                    target="TO" />
+            </notify>
+        </finish-activity>
+        <link
+            source="Activity4" target="Finish" type="forward" />
+        <link
+            source="Activity3" target="Activity5" type="denied" />
+        <link
+            source="Activity5" target="Finish" type="forward" />
+        <link
+            source="Activity2" target="Activity7" type="true" />
+        <link
+            source="Activity7" target="Activity3" type="true" />
+        <link
+            source="Activity1" target="Activity9" type="forward" />
+        <link
+            source="Activity6" target="Activity11" type="false" />
+        <link
+            source="Activity11" target="Activity12"
+            type="forward" />
+        <link source="Activity12" target="Activity8"
+            type="approved" />
+        <link source="Activity13"
+            target="Activity14" type="forward" />
+        <link
+            source="Activity14" target="Activity1"
+            type="approved" />
+        <link source="Activity2" target="Activity6"
+            type="false" />
+        <link source="Activity3" target="Activity6"
+            type="approved" />
+        <link source="Activity7" target="Activity6"
+            type="false" />
+        <link source="Activity6" target="Activity"
+            type="true" />
+        <link source="Activity" target="Activity10"
+            type="forward" />
+        <link source="Activity10"
+            target="Activity13" type="approved" />
+        <link source="Start"
+            target="Activity15" type="forward" />
+        <link
+            source="Activity15" target="Activity16"
+            type="forward" />
+        <link source="Activity16" target="Activity2"
+            type="forward" />
+        <link source="Activity8" target="Activity17"
+            type="forward" />
+        <link source="Activity17"
+            target="Activity18" type="true" />
+        <link source="Activity18"
+            target="Activity4" type="forward" />
+        <link source="Activity9"
+            target="Activity19" type="forward" />
+        <link
+            source="Activity19" target="Activity20" type="true" />
+        <link
+            source="Activity20" target="Activity4"
+            type="forward" />
+        <link
+            source="Activity19" target="Activity4" type="false" />
+        <link
+            source="Activity17" target="Activity4" type="false" />
+    </process>
+</prov-req-defn>

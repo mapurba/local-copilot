@@ -31,6 +31,7 @@ export interface CopilotAPI {
     files?: { workflowPath: string; formsPath: string };
     error?: string;
   }>;
+  convertPrd: (input: { content?: string; filePath?: string }) => Promise<any>;
   // Terminal/session/file APIs removed from the public preload surface.
   checkForUpdate: () => void;
 }
@@ -65,6 +66,7 @@ contextBridge.exposeInMainWorld('copilot', {
   saveWorkflowFile: (filePath: string, content: string) => ipcRenderer.invoke('workflow:saveFile', filePath, content),
   generateWorkflow: (input: { modelId: string; request: string; outputDir?: string }) =>
     ipcRenderer.invoke('workflow:generate', input),
+  convertPrd: (input: { content?: string; filePath?: string }) => ipcRenderer.invoke('workflow:convertPrd', input),
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) =>
   //   ipcRenderer.invoke('terminal:create', options),

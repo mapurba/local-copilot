@@ -21,6 +21,20 @@ export class CopilotService {
     return this.api?.generateWorkflow(params);
   }
 
+  async convertPrd(input: { content?: string; filePath?: string; modelId?: string; fileName?: string }): Promise<any> {
+    if (this.api && this.api.convertPrd) return this.api.convertPrd(input);
+    // Fallback to local converter for development (no preload API)
+    try {
+      // dynamic import to avoid bundling server-only code into production builds
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      const local = await import('./local-prd-converter');
+      return await local.convertPrdLocal(input.content || input.filePath || '');
+    } catch (e) {
+      return { success: false, error: 'convertPrd not available' };
+    }
+  }
+
   async askLlm(modelId: string, prompt: string): Promise<string> {
     if (!this.api?.sendChatMessage || !this.api?.onChatStream || !this.api?.onChatEnd || !this.api?.onChatError) {
       throw new Error('Chat API is not available');

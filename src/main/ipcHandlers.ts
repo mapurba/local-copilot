@@ -10,6 +10,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import { runWorkflowAgent } from './workflow/agent';
 import { getWorkflowOutputDir, setWorkflowOutputDir } from './workflow/storage';
+import { extractAndAnalyzeFromPrdXml } from './workflow/prdConverter';
+import { generateJson } from './workflow/llm';
 // DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
 // import {
 //   connectTerminalFileSession,
@@ -252,6 +254,151 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
     const content = await fs.readFile(filePath, 'utf8');
     return { success: true, content };
+  });
+
+  ipcMain.handle('workflow:convertPrd', async (_event, input: { content?: string; filePath?: string }) => {
+    try {
+      let prdXml = input.content || '';
+      if (!prdXml && input.filePath) {
+        prdXml = await fs.readFile(input.filePath, 'utf8');
+      }
+      if (!prdXml) return { success: false, error: 'No content provided' };
+
+      const result = extractAndAnalyzeFromPrdXml(prdXml);
+
+      // If caller supplied a modelId, ask the LLM for a deeper, deterministic Markdown summary
+      const modelId = (input as any).modelId as string | undefined;
+      if (modelId) {
+        try {
+          const resultsArray = result && result.results ? result.results : [result];
+
+          // helper to call the streaming chat completion and collect text
+          const askLlmForText = (model: string, promptText: string): Promise<string> => {
+            return new Promise((resolve, reject) => {
+              let out = '';
+              try {
+                streamChatCompletion(
+                  model,
+                  [{ role: 'user', content: promptText }],
+                  (chunk: string) => { out += chunk; },
+                  () => { resolve(out.trim()); },
+                  (err: Error) => { reject(err); },
+                  `You are an expert workflow analyst. Respond in clear Markdown.`
+                );
+              } catch (err) {
+                reject(err);
+              }
+            });
+          };
+
+          for (let i = 0; i < resultsArray.length; i++) {
+            const r = resultsArray[i];
+            if (r && r.decodedXml) {
+              // Build a compact structured payload to help the LLM produce a thorough summary
+              const structured: any = {
+                processId: r.processId || null,
+                processVersion: r.processVersion || null,
+                forms: Array.isArray(r.forms) ? r.forms : [],
+                activities: Array.isArray(r.activities) ? r.activities : [],
+                links: Array.isArray(r.links) ? r.links : [],
+                dataItems: Array.isArray(r.dataItems) ? r.dataItems : [],
+              };
+
+              const prompt = `You are an expert workflow analyst. Using the structured JSON below (which is authoritative), produce a deterministic, minute-detail Markdown summary covering:\n- process id and version\n- every activity (id, type, step-by-step behavior, form-id if present, addressee, timeouts, notify templates) in execution order\n- transitions/links between activities (include conditions if present)\n- data-items defined for the process (name and type)\n- forms and their fields (name, data-type, options)\n- any conditional expressions or mappings and what they do\n- any detected provisioning operations and their target entity types\n\nBe exhaustive and explicit; include numbered steps where appropriate and example values when inferable from the data. Do NOT hallucinate beyond the provided JSON. Output clean Markdown suitable for engineers.\n\nStructured JSON:\n\n${JSON.stringify(structured, null, 2)}\n\nIf your first response is brief, expand it to include per-activity minute-level steps, example payloads, and exact field lists.`;
+
+              try {
+                let llmSummary = await askLlmForText(modelId, prompt);
+                // If LLM returned a very short response, ask it to expand once more with explicit guidance
+                if (!llmSummary || llmSummary.trim().length < 300) {
+                  try {
+                    const expandPrompt = `Your previous answer was too short. Expand the Markdown summary to provide minute-detail for each activity: include explicit sequence steps, what data-items are used at each step, the exact form fields (name and type), any timeout behavior and notification templates, and clear transition conditions. Use bullet lists and numbered steps. Here is the same structured JSON again:\n\n${JSON.stringify(structured, null, 2)}`;
+                    const expanded = await askLlmForText(modelId, expandPrompt);
+                    if (expanded && expanded.trim().length) llmSummary = expanded;
+                  } catch (reErr) {
+                    console.warn('[IPC] LLM expand attempt failed:', reErr instanceof Error ? reErr.message : String(reErr));
+                  }
+                }
+                if (llmSummary && llmSummary.trim().length) {
+                  r.summary = llmSummary;
+                }
+              } catch (err) {
+                console.warn('[IPC] LLM deep summary failed:', err instanceof Error ? err.message : String(err));
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[IPC] LLM deep summary failed:', e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      // Try to persist artifacts into configured workflow output directory
+      const baseOutputDir = await getWorkflowOutputDir();
+      const saved: any = { outputDir: null, decoded: [], summaries: [], workflows: [], forms: [] };
+
+      // Derive a friendly folder name: prefer uploaded filename, else process id from result, else fallback
+      let folderBase = `converted-prd`;
+      try {
+        if (input.filePath) {
+          folderBase = path.basename(input.filePath, path.extname(input.filePath));
+        } else if ((input as any).fileName) {
+          folderBase = path.basename(String((input as any).fileName), path.extname(String((input as any).fileName)));
+        } else if (result && result.results && Array.isArray(result.results) && result.results[0] && result.results[0].processId) {
+          folderBase = String(result.results[0].processId || 'converted-prd');
+        } else if (result && (result as any).processId) {
+          folderBase = String((result as any).processId || 'converted-prd');
+        }
+      } catch {
+        folderBase = `converted-prd`;
+      }
+      // sanitize folder name
+      folderBase = folderBase.replace(/[^a-zA-Z0-9-_\.]/g, '-').replace(/^-+|-+$/g, '') || 'converted-prd';
+      const uniqueFolder = `${folderBase}-${Date.now()}`;
+
+      // Choose output directory: configured output dir preferred, else repo-local fallback
+      let outputDir = '';
+      if (baseOutputDir) {
+        outputDir = path.join(baseOutputDir, uniqueFolder);
+      } else {
+        const fallbackRoot = path.join(process.cwd(), 'workflow-agent', 'output');
+        await fs.mkdir(fallbackRoot, { recursive: true });
+        outputDir = path.join(fallbackRoot, uniqueFolder);
+      }
+      await fs.mkdir(outputDir, { recursive: true });
+      saved.outputDir = outputDir;
+
+      // Normalize results into an array and persist artifacts (always save summary/decoded/workflow/forms if present)
+      const resultsArray = result && result.results ? result.results : [result];
+      for (let i = 0; i < resultsArray.length; i++) {
+        const r = resultsArray[i];
+        const idx = i;
+        if (r.decodedXml) {
+          // prefer to keep original filename for the first decoded file when input.filePath or input.fileName is provided
+          const decodedName = (input.filePath && idx === 0) ? `${path.basename(input.filePath)}` : (( (input as any).fileName && idx === 0) ? `${path.basename(String((input as any).fileName))}` : `decoded-${idx}.xml`);
+          const decPath = path.join(outputDir, decodedName);
+          await fs.writeFile(decPath, r.decodedXml, 'utf8');
+          saved.decoded.push(decPath);
+        }
+        if (r.summary) {
+          const sumPath = path.join(outputDir, `summary-${idx}.md`);
+          await fs.writeFile(sumPath, r.summary, 'utf8');
+          saved.summaries.push(sumPath);
+        }
+        if (r.workflowXml) {
+          const wfPath = path.join(outputDir, `workflow-${idx}.xml`);
+          await fs.writeFile(wfPath, r.workflowXml, 'utf8');
+          saved.workflows.push(wfPath);
+        }
+        if (r.formsJson) {
+          const formsPath = path.join(outputDir, `forms-${idx}.json`);
+          await fs.writeFile(formsPath, r.formsJson, 'utf8');
+          saved.forms.push(formsPath);
+        }
+      }
+
+      return { success: true, result, saved };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle('workflow:saveFile', async (_event, filePath: string, content: string) => {

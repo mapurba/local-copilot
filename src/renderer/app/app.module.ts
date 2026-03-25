@@ -14,6 +14,7 @@ import { FileViewerComponent } from './components/file-viewer/file-viewer.compon
 import { FormioBuilderViewerComponent } from './components/formio-builder-viewer/formio-builder-viewer.component';
 import { MonacoXmlViewerComponent } from './components/monaco-xml-viewer/monaco-xml-viewer.component';
 import { WorkflowBuilderViewerComponent } from './components/workflow-builder-viewer/workflow-builder-viewer.component';
+import { ConvertPrdComponent } from './components/convert-prd/convert-prd.component';
 
 @NgModule({
   declarations: [
@@ -29,12 +30,15 @@ import { WorkflowBuilderViewerComponent } from './components/workflow-builder-vi
     BrowserAnimationsModule,
     HttpClientModule,
     FormsModule,
-    RouterModule.forRoot([]),
+    RouterModule.forRoot([
+      { path: 'convert', loadComponent: () => import('./components/convert-prd/convert-prd.component').then(m => m.ConvertPrdComponent) },
+    ]),
     MonacoEditorModule.forRoot({
       baseUrl: 'assets/monaco/min/vs',
     }),
     FormioModule,
     WorkflowBuilderViewerComponent,
+    ConvertPrdComponent,
   ],
   bootstrap: [App],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],

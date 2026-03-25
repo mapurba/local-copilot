@@ -1,5 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 import { CopilotService } from '../../services/copilot.service';
+import { ChatBridgeService } from '../../services/chat-bridge.service';
 import { FileNode } from '../file-tree/file-tree.component';
 
 interface Message {
@@ -32,14 +33,15 @@ export class ChatComponent implements OnInit {
     errorCount?: number;
   }> = [];
   activeFilePath: string | null = null;
-  activeTab: 'files' | 'chat' = 'chat';
+  activeTab: 'files' | 'chat' | 'convert' = 'chat';
   formioOptions = {
     i18n: { resources: {} },
     builder: { resource: false },
   };
   formioRenderOptions = {};
 
-  constructor(private copilotService: CopilotService) { }
+//   constructor(private copilotService: CopilotService) { }
+  constructor(private copilotService: CopilotService, private chatBridge: ChatBridgeService) { }
 
   async ngOnInit() {
     await this.loadModels();
@@ -51,6 +53,17 @@ export class ChatComponent implements OnInit {
       console.log('[Chat] Final outputDir:', this.outputDir);
       await this.refreshOutputTree();
     }
+    // Subscribe to assistant messages from other UI components
+    this.chatBridge.assistantMessages$.subscribe((m) => {
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: m.content,
+        timestamp: new Date(),
+      };
+      this.messages.push(assistantMessage);
+      // ensure chat tab is active so user sees it
+      this.switchToChatTab();
+    });
   }
 
   onKeyDown(event: KeyboardEvent) {
@@ -112,6 +125,8 @@ export class ChatComponent implements OnInit {
       timestamp: new Date()
     };
     this.messages.push(userMessage);
+    // Publish user message so other components (Convert screen, etc.) can consume replies
+    try { this.chatBridge.sendUserMessage(userMessage.content); } catch { /* ignore */ }
     this.inputText = '';
 
     // Check if this is a workflow generation request
@@ -311,6 +326,10 @@ export class ChatComponent implements OnInit {
 
   switchToChatTab() {
     this.activeTab = 'chat';
+  }
+
+  switchToConvertTab() {
+    this.activeTab = 'convert';
   }
 
   onFormSchemaChanged(updatedSchema: unknown) {

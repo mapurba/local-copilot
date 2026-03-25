@@ -41,6 +41,13 @@
         </button>
 
         <button
+          (click)="switchToConvertTab()"
+          class="px-3 py-1.5 text-xs rounded-t-md border border-b-0 transition-colors whitespace-nowrap"
+          [ngClass]="activeTab === 'convert' ? 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 -mb-px' : 'bg-gray-100 dark:bg-gray-900 border-transparent text-gray-600 dark:text-gray-400 mb-px hover:bg-gray-200 dark:hover:bg-gray-800'">
+          Convert PRD
+        </button>
+
+        <button
           *ngFor="let f of openFiles"
           (click)="setActiveFile(f.path)"
           class="px-3 py-1.5 text-xs rounded-t-md border border-b-0 transition-colors whitespace-nowrap max-w-40"
@@ -53,7 +60,7 @@
       </div>
 
       <div class="flex-1 min-h-0 p-2 overflow-hidden">
-        <div *ngIf="activeTab === 'files'" class="h-full flex flex-col border border-gray-200 dark:border-gray-700 rounded overflow-hidden bg-white dark:bg-gray-800">
+      <div *ngIf="activeTab === 'files'" class="h-full flex flex-col border border-gray-200 dark:border-gray-700 rounded overflow-hidden bg-white dark:bg-gray-800">
           <!-- File action bar -->
           <div *ngIf="activeFile" class="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
             <div class="flex items-center gap-2">
@@ -138,6 +145,10 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <div *ngIf="activeTab === 'convert'" class="h-full">
+          <app-convert-prd></app-convert-prd>
         </div>
       </div>
     </div>

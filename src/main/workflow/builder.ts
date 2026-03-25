@@ -90,6 +90,18 @@ export class FinishActivity extends Activity {
   }
 }
 
+export class NotificationActivity extends Activity {
+  constructor(templates?: string) {
+    super('notification-activity', { templates });
+  }
+}
+
+export class MessageActivity extends Activity {
+  constructor(templates?: string, message?: string) {
+    super('message-activity', { templates, message });
+  }
+}
+
 export class SequenceFlow {
   id: string;
   sourceRef: string;
@@ -106,6 +118,7 @@ export class WorkflowBuilder {
   activities: Activity[] = [];
   flows: SequenceFlow[] = [];
   forms: Array<{ form: { id: string; components: Array<Record<string, unknown>> } }> = [];
+  dataItems: Array<{ id: string; dataType?: string }> = [];
   processId: string = makeId('Process');
 
   addActivity(activity: Activity): string {
@@ -132,6 +145,11 @@ export class WorkflowBuilder {
     this.forms.push({ form: { id: formId, components } });
   }
 
+  addDataItem(id: string, dataType?: string) {
+    if (!id) return;
+    this.dataItems.push({ id, dataType });
+  }
+
   generateXml(): string {
     const doc = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('iam:definitions', {
@@ -147,6 +165,13 @@ export class WorkflowBuilder {
       id: this.processId,
       isExecutable: 'true',
     });
+
+    // add data items as process children for variables
+    for (const di of this.dataItems) {
+      const attrs: Record<string, string> = { id: di.id };
+      if (di.dataType) attrs['data-type'] = String(di.dataType);
+      process.ele('iam:dataItem', attrs);
+    }
 
     for (const activity of this.activities) {
       const act = process.ele(`iam_1:${activity.activityType}`, { id: activity.id });
