@@ -22,7 +22,7 @@ function createWindow() {
 
   // Use app.isPackaged to reliably detect production builds
   if (!app.isPackaged) {
-    mainWindow.loadURL('http://localhost:4200');
+    mainWindow.loadURL('http://localhost:4100');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     // In production, load the built files

@@ -3,10 +3,14 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 
-const UPDATE_URL = 'https://164.99.91.32/vcd-agent/latest.json';
+const UPDATE_URL = process.env.COPILOT_CHAT_UPDATE_URL || '';
 
 export async function checkForUpdates(mainWindow: Electron.BrowserWindow) {
   try {
+    if (!UPDATE_URL) {
+      return;
+    }
+
     // 1. Fetch latest.json
     const latest = await fetchJson(UPDATE_URL);
     if (!latest?.version || !latest?.url) return;

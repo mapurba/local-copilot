@@ -1,9 +1,5 @@
 import { Injectable } from '@angular/core';
 
-/**
- * Service wrapper around Electron preload API (window.copilot)
- * Provides access to Copilot chat and workflow generation
- */
 @Injectable({
   providedIn: 'root'
 })
@@ -17,8 +13,26 @@ export class CopilotService {
     }
   }
 
-  async generateWorkflow(params: { modelId: string; request: string; outputDir?: string }): Promise<any> {
-    return this.api?.generateWorkflow(params);
+  async getStatus(): Promise<{ status: string; user?: string }> {
+    return this.api?.status?.() ?? { status: 'Unavailable' };
+  }
+
+  async signIn(): Promise<{ userCode: string; verificationUri: string; status: string }> {
+    if (!this.api?.signIn) {
+      throw new Error('Sign-in API is not available');
+    }
+    return this.api.signIn();
+  }
+
+  async confirmSignIn(): Promise<{ status: string; user?: string }> {
+    if (!this.api?.signInConfirm) {
+      throw new Error('Sign-in confirmation API is not available');
+    }
+    return this.api.signInConfirm();
+  }
+
+  async signOut(): Promise<{ success: boolean }> {
+    return this.api?.signOut?.() ?? { success: false };
   }
 
   async askLlm(modelId: string, prompt: string): Promise<string> {
@@ -75,37 +89,16 @@ export class CopilotService {
     });
   }
 
-  async getWorkflowOutputDir(): Promise<string> {
-    return this.api?.getWorkflowOutputDir();
-  }
-
-  async chooseWorkflowOutputDir(): Promise<string | null> {
-    return this.api?.chooseWorkflowOutputDir();
-  }
-
-  async openWorkflowOutputDir(outputDir?: string): Promise<void> {
-    return this.api?.openWorkflowOutputDir(outputDir);
-  }
-
-  async listWorkflowTree(): Promise<{ success: boolean; root?: string; tree?: any[]; error?: string }> {
-    return this.api?.listWorkflowTree?.() ?? { success: false, error: 'Not available' };
-  }
-
-  async readWorkflowFile(filePath: string): Promise<{ success: boolean; content?: string; error?: string }> {
-    return this.api?.readWorkflowFile?.(filePath) ?? { success: false, error: 'Not available' };
-  }
-
-  async saveWorkflowFile(filePath: string, content: string): Promise<{ success: boolean; error?: string }> {
-    return this.api?.saveWorkflowFile?.(filePath, content) ?? { success: false, error: 'Not available' };
-  }
-
-  async getModels(): Promise<any[]> {
+  async getModels(): Promise<Array<{ id: string; label: string }>> {
     const models = await this.api?.getModels?.();
-    // If it's an array of strings, map to { id, label }
     if (Array.isArray(models) && typeof models[0] === 'string') {
       return models.map((id: string) => ({ id, label: id }));
     }
     return models ?? [];
+  }
+
+  checkForUpdate(): void {
+    this.api?.checkForUpdate?.();
   }
 
   isAvailable(): boolean {
