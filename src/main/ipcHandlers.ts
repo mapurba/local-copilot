@@ -28,17 +28,28 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
-  // Initialize workspace
-  (async () => {
-    try {
-      await workspaceContext.initialize();
-    } catch (err) {
-      console.error('[IPC] Failed to initialize workspace:', err);
-    }
-  })();
+  // Initialize workspace (non-blocking, errors are non-fatal)
+  workspaceContext.initialize().catch((err) => {
+    console.warn('[IPC] Workspace init failed (non-fatal):', err);
+  });
 
   // Initialize tools registry
   initializeDefaultTools();
+
+  // ============================================================================
+  // DEBUG HANDLERS
+  // ============================================================================
+
+  // Dev tools logging for debugging
+  ipcMain.on('dev:log', (_event, level: string, ...args: any[]) => {
+    if (level === 'error') {
+      console.error('[Dev]', ...args);
+    } else if (level === 'warn') {
+      console.warn('[Dev]', ...args);
+    } else {
+      console.log('[Dev]', ...args);
+    }
+  });
 
   // Manual update check from renderer
   ipcMain.on('check-for-update', async () => {

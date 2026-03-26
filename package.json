@@ -7,30 +7,46 @@
   "scripts": {
     "dev": "concurrently \"ng serve --port 4100\" \"wait-on http://localhost:4100 && electron .\"",
     "start": "ng serve --port 4100",
-    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.electron.json && ng build",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.electron.json && ng build --configuration production",
     "build:watch": "ng build --watch --configuration development",
-    "build:electron": "electron-builder",
+    "build:electron": "npm run build && electron-builder",
     "lint": "eslint ."
   },
   "build": {
     "appId": "com.local.copilotchat",
     "productName": "Copilot Chat",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "assets"
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "package.json"
     ],
-    "mac": {
-      "target": "dmg"
-    },
     "win": {
-      "target": "nsis",
-      "artifactName": "CopilotChat-${version}.exe"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "${productName}-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "mac": {
+      "target": ["dmg", "zip"]
     },
     "linux": {
-      "target": "AppImage"
+      "target": ["AppImage"]
     }
   },
   "dependencies": {

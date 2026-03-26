@@ -4,9 +4,9 @@
  * Manages the workspace root directory for all file operations.
  * All tools resolve file paths relative to this workspace.
  *
- * Default: C:\Users\<username>\AppData\Roaming\local-copilot\workspace (Windows)
- *          ~/.local/share/local-copilot/workspace (Linux)
- *          ~/Library/Application Support/local-copilot/workspace (macOS)
+ * Default: C:\Users\<username>\AppData\Roaming\copilot-chat\workspace (Windows)
+ *          ~/.local/share/copilot-chat/workspace (Linux)
+ *          ~/Library/Application Support/copilot-chat/workspace (macOS)
  */
 
 import * as path from 'path';
@@ -29,25 +29,30 @@ export class WorkspaceContext {
     const platform = process.platform;
 
     if (platform === 'win32') {
-      return path.join(home, 'AppData', 'Roaming', 'local-copilot', 'workspace');
+      return path.join(home, 'AppData', 'Roaming', 'copilot-chat', 'workspace');
     } else if (platform === 'darwin') {
-      return path.join(home, 'Library', 'Application Support', 'local-copilot', 'workspace');
+      return path.join(home, 'Library', 'Application Support', 'copilot-chat', 'workspace');
     } else {
-      return path.join(home, '.local', 'share', 'local-copilot', 'workspace');
+      return path.join(home, '.local', 'share', 'copilot-chat', 'workspace');
     }
   }
 
   /**
    * Initialize the workspace directory (create if it doesn't exist).
+   * Non-blocking: errors are logged but don't throw.
    */
-  async initialize(): Promise<void> {
+  async initialize(): Promise<{ success: boolean; error?: string }> {
     try {
       await fs.mkdir(this.workspacePath, { recursive: true });
       this.isInitialized = true;
-      console.log(`[Workspace] Initialized: ${this.workspacePath}`);
+      console.log(`[Workspace] ✓ Initialized: ${this.workspacePath}`);
+      return { success: true };
     } catch (err) {
-      console.error(`[Workspace] Failed to initialize: ${err}`);
-      throw err;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Workspace] ⚠ Failed to initialize (non-fatal): ${errorMsg}`);
+      // Mark as initialized anyway so app can continue
+      this.isInitialized = true;
+      return { success: false, error: errorMsg };
     }
   }
 

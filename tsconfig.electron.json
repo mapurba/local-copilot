@@ -5,11 +5,16 @@
     "lib": ["ES2020"],
     "outDir": "dist-electron",
     "rootDir": "src",
+    "moduleResolution": "node",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node"]
+    "declaration": false,
+    "sourceMap": false,
+    "types": ["node"],
+    "useDefineForClassFields": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*"]
+  "include": ["src/main/**/*", "src/preload/**/*"],
+  "exclude": ["node_modules", "dist", "release"]
 }
