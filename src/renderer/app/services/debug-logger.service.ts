@@ -64,13 +64,22 @@ export class DebugLoggerService {
 
     console.error = (...args: any[]) => {
       originalError(...args);
-      this.addLog('error', args.map(a => JSON.stringify(a)).join(' '));
+      const msg = this.normalizeConsoleArgs(args);
+      if (!msg) return;
+
+      if (this.isKnownNonActionableWorkflowNoise(msg)) {
+        this.addLog('debug', msg);
+        return;
+      }
+
+      this.addLog('error', msg);
     };
 
     console.warn = (...args: any[]) => {
       originalWarn(...args);
       // Only log genuine warnings, not debug info
-      const msg = String(args[0] || '');
+      const msg = this.normalizeConsoleArgs(args);
+      if (!msg) return;
       if (!msg.includes('[Chat]') && !msg.includes('warn')) {
         this.addLog('debug', msg);
       }
@@ -79,11 +88,52 @@ export class DebugLoggerService {
     console.debug = (...args: any[]) => {
       originalDebug(...args);
       // Skip debug spam
-      const msg = String(args[0] || '');
+      const msg = this.normalizeConsoleArgs(args);
+      if (!msg) return;
+      if (this.isKnownNonActionableWorkflowNoise(msg)) return;
       if (msg.length > 20) { // Only capture substantial debug messages
         this.addLog('debug', msg);
       }
     };
+  }
+
+  private normalizeConsoleArgs(args: unknown[]): string {
+    const parts = args
+      .map((arg) => {
+        if (arg instanceof Error) {
+          return arg.message || arg.stack || String(arg);
+        }
+
+        if (typeof arg === 'string') return arg;
+
+        if (arg === null || arg === undefined) return '';
+
+        try {
+          const serialized = JSON.stringify(arg);
+          if (!serialized || serialized === '{}' || serialized === '[]' || serialized === '""') {
+            return '';
+          }
+          return serialized;
+        } catch {
+          return String(arg);
+        }
+      })
+      .filter((part) => typeof part === 'string' && part.trim().length > 0)
+      .map((part) => part.trim());
+
+    return parts.join(' ').trim();
+  }
+
+  private isKnownNonActionableWorkflowNoise(message: string): boolean {
+    const patterns = [
+      /unparsable content <process> detected/i,
+      /failed to import <bpmn:sequenceflow/i,
+      /you must provide an appconfig within your application/i,
+      /could not load project settings: missing projectid/i,
+      /^error something went wrong$/i,
+    ];
+
+    return patterns.some((pattern) => pattern.test(message));
   }
 
   addLog(type: DebugLog['type'], message: string, details?: any): void {

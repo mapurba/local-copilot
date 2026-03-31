@@ -1,93 +1,221 @@
-<div class="chat-container h-full overflow-hidden rounded-xl" [class.panel-right]="debugPanelPosition === 'right'">
+<div class="chat-container h-full overflow-hidden rounded-xl" [class.panel-right]="showDebugPanel && debugPanelPosition === 'right'">
   <div class="chat-main-row">
-  <div class="chat-shell flex-1 overflow-hidden rounded-t-xl bg-slate-50 dark:bg-slate-950">
-    <!-- Header with Settings Button -->
+    <div class="chat-shell flex-1 min-h-0 overflow-hidden rounded-t-xl bg-slate-50 dark:bg-slate-950">
     <div class="header-bar flex items-center justify-between px-4 sm:px-6 py-3 border-b border-slate-200 dark:border-slate-800 dark:bg-slate-900">
-      <div class="header-title text-sm font-semibold text-slate-700 dark:text-slate-300">Copilot Chat</div>
-      <button
-        (click)="openSettings()"
-        [disabled]="isLoading"
-        class="p-2 rounded-md text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-        title="Settings & Tools">
-        ⚙️
-      </button>
-    </div>
-
-    <div class="chat-scroll flex-1 overflow-y-auto p-4 sm:p-6">
-    <div *ngIf="!messages.length && !isLoading" class="chat-empty">
-      <div class="chat-empty-title">Ask Copilot anything</div>
-      <div class="chat-empty-subtitle">Try debugging help, code review prompts, or architecture questions.</div>
-    </div>
-
-    <div *ngFor="let msg of messages" class="chat-row" [ngClass]="msg.role === 'user' ? 'is-user' : 'is-assistant'">
-      <div class="chat-bubble" [ngClass]="msg.role === 'user' ? 'bubble-user' : 'bubble-assistant'">
-        <p class="chat-text leading-relaxed">{{ msg.content }}</p>
-        <p class="chat-time">{{ msg.timestamp | date:'HH:mm:ss' }}</p>
+      <div class="header-title text-sm font-semibold text-slate-700 dark:text-slate-300">Workspace</div>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          (click)="switchWorkspaceMode('convert')"
+          [class.workspace-btn-primary]="workspaceMode === 'convert'"
+          class="workspace-btn"
+          title="Convert PRD mode">
+          Convert PRD
+        </button>
+        <button
+          type="button"
+          (click)="switchWorkspaceMode('editor')"
+          [class.workspace-btn-primary]="workspaceMode === 'editor'"
+          class="workspace-btn"
+          title="Editor mode">
+          Editor
+        </button>
+        <button
+          *ngIf="workspaceMode === 'editor' && activeFile"
+          type="button"
+          (click)="saveActiveFile()"
+          [disabled]="!activeFile.hasChanges"
+          class="workspace-btn workspace-btn-primary">
+          Save Active
+        </button>
+        <button
+          (click)="openSettings()"
+          [disabled]="isLoading"
+          class="p-2 rounded-md text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+          title="Settings & Tools">
+          ⚙️
+        </button>
+        <button
+          type="button"
+          (click)="toggleDebugPanel()"
+          class="workspace-btn"
+          title="Show or hide debug panel">
+          {{ showDebugPanel ? 'Hide Debug' : 'Show Debug' }}
+        </button>
+        <button
+          type="button"
+          (click)="toggleDebugPosition()"
+          [disabled]="!showDebugPanel"
+          class="workspace-btn"
+          title="Switch debug panel position">
+          Debug: {{ debugPanelPosition === 'bottom' ? 'Bottom' : 'Right' }}
+        </button>
       </div>
     </div>
 
-    <div *ngIf="isLoading" class="chat-row is-assistant">
-      <div class="chat-bubble bubble-assistant">
-        <div class="flex items-center gap-2">
-          <span class="chat-loader" aria-hidden="true"></span>
-          <p class="chat-text">Copilot is thinking...</p>
+    <div class="workspace-layout" [style.--explorer-pane-width.px]="explorerPaneWidth" [style.--chat-pane-width.px]="chatPaneWidth">
+      <aside class="explorer-pane p-3">
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Explorer</div>
+        <div class="output-path text-xs text-slate-700 dark:text-slate-300 mb-2">{{ outputDir || 'No folder selected' }}</div>
+
+        <div class="flex gap-2 mb-3 flex-wrap">
+          <button type="button" (click)="chooseOutputDir()" class="workflow-btn">Choose</button>
+          <button type="button" (click)="openOutputDir()" [disabled]="!outputDir" class="workflow-btn">Open</button>
+          <button type="button" (click)="refreshOutputTree()" [disabled]="!outputDir" class="workflow-btn">Refresh</button>
         </div>
-      </div>
+
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Generated Files</div>
+        <div class="workflow-tree-wrap">
+          <app-file-tree
+            [nodes]="fileTree"
+            [activeFilePath]="activeFilePath"
+            (fileSelected)="onFileSelected($event)">
+          </app-file-tree>
+        </div>
+
+      </aside>
+
+      <div class="splitter splitter-vertical" (mousedown)="startResize('explorer', $event)" aria-hidden="true"></div>
+
+      <section class="editor-pane min-w-0">
+        <div class="open-files-strip" *ngIf="workspaceMode === 'editor' && openFiles.length">
+          <button
+            type="button"
+            *ngFor="let file of openFiles"
+            (click)="setActiveFile(file.path)"
+            [class.is-active]="activeFilePath === file.path"
+            class="file-chip">
+            <span>{{ file.name }}</span>
+            <span class="file-chip-close" (click)="closeFile(file.path); $event.stopPropagation()">×</span>
+          </button>
+        </div>
+
+        <div class="convert-focus" [class.hidden]="workspaceMode !== 'convert'">
+          <app-convert-prd></app-convert-prd>
+        </div>
+
+        <div [class.hidden]="workspaceMode !== 'editor'" class="h-full min-h-0 flex flex-col">
+          <div class="workflow-viewer" *ngIf="activeFile as file; else noFileSelected">
+            <app-workflow-builder-viewer
+              *ngIf="file.kind === 'xml'"
+              [xml]="file.xml || ''"
+              (xmlChanged)="onWorkflowXmlChanged($event)"
+              (hasChangesUpdate)="onWorkflowHasChangesUpdate($event)">
+            </app-workflow-builder-viewer>
+
+            <app-formio-builder-viewer
+              *ngIf="file.kind === 'json'"
+              [formJsonSchema]="file.formSchema || null"
+              [formioOptions]="formioOptions"
+              [renderOptions]="formioRenderOptions"
+              (formChanged)="onFormSchemaChanged($event)">
+            </app-formio-builder-viewer>
+
+            <app-file-viewer
+              *ngIf="file.kind === 'md'"
+              [file]="file.path"
+              [content]="file.content || ''">
+            </app-file-viewer>
+          </div>
+        </div>
+
+        <ng-template #noFileSelected>
+          <div class="workflow-empty" *ngIf="workspaceMode === 'editor'">
+            Select a generated workflow or form from Explorer.
+          </div>
+        </ng-template>
+      </section>
+
+      <div class="splitter splitter-vertical" (mousedown)="startResize('chat', $event)" aria-hidden="true"></div>
+
+      <section class="chat-pane">
+        <div class="chat-scroll flex-1 overflow-y-auto p-4 sm:p-5">
+          <div class="chat-todo-panel" *ngIf="prdTodos.length">
+            <div class="chat-todo-heading">PRD Todo</div>
+            <div *ngFor="let todo of prdTodos" class="todo-item" [class.todo-completed]="todo.status === 'completed'">
+              <span class="todo-status" [class.status-done]="todo.status === 'completed'" [class.status-progress]="todo.status === 'in-progress'">
+                {{ todo.status === 'completed' ? 'Done' : (todo.status === 'in-progress' ? 'In Progress' : 'Pending') }}
+              </span>
+              <div class="todo-title">{{ todo.title }}</div>
+              <div class="todo-details" *ngIf="todo.details">{{ todo.details }}</div>
+            </div>
+          </div>
+
+          <div *ngIf="!messages.length && !isLoading" class="chat-empty">
+            <div class="chat-empty-title">Ask Copilot while building workflows</div>
+            <div class="chat-empty-subtitle">The explorer and editors stay visible like VS Code.</div>
+          </div>
+
+          <div *ngFor="let msg of messages" class="chat-row" [ngClass]="msg.role === 'user' ? 'is-user' : 'is-assistant'">
+            <div class="chat-bubble" [ngClass]="msg.role === 'user' ? 'bubble-user' : 'bubble-assistant'">
+              <p class="chat-text leading-relaxed">{{ msg.content }}</p>
+              <p class="chat-time">{{ msg.timestamp | date:'HH:mm:ss' }}</p>
+            </div>
+          </div>
+
+          <div *ngIf="isLoading" class="chat-row is-assistant">
+            <div class="chat-bubble bubble-assistant">
+              <div class="flex items-center gap-2">
+                <span class="chat-loader" aria-hidden="true"></span>
+                <p class="chat-text">Copilot is thinking...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer border-t border-slate-200 bg-white/90 p-3 dark:border-slate-800 dark:bg-slate-900/90 sm:p-4">
+          <div class="mb-2">
+            <select
+              [(ngModel)]="selectedModel"
+              [disabled]="isLoading"
+              [title]="selectedModel"
+              class="model-select w-full px-3 py-2 pr-10 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-md text-sm text-slate-900 dark:text-white shadow-sm">
+              <option *ngFor="let model of models" [value]="model.id">{{ model.label || model.id || 'Model' }}</option>
+            </select>
+          </div>
+
+          <div class="flex gap-2 items-end">
+            <textarea
+              [(ngModel)]="inputText"
+              (keydown)="onKeyDown($event)"
+              [disabled]="isLoading"
+              placeholder="Ask Copilot..."
+              class="chat-input flex-1 min-h-[3.25rem] max-h-40 px-3 py-3 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 resize-none shadow-sm"
+              rows="3"></textarea>
+            <button
+              (click)="generateFromComposer()"
+              [disabled]="!inputText.trim() || isGeneratingWorkflow"
+              class="px-4 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-500 rounded-lg text-sm font-semibold transition whitespace-nowrap text-white shadow-sm">
+              {{ isGeneratingWorkflow ? 'Generating...' : 'Generate Workflow' }}
+            </button>
+            <button
+              (click)="sendMessage()"
+              [disabled]="!inputText.trim() || isLoading"
+              class="px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-500 rounded-lg text-sm font-semibold transition whitespace-nowrap text-white shadow-sm">
+              Send
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
+
+    <div *ngIf="isResizing" class="resize-overlay" [class.resize-row]="resizeAxis === 'horizontal'" [class.resize-col]="resizeAxis === 'vertical'"></div>
+    </div>
+
+    <app-debug-panel
+      *ngIf="showDebugPanel && debugPanelPosition === 'right'"
+      class="panel-right"
+      [position]="'right'"
+      (positionChange)="debugPanelPosition = $any($event)">
+    </app-debug-panel>
   </div>
 
-  <div class="composer border-t border-slate-200 bg-white/90 p-3 dark:border-slate-800 dark:bg-slate-900/90 sm:p-4">
-    <div class="mb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
-      <label class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Model</label>
-      <select
-        [(ngModel)]="selectedModel"
-        [disabled]="isLoading"
-        [title]="selectedModel"
-        class="model-select w-full sm:w-auto sm:min-w-[28rem] md:min-w-[34rem] max-w-full px-3 py-2 pr-10 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-md text-sm text-slate-900 dark:text-white shadow-sm">
-        <option *ngFor="let model of models" [value]="model.id">{{ model.label || model.id || 'Model' }}</option>
-      </select>
-    </div>
+  <app-debug-panel
+    *ngIf="showDebugPanel && debugPanelPosition === 'bottom'"
+    [position]="'bottom'"
+    (positionChange)="debugPanelPosition = $any($event)">
+  </app-debug-panel>
 
-    <div class="flex gap-2 items-end">
-      <textarea
-        [(ngModel)]="inputText"
-        (keydown)="onKeyDown($event)"
-        [disabled]="isLoading"
-        placeholder="Ask Copilot to explain code, review an idea, or help with implementation..."
-        class="chat-input flex-1 min-h-[3.5rem] max-h-40 px-3 py-3 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 resize-none shadow-sm"
-        rows="3"></textarea>
-      <button
-        (click)="sendMessage()"
-        [disabled]="!inputText.trim() || isLoading"
-        class="px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-500 rounded-lg text-sm font-semibold transition whitespace-nowrap text-white shadow-sm">
-        Send
-      </button>
-    </div>
-  </div>
-
-  </div><!-- end chat-shell -->
-
-  <!-- Debug Panel (right position) -->
-  @defer (on idle) {
-    <app-debug-panel
-      *ngIf="debugPanelPosition === 'right'"
-      [class]="'panel-right'"
-      [position]="debugPanelPosition"
-      (positionChange)="debugPanelPosition = $event">
-    </app-debug-panel>
-  }
-  </div><!-- end chat-main-row -->
-
-  <!-- Debug Panel (bottom position) -->
-  @defer (on idle) {
-    <app-debug-panel
-      *ngIf="debugPanelPosition === 'bottom'"
-      [position]="debugPanelPosition"
-      (positionChange)="debugPanelPosition = $event">
-    </app-debug-panel>
-  }
-
-  <!-- Settings Modal -->
   <div *ngIf="showSettings" class="settings-modal" (click)="closeSettings($event)">
     <div class="settings-modal-content" (click)="$event.stopPropagation()">
       <div class="settings-modal-header">
@@ -103,7 +231,7 @@
         <div *ngIf="availableTools.length > 0" class="tools-section">
           <h3 class="tools-section-title">Available Tools</h3>
           <p class="tools-section-subtitle">Click a tool to call it directly, or ask Copilot to use them</p>
-          
+
           <div class="tools-grid">
             <div
               *ngFor="let tool of availableTools"
@@ -118,10 +246,6 @@
 
         <div *ngIf="availableTools.length === 0" class="no-tools">
           <p>No tools available</p>
-        </div>
-
-        <div *ngIf="activeTab === 'convert'" class="h-full">
-          <app-convert-prd></app-convert-prd>
         </div>
       </div>
     </div>

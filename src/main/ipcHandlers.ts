@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { lspClient } from './lspClient';
 import { tokenManager } from './tokenManager';
 import { getModels, streamChatCompletion, ChatMessage } from './copilotChatApi';
@@ -54,6 +54,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
 
   // Initialize tools registry
   initializeDefaultTools();
+
+  // Helper: check that `target` is within `base` path (prevents path-traversal)
+  function isWithin(base: string, target: string) {
+    const rBase = path.resolve(base);
+    const rTarget = path.resolve(target);
+    const rel = path.relative(rBase, rTarget);
+    return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  }
+
+  // Normalize various shapes returned by extractAndAnalyzeFromPrdXml
+  function normalizeResults(result: any): any[] {
+    if (!result) return [];
+    if ((result as any).results && Array.isArray((result as any).results)) return (result as any).results;
+    return [result];
+  }
 
   // ============================================================================
   // DEBUG HANDLERS
@@ -181,21 +196,25 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     return { started: true };
   });
 
-    if (result.canceled || result.filePaths.length === 0) {
-      console.log('[IPC] Directory selection cancelled');
-      return { cancelled: true };
-    }
-
-    const outputDir = result.filePaths[0];
-    console.log('[IPC] Selected output directory:', outputDir);
-    await setWorkflowOutputDir(outputDir);
-    console.log('[IPC] Saved output directory to storage');
-    return { cancelled: false, path: outputDir };
-  });
 
   ipcMain.handle('workflow:getOutputDir', async () => {
     const outputDir = await getWorkflowOutputDir();
     return { path: outputDir };
+  });
+
+  ipcMain.handle('workflow:chooseOutputDir', async () => {
+    const choice = await dialog.showOpenDialog(mainWindow, {
+      title: 'Select workflow output folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+
+    if (choice.canceled || !choice.filePaths.length) {
+      return { cancelled: true };
+    }
+
+    const selectedPath = choice.filePaths[0];
+    await setWorkflowOutputDir(selectedPath);
+    return { cancelled: false, path: selectedPath };
   });
 
   ipcMain.handle('workflow:listTree', async () => {
@@ -205,6 +224,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       if (!outputDir) {
         console.warn('[IPC] No output folder selected');
         return { success: false, error: 'No output folder selected.' };
+      }
+      // buildTree: recursively build a simple file tree for renderer
+      async function buildTree(dirPath: string) {
+        const dirents = await fs.readdir(dirPath, { withFileTypes: true });
+        const nodes: any[] = [];
+        for (const d of dirents) {
+          const full = path.join(dirPath, d.name);
+          if (d.isDirectory()) {
+            nodes.push({ name: d.name, path: full, isDirectory: true, children: await buildTree(full) });
+          } else {
+            nodes.push({ name: d.name, path: full, isDirectory: false });
+          }
+        }
+        return nodes.sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
       }
       const tree = await buildTree(outputDir);
       console.log('[IPC] Tree built with', tree.length, 'root items');
@@ -221,6 +254,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     if (!outputDir) {
       return { success: false, error: 'No output folder selected.' };
     }
+    function isWithin(base: string, target: string) {
+      const rBase = path.resolve(base);
+      const rTarget = path.resolve(target);
+      const rel = path.relative(rBase, rTarget);
+      return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+    }
+
     if (!filePath || !isWithin(outputDir, filePath)) {
       return { success: false, error: 'Invalid file path.' };
     }
@@ -228,44 +268,78 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     return { success: true, content };
   });
 
-  ipcMain.handle('workflow:convertPrd', async (_event, input: { content?: string; filePath?: string }) => {
+  ipcMain.handle('workflow:convertPrd', async (_event, input: { content?: string; filePath?: string; modelId?: string; fileName?: string; requestId?: string }) => {
+    const requestId = typeof input?.requestId === 'string' && input.requestId.trim().length > 0
+      ? input.requestId.trim()
+      : `convert-${Date.now()}`;
+
+    const emitProgress = (
+      stage: string,
+      message: string,
+      percent?: number,
+      details?: Record<string, unknown>
+    ) => {
+      mainWindow.webContents.send('workflow:convertPrd:progress', {
+        requestId,
+        stage,
+        message,
+        percent,
+        details,
+        timestamp: new Date().toISOString(),
+      });
+    };
+
     try {
+      emitProgress('started', 'Starting PRD conversion', 2);
+
       let prdXml = input.content || '';
       if (!prdXml && input.filePath) {
+        emitProgress('reading-file', `Reading PRD file: ${path.basename(input.filePath)}`, 8, { filePath: input.filePath });
         prdXml = await fs.readFile(input.filePath, 'utf8');
       }
-      if (!prdXml) return { success: false, error: 'No content provided' };
+      if (!prdXml) {
+        emitProgress('failed', 'No PRD content provided', 100);
+        return { success: false, error: 'No content provided' };
+      }
+
+      emitProgress('parsing', 'Extracting and analyzing PRD XML', 18);
 
       const result = extractAndAnalyzeFromPrdXml(prdXml);
+      const initialResults = normalizeResults(result);
+      emitProgress('parsed', 'PRD analysis complete', 30, { candidates: initialResults.length });
 
       // If caller supplied a modelId, ask the LLM for a deeper, deterministic Markdown summary
       const modelId = (input as any).modelId as string | undefined;
       if (modelId) {
-        try {
-          const resultsArray = result && result.results ? result.results : [result];
+          emitProgress('llm-summary', 'Generating deep summary with LLM', 38, { modelId });
+          try {
+            const resultsArray = normalizeResults(result);
 
-          // helper to call the streaming chat completion and collect text
-          const askLlmForText = (model: string, promptText: string): Promise<string> => {
-            return new Promise((resolve, reject) => {
-              let out = '';
-              try {
-                streamChatCompletion(
-                  model,
-                  [{ role: 'user', content: promptText }],
-                  (chunk: string) => { out += chunk; },
-                  () => { resolve(out.trim()); },
-                  (err: Error) => { reject(err); },
-                  `You are an expert workflow analyst. Respond in clear Markdown.`
-                );
-              } catch (err) {
-                reject(err);
-              }
-            });
-          };
+            // helper to call the streaming chat completion and collect text
+            const askLlmForText = (model: string, promptText: string): Promise<string> => {
+              return new Promise((resolve, reject) => {
+                let out = '';
+                try {
+                  streamChatCompletion(
+                    model,
+                    [{ role: 'user', content: promptText }],
+                    (chunk: string) => { out += chunk; },
+                    () => { resolve(out.trim()); },
+                    (err: Error) => { reject(err); },
+                    undefined,
+                    `You are an expert workflow analyst. Respond in clear Markdown.`
+                  );
+                } catch (err) {
+                  reject(err);
+                }
+              });
+            };
 
           for (let i = 0; i < resultsArray.length; i++) {
             const r = resultsArray[i];
             if (r && r.decodedXml) {
+              const itemPercent = 42 + Math.min(22, Math.round(((i + 1) / Math.max(resultsArray.length, 1)) * 22));
+              emitProgress('llm-summary-item', `Summarizing candidate ${i + 1} of ${resultsArray.length}`, itemPercent, { index: i, total: resultsArray.length });
               // Build a compact structured payload to help the LLM produce a thorough summary
               const structured: any = {
                 processId: r.processId || null,
@@ -276,14 +350,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
                 dataItems: Array.isArray(r.dataItems) ? r.dataItems : [],
               };
 
-              const prompt = `You are an expert workflow analyst. Using the structured JSON below (which is authoritative), produce a deterministic, minute-detail Markdown summary covering:\n- process id and version\n- every activity (id, type, step-by-step behavior, form-id if present, addressee, timeouts, notify templates) in execution order\n- transitions/links between activities (include conditions if present)\n- data-items defined for the process (name and type)\n- forms and their fields (name, data-type, options)\n- any conditional expressions or mappings and what they do\n- any detected provisioning operations and their target entity types\n\nBe exhaustive and explicit; include numbered steps where appropriate and example values when inferable from the data. Do NOT hallucinate beyond the provided JSON. Output clean Markdown suitable for engineers.\n\nStructured JSON:\n\n${JSON.stringify(structured, null, 2)}\n\nIf your first response is brief, expand it to include per-activity minute-level steps, example payloads, and exact field lists.`;
+              const prompt = `You are an expert workflow analyst. Using the structured JSON below (which is authoritative), produce a deterministic Markdown summary with two required sections:\n\n1) Technical Summary (for engineers)\n- process id and version\n- every activity (id, type, step-by-step behavior, form-id if present, addressee, timeouts, notify templates) in execution order\n- transitions/links between activities (include conditions if present)\n- data-items defined for the process (name and type)\n- forms and their fields (name, data-type, options)\n- any conditional expressions or mappings and what they do\n- any detected provisioning operations and their target entity types\n\n2) Beginner-Friendly Workflow Explanation (for less experienced readers)\n- what the old PRD is trying to accomplish in plain language\n- who is involved and what each role does\n- a simple step-by-step walkthrough of the request lifecycle\n- what information is collected and why it matters\n- key risks/validation checks explained in non-technical terms\n\nBe exhaustive and explicit; include numbered steps where appropriate and example values when inferable from the data. Do NOT hallucinate beyond the provided JSON. Output clean Markdown.\n\nStructured JSON:\n\n${JSON.stringify(structured, null, 2)}\n\nIf your first response is brief, expand it to include per-activity minute-level steps, example payloads, exact field lists, and an easy-to-understand explanation for beginners.`;
 
               try {
                 let llmSummary = await askLlmForText(modelId, prompt);
                 // If LLM returned a very short response, ask it to expand once more with explicit guidance
                 if (!llmSummary || llmSummary.trim().length < 300) {
                   try {
-                    const expandPrompt = `Your previous answer was too short. Expand the Markdown summary to provide minute-detail for each activity: include explicit sequence steps, what data-items are used at each step, the exact form fields (name and type), any timeout behavior and notification templates, and clear transition conditions. Use bullet lists and numbered steps. Here is the same structured JSON again:\n\n${JSON.stringify(structured, null, 2)}`;
+                    const expandPrompt = `Your previous answer was too short. Expand the Markdown summary and keep BOTH required sections: Technical Summary and Beginner-Friendly Workflow Explanation. Add minute-detail for each activity: explicit sequence steps, what data-items are used at each step, exact form fields (name and type), timeout behavior, notification templates, and transition conditions. In the beginner section, explain the old PRD intent and flow in plain language for a less experienced engineer. Use bullet lists and numbered steps. Here is the same structured JSON again:\n\n${JSON.stringify(structured, null, 2)}`;
                     const expanded = await askLlmForText(modelId, expandPrompt);
                     if (expanded && expanded.trim().length) llmSummary = expanded;
                   } catch (reErr) {
@@ -298,14 +372,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
               }
             }
           }
+          emitProgress('llm-summary-complete', 'LLM summary generation complete', 64);
         } catch (e) {
           console.warn('[IPC] LLM deep summary failed:', e instanceof Error ? e.message : String(e));
         }
       }
 
       // Try to persist artifacts into configured workflow output directory
+      emitProgress('saving', 'Preparing output folder and artifacts', 72);
       const baseOutputDir = await getWorkflowOutputDir();
-      const saved: any = { outputDir: null, decoded: [], summaries: [], workflows: [], forms: [] };
+      const saved: any = { outputDir: null, decoded: [], summaries: [], workflows: [], forms: [], todos: [] };
 
       // Derive a friendly folder name: prefer uploaded filename, else process id from result, else fallback
       let folderBase = `converted-prd`;
@@ -314,10 +390,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
           folderBase = path.basename(input.filePath, path.extname(input.filePath));
         } else if ((input as any).fileName) {
           folderBase = path.basename(String((input as any).fileName), path.extname(String((input as any).fileName)));
-        } else if (result && result.results && Array.isArray(result.results) && result.results[0] && result.results[0].processId) {
-          folderBase = String(result.results[0].processId || 'converted-prd');
-        } else if (result && (result as any).processId) {
-          folderBase = String((result as any).processId || 'converted-prd');
+        } else {
+          const maybeResultsForFolder = normalizeResults(result);
+          if (maybeResultsForFolder && maybeResultsForFolder[0] && maybeResultsForFolder[0].processId) {
+            folderBase = String(maybeResultsForFolder[0].processId || 'converted-prd');
+          } else if (result && (result as any).processId) {
+            folderBase = String((result as any).processId || 'converted-prd');
+          }
         }
       } catch {
         folderBase = `converted-prd`;
@@ -337,12 +416,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       }
       await fs.mkdir(outputDir, { recursive: true });
       saved.outputDir = outputDir;
+      emitProgress('output-ready', `Saving artifacts into ${outputDir}`, 78, { outputDir });
 
       // Normalize results into an array and persist artifacts (always save summary/decoded/workflow/forms if present)
-      const resultsArray = result && result.results ? result.results : [result];
+      const resultsArray = normalizeResults(result);
       for (let i = 0; i < resultsArray.length; i++) {
         const r = resultsArray[i];
         const idx = i;
+        const savePercent = 80 + Math.min(16, Math.round(((idx + 1) / Math.max(resultsArray.length, 1)) * 16));
+        emitProgress('saving-item', `Saving artifacts for candidate ${idx + 1} of ${resultsArray.length}`, savePercent, { index: idx, total: resultsArray.length });
         if (r.decodedXml) {
           // prefer to keep original filename for the first decoded file when input.filePath or input.fileName is provided
           const decodedName = (input.filePath && idx === 0) ? `${path.basename(input.filePath)}` : (( (input as any).fileName && idx === 0) ? `${path.basename(String((input as any).fileName))}` : `decoded-${idx}.xml`);
@@ -355,6 +437,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
           await fs.writeFile(sumPath, r.summary, 'utf8');
           saved.summaries.push(sumPath);
         }
+        if (Array.isArray(r.prdTodoList) && r.prdTodoList.length) {
+          const todoLines = ['# PRD Todo List', ''];
+          r.prdTodoList.forEach((t: any) => {
+            const mark = t && t.status === 'completed' ? 'x' : ' ';
+            const title = t && t.title ? String(t.title) : 'Task';
+            const details = t && t.details ? String(t.details) : '';
+            todoLines.push(`- [${mark}] ${title}${details ? `: ${details}` : ''}`);
+          });
+          const todoPath = path.join(outputDir, `todo-${idx}.md`);
+          await fs.writeFile(todoPath, todoLines.join('\n'), 'utf8');
+          saved.todos.push(todoPath);
+        }
         if (r.workflowXml) {
           const wfPath = path.join(outputDir, `workflow-${idx}.xml`);
           await fs.writeFile(wfPath, r.workflowXml, 'utf8');
@@ -364,11 +458,44 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
           const formsPath = path.join(outputDir, `forms-${idx}.json`);
           await fs.writeFile(formsPath, r.formsJson, 'utf8');
           saved.forms.push(formsPath);
+
+          // Store each form schema separately for easier editing/import.
+          try {
+            const parsedForms = JSON.parse(r.formsJson);
+            const formsArray = Array.isArray(parsedForms) ? parsedForms : [parsedForms];
+            const formsDir = path.join(outputDir, `forms-${idx}`);
+            await fs.mkdir(formsDir, { recursive: true });
+
+            for (let formIdx = 0; formIdx < formsArray.length; formIdx++) {
+              const formItem = formsArray[formIdx];
+              const schema = formItem && typeof formItem === 'object' && (formItem as any).form
+                ? (formItem as any).form
+                : formItem;
+              if (!schema || typeof schema !== 'object') continue;
+
+              const rawFormId = String((schema as any).id || `form-${idx}-${formIdx}`);
+              const safeFormId = rawFormId.replace(/[^a-zA-Z0-9-_\.]/g, '-');
+              const singleFormPath = path.join(formsDir, `${safeFormId}.json`);
+              await fs.writeFile(singleFormPath, JSON.stringify(schema, null, 2), 'utf8');
+              saved.forms.push(singleFormPath);
+            }
+          } catch (formsErr) {
+            console.warn('[IPC] Failed to split forms JSON:', formsErr instanceof Error ? formsErr.message : String(formsErr));
+          }
         }
       }
 
+      emitProgress('completed', 'PRD conversion completed successfully', 100, {
+        outputDir,
+        decodedCount: saved.decoded.length,
+        summaryCount: saved.summaries.length,
+        workflowCount: saved.workflows.length,
+        formsCount: saved.forms.length,
+      });
+
       return { success: true, result, saved };
     } catch (err) {
+      emitProgress('failed', err instanceof Error ? err.message : String(err), 100);
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   });

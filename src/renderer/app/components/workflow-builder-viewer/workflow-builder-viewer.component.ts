@@ -38,6 +38,8 @@ import { WorkflowbuilderModule } from '@iam/workflowbuilder';
           <button
             type="button"
             (click)="setView('builder')"
+            [disabled]="!builderCompatible"
+            [title]="builderCompatible ? 'Open visual builder' : 'Builder supports full workflow XML (definitions + process) only'"
             [class]="viewMode === 'builder' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-200'"
             class="px-2 py-1 rounded text-xs">
             Builder
@@ -59,6 +61,10 @@ import { WorkflowbuilderModule } from '@iam/workflowbuilder';
 
         <!-- Workflow Builder View -->
         <div *ngIf="viewMode === 'builder'" class="h-full">
+          <div *ngIf="!builderCompatible" class="h-full flex items-center justify-center text-xs text-slate-500 dark:text-slate-400">
+            Builder is available only for generated workflow XML files.
+          </div>
+          <ng-container *ngIf="builderCompatible">
           <!-- <iam-workflow-builder
             [xmlInputFromConsole]="currentXml"
             (xmlFromBuilder)="onBuilderXmlChange($any($event))"
@@ -66,9 +72,10 @@ import { WorkflowbuilderModule } from '@iam/workflowbuilder';
             [serverValidationResponseForWFBuilder]="serverValidationResponse"
             [isWorkflowSaved]="!hasChanges">
           </iam-workflow-builder> -->
-          
+
             <iam-workflowbuilder [xmlDataFromConsole]="currentXml" >
             </iam-workflowbuilder>
+          </ng-container>
         </div>
       </div>
       <div *ngIf="summaryText" class="mt-2 px-2 overflow-auto max-h-48">
@@ -102,7 +109,8 @@ export class WorkflowBuilderViewerComponent implements OnChanges {
   @Output() errorCountChanged = new EventEmitter<number>();
   @Output() hasChangesUpdate = new EventEmitter<boolean>();
 
-  viewMode: 'editor' | 'builder' = 'builder';
+  viewMode: 'editor' | 'builder' = 'editor';
+  builderCompatible = false;
   currentXml: string = '';
   hasChanges: boolean = false;
   private editorRef: { layout: () => void } | null = null;
@@ -128,11 +136,19 @@ export class WorkflowBuilderViewerComponent implements OnChanges {
       this.currentXml = this.prettyPrintXml(newXml);
       this.originalXml = this.currentXml;
       this.hasChanges = false;
+      this.updateBuilderCompatibility();
       this.relayoutEditorSoon();
     }
   }
 
   setView(mode: 'editor' | 'builder') {
+    if (mode === 'builder' && !this.builderCompatible) {
+      this.viewMode = 'editor';
+      this.chatBridge.sendAssistantMessage('Builder view requires generated workflow XML (definitions + process). Showing XML editor instead.');
+      this.relayoutEditorSoon();
+      return;
+    }
+
     this.viewMode = mode;
     if (mode === 'editor') {
       this.relayoutEditorSoon();
@@ -143,6 +159,7 @@ export class WorkflowBuilderViewerComponent implements OnChanges {
     this.hasChanges = newXml !== this.originalXml;
     this.hasChangesUpdate.emit(this.hasChanges);
     this.xmlChanged.emit(newXml);
+    this.builderCompatible = this.isBuilderXmlCompatible(newXml);
   }
 
   onBuilderXmlChange(newXml: string) {
@@ -243,21 +260,29 @@ export class WorkflowBuilderViewerComponent implements OnChanges {
       const reader = new FileReader();
     reader.onload = async () => {
       const content = typeof reader.result === 'string' ? reader.result : '';
+      const previewDecoded = this.extractPreviewDecodedXml(content);
+      if (previewDecoded) {
+        this.currentXml = previewDecoded;
+        this.updateBuilderCompatibility();
+        this.xmlChanged.emit(this.currentXml);
+        await this.yieldToUi();
+      }
+
       try {
         // pick a model if available and pass modelId to enable LLM deep summary in main process
         let modelId: string | undefined = undefined;
         try {
           const models = await this.copilotService.getModels();
-          if (Array.isArray(models) && models.length) modelId = models[0].id || models[0].label || models[0];
+          if (Array.isArray(models) && models.length) modelId = String(models[0].id || models[0].label || models[0]);
         } catch {
           modelId = undefined;
         }
         const res = await this.copilotService.convertPrd({ content, fileName: file.name, modelId });
         if (res && res.success && res.result) {
-          // if results.results (multiple) choose first
-          const out = res.result.results ? res.result.results[0] : res.result;
+          const out = this.pickBestResult(res.result);
           this.summaryText = out.summary || (out.summary === undefined ? JSON.stringify(out, null, 2) : '');
           this.currentXml = out.decodedXml || '';
+          this.updateBuilderCompatibility();
           this.xmlChanged.emit(this.currentXml);
           this.setView('editor');
           // Heuristic questions for user review: missing forms/addressee on user activities
@@ -288,6 +313,14 @@ export class WorkflowBuilderViewerComponent implements OnChanges {
             if (res.saved.forms && res.saved.forms.length) savedMsgParts.push(`Forms: ${res.saved.forms.join(', ')}`);
             const savedMsg = `Analysis artifacts were saved to: ${res.saved.outputDir}\n${savedMsgParts.join('\n')}`;
             this.chatBridge.sendAssistantMessage(savedMsg);
+            this.chatBridge.sendPrdArtifactsSaved({
+              outputDir: res.saved.outputDir,
+              files: [
+                ...(Array.isArray(res.saved.workflows) ? res.saved.workflows : []),
+                ...(Array.isArray(res.saved.forms) ? res.saved.forms : []),
+                ...(Array.isArray(res.saved.summaries) ? res.saved.summaries : []),
+              ],
+            });
           }
         } else {
           this.summaryText = `Conversion failed: ${res && res.error ? res.error : 'Unknown'}`;
@@ -355,5 +388,94 @@ export class WorkflowBuilderViewerComponent implements OnChanges {
     if (this.summaryText) {
       this.setView('editor');
     }
+  }
+
+  private pickBestResult(result: any): any {
+    if (!result) return {};
+    const candidates = Array.isArray(result.results) ? result.results : [result];
+    if (!candidates.length) return {};
+
+    let best = candidates[0];
+    let bestScore = this.scoreResult(candidates[0]);
+    for (let i = 1; i < candidates.length; i++) {
+      const score = this.scoreResult(candidates[i]);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidates[i];
+      }
+    }
+    return best || {};
+  }
+
+  private scoreResult(candidate: any): number {
+    if (!candidate || typeof candidate !== 'object') return 0;
+    const activities = Array.isArray(candidate.activities) ? candidate.activities.length : 0;
+    const links = Array.isArray(candidate.links) ? candidate.links.length : 0;
+    const forms = Array.isArray(candidate.forms) ? candidate.forms.length : 0;
+    const hasWorkflow = typeof candidate.workflowXml === 'string' && candidate.workflowXml.length > 0;
+    const hasFormsJson = typeof candidate.formsJson === 'string' && candidate.formsJson.length > 0;
+    const hasDecoded = typeof candidate.decodedXml === 'string' && candidate.decodedXml.length > 0;
+
+    return (hasWorkflow ? 120 : 0)
+      + (hasFormsJson ? 80 : 0)
+      + (hasDecoded ? 20 : 0)
+      + (activities * 2)
+      + links
+      + (forms * 4);
+  }
+
+  private extractPreviewDecodedXml(prdXml: string): string {
+    if (!prdXml) return '';
+    const process = this.decodeAttr(prdXml, 'srvprvProcessXML');
+    if (process) return process;
+
+    const xmlData = this.decodeAttr(prdXml, 'XMLData');
+    if (xmlData) return xmlData;
+
+    const request = this.decodeAttr(prdXml, 'srvprvRequestXML');
+    return request;
+  }
+
+  private decodeAttr(xmlText: string, attrName: string): string {
+    const escaped = attrName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`ds-attr-name\\s*=\\s*["']${escaped}["'][\\s\\S]*?<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>`, 'i');
+    const match = pattern.exec(xmlText);
+    if (!match || !match[1]) return '';
+    const raw = match[1].trim();
+    if (!raw) return '';
+    const cleaned = raw.replace(/\s+/g, '');
+
+    try {
+      const binary = atob(cleaned);
+      const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+      if (typeof TextDecoder !== 'undefined') {
+        return new TextDecoder('utf-8').decode(bytes);
+      }
+      return binary;
+    } catch {
+      return raw;
+    }
+  }
+
+  private updateBuilderCompatibility(): void {
+    this.builderCompatible = this.isBuilderXmlCompatible(this.currentXml);
+    if (!this.builderCompatible && this.viewMode === 'builder') {
+      this.viewMode = 'editor';
+      this.relayoutEditorSoon();
+    }
+  }
+
+  private isBuilderXmlCompatible(xml: string): boolean {
+    const text = (xml || '').trim();
+    if (!text) return false;
+    const hasDefinitions = /<(?:\w+:)?definitions\b/i.test(text);
+    const hasProcess = /<(?:\w+:)?process\b/i.test(text);
+    return hasDefinitions && hasProcess;
+  }
+
+  private async yieldToUi(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(() => resolve(), 0);
+    });
   }
 }

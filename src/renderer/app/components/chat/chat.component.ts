@@ -3,7 +3,9 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CopilotService } from '../../services/copilot.service';
 import { DebugLoggerService } from '../../services/debug-logger.service';
+import { ChatBridgeService, PrdTodoItem } from '../../services/chat-bridge.service';
 import { DebugPanelComponent } from '../debug-panel/debug-panel.component';
+import { FileNode } from '../file-tree/file-tree.component';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -13,8 +15,8 @@ interface Message {
 
 @Component({
   selector: 'app-chat',
-  standalone: true,
-  imports: [CommonModule, FormsModule, DebugPanelComponent],
+  standalone: false,
+  // imports: [CommonModule, FormsModule, DebugPanelComponent],
   templateUrl: './chat.component.html',
   styleUrls: ['./chat.component.css']
 })
@@ -29,14 +31,23 @@ export class ChatComponent implements OnInit, OnDestroy {
   openFiles: Array<{
     path: string;
     name: string;
-    kind: 'xml' | 'json';
+    kind: 'xml' | 'json' | 'md';
     xml?: string;
     formSchema?: Record<string, unknown>;
+    content?: string;
     hasChanges?: boolean;
     errorCount?: number;
   }> = [];
   activeFilePath: string | null = null;
+  workspaceMode: 'convert' | 'editor' = 'convert';
   activeTab: 'files' | 'chat' | 'convert' = 'chat';
+  workflowRequest: string = '';
+  isGeneratingWorkflow: boolean = false;
+  explorerPaneWidth: number = 220;
+  chatPaneWidth: number = 560;
+  isResizing: boolean = false;
+  resizeAxis: 'vertical' | 'horizontal' = 'vertical';
+  prdTodos: PrdTodoItem[] = [];
   formioOptions = {
     i18n: { resources: {} },
     builder: { resource: false },
@@ -48,23 +59,32 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   availableTools: Array<{ name: string; category: string; description: string }> = [];
   showSettings = false;
+  showDebugPanel = true;
   toolResult: any = null;
   selectedTool: string | null = null;
   debugPanelPosition: 'bottom' | 'right' = 'bottom';
   toolsInUse: Map<string, any> = new Map();
   private toolPromptSuffix = '';
   private readonly teardownCallbacks: Array<() => void> = [];
+  private resizingTarget: 'explorer' | 'chat' | null = null;
+  private resizeStartX: number = 0;
+  private resizeStartValue: number = 0;
+  private lastTodoProgressSignature: string = '';
+  private readonly onWindowMouseMove = (event: MouseEvent) => this.onResizeMove(event);
+  private readonly onWindowMouseUp = () => this.stopResize();
 
   constructor(private copilotService: CopilotService, private debugLogger: DebugLoggerService,private chatBridge: ChatBridgeService) {}
 
   async ngOnInit() {
     this.debugLogger.addLog('info', 'Chat component initialized');
     await this.loadModels();
+    await this.loadWorkflowOutputDir();
     await this.loadTools();
     this.subscribeToToolEvents();
   }
 
   ngOnDestroy() {
+    this.stopResize();
     for (const teardown of this.teardownCallbacks) {
       teardown();
     }
@@ -91,6 +111,45 @@ export class ChatComponent implements OnInit, OnDestroy {
     });
 
     this.teardownCallbacks.push(toolCalledOff, toolErrorOff);
+
+    const bridgeAssistantSub = this.chatBridge.assistantMessages$.subscribe((msg) => {
+      this.messages.push({
+        role: 'assistant',
+        content: msg.content,
+        timestamp: new Date(),
+      });
+    });
+
+    const bridgeArtifactsSub = this.chatBridge.prdArtifactsSaved$.subscribe(async (event) => {
+      try {
+        if (event.outputDir) {
+          this.outputDir = event.outputDir;
+        }
+
+        await this.refreshOutputTree();
+
+        const generatedFiles = Array.isArray(event.files) ? event.files : [];
+        for (const f of generatedFiles) {
+          if (typeof f !== 'string') continue;
+          if (f.endsWith('.xml') || f.endsWith('.json') || f.endsWith('.md')) {
+            await this.openFile(f);
+          }
+        }
+      } catch (err) {
+        console.warn('[Chat] Failed to apply PRD artifact event:', err);
+      }
+    });
+
+    const bridgeTodoSub = this.chatBridge.prdTodo$.subscribe((items) => {
+      this.prdTodos = Array.isArray(items) ? items : [];
+      this.publishTodoProgressToChat();
+    });
+
+    this.teardownCallbacks.push(
+      () => bridgeAssistantSub.unsubscribe(),
+      () => bridgeArtifactsSub.unsubscribe(),
+      () => bridgeTodoSub.unsubscribe(),
+    );
   }
 
   onKeyDown(event: KeyboardEvent) {
@@ -200,12 +259,24 @@ export class ChatComponent implements OnInit, OnDestroy {
       content: input,
       timestamp: new Date()
     });
+    this.chatBridge.sendUserMessage(input);
     this.inputText = '';
+
+    const generationPrompt = this.extractWorkflowGenerationPrompt(input);
+    if (generationPrompt) {
+      this.workflowRequest = generationPrompt;
+      await this.generateWorkflowFromRequest();
+      return;
+    }
+
     this.isLoading = true;
 
     try {
       // Build enhanced prompt with tool info
-      const enhancedPrompt = input + this.toolPromptSuffix;
+      const toolUsageGuidance = this.availableTools.length > 0
+        ? '\n\nTool usage rule: Reuse the available tools whenever they can help answer accurately. Prefer tool calls over assumptions, avoid duplicating logic available through tools, and cite the tool outcome in your response.'
+        : '';
+      const enhancedPrompt = `${input}${toolUsageGuidance}${this.toolPromptSuffix}`;
       let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
 
       // Start fresh thinking chain for this request
@@ -351,6 +422,23 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
   }
 
+  async generateFromComposer() {
+    const input = this.inputText.trim();
+    if (!input || this.isGeneratingWorkflow) {
+      return;
+    }
+
+    this.messages.push({
+      role: 'user',
+      content: input,
+      timestamp: new Date(),
+    });
+    this.chatBridge.sendUserMessage(input);
+    this.workflowRequest = input;
+    this.inputText = '';
+    await this.generateWorkflowFromRequest();
+  }
+
   async chooseOutputDir() {
     try {
       console.log('[Chat] Choosing output directory...');
@@ -407,6 +495,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     if (existing) {
       this.activeFilePath = existing.path;
       this.activeTab = 'files';
+      this.workspaceMode = 'editor';
       this.syncActiveFormSchema();
       return;
     }
@@ -430,11 +519,17 @@ export class ChatComponent implements OnInit, OnDestroy {
       }
       this.openFiles.push({ path: filePath, name, kind: 'json', formSchema });
       this.activeFilePath = filePath;
+    } else if (filePath.endsWith('.md')) {
+      const result = await this.copilotService.readWorkflowFile(filePath);
+      const content = result.success && result.content ? result.content : '';
+      this.openFiles.push({ path: filePath, name, kind: 'md', content });
+      this.activeFilePath = filePath;
     } else {
       this.activeFilePath = null;
     }
 
     this.activeTab = 'files';
+    this.workspaceMode = 'editor';
     this.syncActiveFormSchema();
   }
 
@@ -445,6 +540,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   setActiveFile(path: string) {
     this.activeFilePath = path;
     this.activeTab = 'files';
+    this.workspaceMode = 'editor';
     this.syncActiveFormSchema();
   }
 
@@ -465,8 +561,173 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.activeTab = 'chat';
   }
 
+  async switchToFilesTab() {
+    this.activeTab = 'files';
+    await this.refreshOutputTree();
+  }
+
   switchToConvertTab() {
     this.activeTab = 'convert';
+  }
+
+  switchWorkspaceMode(mode: 'convert' | 'editor') {
+    this.workspaceMode = mode;
+  }
+
+  toggleDebugPanel() {
+    this.showDebugPanel = !this.showDebugPanel;
+  }
+
+  toggleDebugPosition() {
+    this.debugPanelPosition = this.debugPanelPosition === 'bottom' ? 'right' : 'bottom';
+  }
+
+  startResize(target: 'explorer' | 'chat', event: MouseEvent) {
+    if (window.innerWidth <= 1100) {
+      return;
+    }
+
+    this.resizingTarget = target;
+    this.resizeStartX = event.clientX;
+
+    if (target === 'explorer') this.resizeStartValue = this.explorerPaneWidth;
+    else this.resizeStartValue = this.chatPaneWidth;
+
+    this.isResizing = true;
+    this.resizeAxis = 'vertical';
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('mousemove', this.onWindowMouseMove);
+    window.addEventListener('mouseup', this.onWindowMouseUp);
+    event.preventDefault();
+  }
+
+  stopResize() {
+    this.resizingTarget = null;
+    this.isResizing = false;
+    this.resizeAxis = 'vertical';
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    window.removeEventListener('mousemove', this.onWindowMouseMove);
+    window.removeEventListener('mouseup', this.onWindowMouseUp);
+  }
+
+  private onResizeMove(event: MouseEvent) {
+    if (!this.resizingTarget) {
+      return;
+    }
+
+    if (this.resizingTarget === 'explorer') {
+      const delta = event.clientX - this.resizeStartX;
+      this.explorerPaneWidth = this.clamp(this.resizeStartValue + delta, 180, 360);
+      return;
+    }
+
+    if (this.resizingTarget === 'chat') {
+      const delta = event.clientX - this.resizeStartX;
+      this.chatPaneWidth = this.clamp(this.resizeStartValue - delta, 460, 860);
+      return;
+    }
+  }
+
+  private clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  private publishTodoProgressToChat() {
+    if (!this.prdTodos.length) {
+      this.lastTodoProgressSignature = '';
+      return;
+    }
+
+    const completed = this.prdTodos.filter((t) => t.status === 'completed').length;
+    const inProgress = this.prdTodos.filter((t) => t.status === 'in-progress').length;
+    const pending = this.prdTodos.filter((t) => t.status === 'not-started').length;
+    const total = this.prdTodos.length;
+
+    const signature = `${completed}/${inProgress}/${pending}/${total}`;
+    if (signature === this.lastTodoProgressSignature) {
+      return;
+    }
+    this.lastTodoProgressSignature = signature;
+
+    const summary = `PRD Todo Progress: ${completed}/${total} completed, ${inProgress} in progress, ${pending} pending.`;
+    this.messages.push({
+      role: 'assistant',
+      content: summary,
+      timestamp: new Date(),
+    });
+  }
+
+  async generateWorkflowFromRequest() {
+    const request = this.workflowRequest.trim();
+    if (!request || this.isGeneratingWorkflow) {
+      return;
+    }
+
+    this.isGeneratingWorkflow = true;
+    try {
+      let targetOutputDir = this.outputDir;
+      if (!targetOutputDir) {
+        const dir = await this.copilotService.chooseWorkflowOutputDir();
+        targetOutputDir = this.extractDirPath(dir);
+        this.outputDir = targetOutputDir;
+      }
+
+      if (!targetOutputDir) {
+        this.messages.push({
+          role: 'assistant',
+          content: 'Select an output folder before generating a workflow.',
+          timestamp: new Date(),
+        });
+        return;
+      }
+
+      const result = await this.copilotService.generateWorkflow({
+        modelId: this.selectedModel,
+        request,
+        outputDir: targetOutputDir,
+      });
+
+      if (!result.success) {
+        this.messages.push({
+          role: 'assistant',
+          content: `Workflow generation failed: ${result.error || 'Unknown error'}`,
+          timestamp: new Date(),
+        });
+        return;
+      }
+
+      if (result.outputDir) {
+        this.outputDir = result.outputDir;
+      }
+
+      await this.refreshOutputTree();
+      this.activeTab = 'files';
+
+      if (result.files?.workflowPath) {
+        await this.openFile(result.files.workflowPath);
+      }
+      if (result.files?.formsPath) {
+        await this.openFile(result.files.formsPath);
+      }
+
+      const summary = this.generateWorkflowSummary(result.plan);
+      this.messages.push({
+        role: 'assistant',
+        content: summary || `Workflow generated in ${result.outputDir || targetOutputDir}`,
+        timestamp: new Date(),
+      });
+      this.workflowRequest = '';
+    } catch (error) {
+      this.messages.push({
+        role: 'assistant',
+        content: `Workflow generation error: ${error instanceof Error ? error.message : String(error)}`,
+        timestamp: new Date(),
+      });
+    } finally {
+      this.isGeneratingWorkflow = false;
+    }
   }
 
   onFormSchemaChanged(updatedSchema: unknown) {
@@ -563,24 +824,61 @@ export class ChatComponent implements OnInit, OnDestroy {
     // No-op: active file data is the source of truth for the viewer.
   }
 
+  private extractDirPath(input: unknown): string {
+    console.log('[extractDirPath] Input:', input);
+    if (typeof input === 'string') {
+      console.log('[extractDirPath] Is string:', input);
+      return input;
+    }
+    if (input && typeof input === 'object') {
+      if ('path' in (input as any) && typeof (input as any).path === 'string') {
+        const p = (input as any).path;
+        console.log('[extractDirPath] Found path property:', p);
+        return p;
+      }
+      if ('directory' in (input as any) && typeof (input as any).directory === 'string') {
+        const d = (input as any).directory;
+        console.log('[extractDirPath] Found directory property:', d);
+        return d;
+      }
+    }
+    console.log('[extractDirPath] No path found, returning empty string');
+    return '';
+  }
+
+  private async loadWorkflowOutputDir() {
+    try {
+      const dir = await this.copilotService.getWorkflowOutputDir();
+      this.outputDir = this.extractDirPath(dir?.path || '');
+      if (this.outputDir) {
+        await this.refreshOutputTree();
+      }
+    } catch {
+      this.outputDir = '';
+      this.fileTree = [];
+    }
+  }
+
   private isWorkflowGenerationRequest(input: string): boolean {
     const lowerInput = input.toLowerCase();
-    // Keywords that indicate a workflow generation request
-    const workflowKeywords = [
-      'create',
-      'generate',
-      'build',
-      'workflow',
-      'process',
-      'form',
-      'approval',
-      'onboarding',
-      'termination',
-      'access',
-      'request'
-    ];
-    
-    return workflowKeywords.some(keyword => lowerInput.includes(keyword));
+    if (lowerInput.startsWith('/generate')) return true;
+    if (lowerInput.length < 40) return false;
+
+    const hasAction = /(create|generate|build|design|implement|draft)/.test(lowerInput);
+    const hasWorkflowScope = /(workflow|process|approval|onboarding|offboarding|provision|access request|form)/.test(lowerInput);
+    return hasAction && hasWorkflowScope;
+  }
+
+  private extractWorkflowGenerationPrompt(input: string): string | null {
+    const trimmed = input.trim();
+    const lower = trimmed.toLowerCase();
+
+    if (lower.startsWith('/generate')) {
+      const prompt = trimmed.slice('/generate'.length).trim();
+      return prompt || null;
+    }
+
+    return this.isWorkflowGenerationRequest(trimmed) ? trimmed : null;
   }
 
   onWorkflowXmlChanged(newXml: string) {

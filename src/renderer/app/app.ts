@@ -8,123 +8,233 @@ import { CopilotService } from './services/copilot.service';
   selector: 'app-root',
   standalone: false,
   template: `
-    <div
-      [ngClass]="theme() === 'dark' ? 'dark bg-slate-950 text-slate-100' : 'light bg-slate-100 text-slate-900'"
-      class="h-screen w-screen min-h-0">
-      <div class="flex flex-col h-full min-h-0">
-        <!-- Header -->
-        <div
-          [ngClass]="theme() === 'dark' ? 'border-slate-800 bg-slate-900/80' : 'border-slate-200 bg-white/80'"
-          class="border-b px-4 py-3 backdrop-blur flex items-center justify-between gap-4">
-          <div class="flex items-center gap-4">
-            <h1 class="text-lg font-bold m-0">Copilot Chat</h1>
-            <div [ngClass]="theme() === 'dark' ? 'text-slate-300' : 'text-slate-600'" class="text-xs">
-              <span *ngIf="user()">User: <span class="font-semibold">{{ user() }}</span></span>
-              <span *ngIf="!user()" [ngClass]="theme() === 'dark' ? 'text-amber-400' : 'text-amber-600'">Not authenticated</span>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-3">
-            <div [ngClass]="theme() === 'dark' ? 'bg-slate-800' : 'bg-slate-100'" class="flex items-center gap-1 px-3 py-1 rounded-md">
-              <div
-                class="w-2 h-2 rounded-full"
-                [ngClass]="(authStatus() === 'OK' || authStatus() === 'AlreadySignedIn') ? 'bg-green-400' : 'bg-yellow-400'">
+    <div [ngClass]="theme() === 'dark' ? 'shell-dark' : 'shell-light'" class="app-shell">
+      <div class="app-frame">
+        <header class="app-header">
+          <div class="app-brand">
+            <div class="brand-mark">WF</div>
+            <div class="brand-text">
+              <h1>Workflow Studio</h1>
+              <div class="brand-subtitle">
+                <span *ngIf="user()">{{ user() }}</span>
+                <span *ngIf="!user()">Not authenticated</span>
               </div>
-              <span [ngClass]="theme() === 'dark' ? 'text-slate-300' : 'text-slate-700'" class="text-xs">{{ authStatus() === 'AlreadySignedIn' ? 'Connected' : authStatus() }}</span>
+            </div>
+          </div>
+
+          <div class="header-actions">
+            <div class="status-chip">
+              <span class="status-dot" [ngClass]="(authStatus() === 'OK' || authStatus() === 'AlreadySignedIn') ? 'ok' : 'warn'"></span>
+              <span>{{ authStatus() === 'AlreadySignedIn' ? 'Connected' : authStatus() }}</span>
             </div>
 
-            <button
-              (click)="checkForUpdate()"
-              class="p-1.5 text-slate-500 hover:text-emerald-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-emerald-400 dark:hover:bg-slate-800 rounded-md transition-colors"
-              title="Check for Update">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M23 4v6h-6" />
-                <path d="M1 20v-6h6" />
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36M20.49 15a9 9 0 0 1-14.85 3.36" />
-              </svg>
-            </button>
+            <button (click)="checkForUpdate()" class="tool-btn" title="Check for Update">Update</button>
+            <button (click)="toggleTheme()" class="tool-btn" title="Switch theme">Theme</button>
 
-            <button
-              (click)="toggleTheme()"
-              class="p-1.5 text-slate-500 hover:text-amber-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-amber-400 dark:hover:bg-slate-800 rounded-md transition-colors"
-              title="Switch theme">
-              <ng-container *ngIf="theme() === 'light'; else darkIcon">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="5" />
-                  <line x1="12" y1="1" x2="12" y2="3" />
-                  <line x1="12" y1="21" x2="12" y2="23" />
-                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                  <line x1="1" y1="12" x2="3" y2="12" />
-                  <line x1="21" y1="12" x2="23" y2="12" />
-                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-                </svg>
-              </ng-container>
-              <ng-template #darkIcon>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
-              </ng-template>
-            </button>
-
-            <button
-              *ngIf="!isAuthenticated()"
-              (click)="startSignIn()"
-              class="px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">
-              Sign In
-            </button>
-
-            <button
-              *ngIf="pendingVerification()"
-              (click)="confirmSignIn()"
-              class="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors">
-              I've Authorized
-            </button>
-
-            <button
-              *ngIf="isAuthenticated()"
-              (click)="performSignOut()"
-              class="px-3 py-1.5 rounded bg-gray-700 text-white text-xs font-semibold hover:bg-gray-600 transition-colors">
-              Sign Out
-            </button>
+            <button *ngIf="!isAuthenticated()" (click)="startSignIn()" class="action-btn action-primary">Sign In</button>
+            <button *ngIf="pendingVerification()" (click)="confirmSignIn()" class="action-btn action-accent">I've Authorized</button>
+            <button *ngIf="isAuthenticated()" (click)="performSignOut()" class="action-btn action-neutral">Sign Out</button>
           </div>
-        </div>
+        </header>
 
-        <div *ngIf="pendingVerification()" class="border-b border-blue-700/40 bg-blue-950/40 px-4 py-3 text-sm text-blue-100">
+        <div *ngIf="pendingVerification()" class="verify-banner rounded-xl px-4 py-3 text-sm">
           <div class="font-semibold mb-1">GitHub device sign-in started</div>
           <div class="mb-1">Open: {{ verificationUri() }}</div>
           <div>Code: <span class="font-mono font-semibold">{{ userCode() }}</span></div>
         </div>
 
-        <!-- Main Content -->
-        <div class="flex-1 min-h-0 flex overflow-hidden p-3 sm:p-4 gap-4">
-          <aside
-            [ngClass]="theme() === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'"
-            class="hidden md:flex w-64 shrink-0 rounded-2xl border p-4">
-            <div class="w-full">
-              <div [ngClass]="theme() === 'dark' ? 'text-slate-400' : 'text-slate-500'" class="text-xs uppercase tracking-[0.2em] mb-2">Extension Space</div>
-              <div
-                [ngClass]="theme() === 'dark' ? 'border-slate-700 text-slate-300' : 'border-slate-300 text-slate-600'"
-                class="rounded-xl border border-dashed p-3 text-sm">
-                Reserved for future modules.
-              </div>
-              <div [ngClass]="theme() === 'dark' ? 'text-slate-400' : 'text-slate-500'" class="mt-3 text-xs">
-                Add new tools, navigation, or panels here.
-              </div>
-            </div>
-          </aside>
-
-          <section
-            [ngClass]="theme() === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'"
-            class="flex-1 min-h-0 overflow-hidden rounded-2xl border p-2 sm:p-3">
+        <main class="app-main">
+          <section class="chat-stage">
             <app-chat></app-chat>
           </section>
-        </div>
+        </main>
       </div>
     </div>
   `,
-  styles: [':host { display: block; height: 100vh; }']
+  styles: [`
+    :host {
+      display: block;
+      height: 100vh;
+    }
+
+    .app-shell {
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      color: #0f172a;
+      background: #eef2f7;
+    }
+
+    .shell-dark {
+      background: #0b1220;
+      color: #e2e8f0;
+    }
+
+    .app-frame {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      padding: 10px;
+      gap: 10px;
+    }
+
+    .app-header,
+    .chat-stage,
+    .verify-banner {
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      border-radius: 12px;
+    }
+
+    .shell-dark .app-header,
+    .shell-dark .chat-stage,
+    .shell-dark .verify-banner {
+      border-color: #334155;
+      background: #111827;
+    }
+
+    .app-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      flex-wrap: wrap;
+    }
+
+    .app-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      background: linear-gradient(130deg, #0ea5e9 0%, #2563eb 100%);
+      color: #fff;
+      flex: 0 0 auto;
+    }
+
+    .brand-text h1 {
+      font-size: 16px;
+      margin: 0;
+      line-height: 1.1;
+      font-weight: 700;
+    }
+
+    .brand-subtitle {
+      font-size: 12px;
+      opacity: 0.8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 360px;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+    }
+
+    .shell-dark .status-chip {
+      background: #1f2937;
+      border-color: #475569;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+    }
+
+    .status-dot.ok { background: #34d399; }
+    .status-dot.warn { background: #fbbf24; }
+
+    .tool-btn,
+    .action-btn {
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 10px;
+      border: 1px solid transparent;
+      line-height: 1;
+    }
+
+    .tool-btn {
+      background: #f8fafc;
+      color: inherit;
+      border-color: #cbd5e1;
+    }
+
+    .shell-dark .tool-btn {
+      background: #1f2937;
+      border-color: #475569;
+    }
+
+    .action-primary {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+    }
+
+    .action-accent {
+      background: #0f766e;
+      border-color: #0f766e;
+      color: #fff;
+    }
+
+    .action-neutral {
+      background: #334155;
+      border-color: #334155;
+      color: #fff;
+    }
+
+    .verify-banner {
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #0f172a;
+    }
+
+    .shell-dark .verify-banner {
+      color: #dbeafe;
+    }
+
+    .app-main {
+      flex: 1;
+      min-height: 0;
+    }
+
+    .chat-stage {
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+      padding: 4px;
+    }
+  `]
 })
 
 export class App implements OnInit {

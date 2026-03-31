@@ -8,6 +8,15 @@ interface RegisteredTool {
 
 type StreamChunkType = 'content' | 'thinking' | 'tool' | 'usage';
 
+export interface ConvertPrdProgressEvent {
+  requestId: string;
+  stage: string;
+  message: string;
+  percent?: number;
+  details?: Record<string, unknown>;
+  timestamp?: string;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -28,7 +37,7 @@ export class CopilotService {
     return this.api?.status?.() ?? { status: 'Unavailable' };
   }
 
-  async convertPrd(input: { content?: string; filePath?: string; modelId?: string; fileName?: string }): Promise<any> {
+  async convertPrd(input: { content?: string; filePath?: string; modelId?: string; fileName?: string; requestId?: string }): Promise<any> {
     if (this.api && this.api.convertPrd) return this.api.convertPrd(input);
     // Fallback to local converter for development (no preload API)
     try {
@@ -41,6 +50,16 @@ export class CopilotService {
       return { success: false, error: 'convertPrd not available' };
     }
   }
+
+  onConvertPrdProgress(callback: (event: ConvertPrdProgressEvent) => void): () => void {
+    if (!this.api?.onConvertPrdProgress) {
+      return () => {};
+    }
+    return this.api.onConvertPrdProgress((_event: unknown, data: ConvertPrdProgressEvent) => {
+      callback(data);
+    });
+  }
+
   async signIn(): Promise<{ userCode: string; verificationUri: string; status: string }> {
     if (!this.api?.signIn) {
       throw new Error('Sign-in API is not available');
@@ -149,6 +168,68 @@ export class CopilotService {
       return models.map((id: string) => ({ id, label: id }));
     }
     return models ?? [];
+  }
+
+  async chooseWorkflowOutputDir(): Promise<{ cancelled: boolean; path?: string }> {
+    if (!this.api?.chooseWorkflowOutputDir) {
+      throw new Error('Workflow API not available');
+    }
+    return this.api.chooseWorkflowOutputDir();
+  }
+
+  async getWorkflowOutputDir(): Promise<{ path?: string }> {
+    if (!this.api?.getWorkflowOutputDir) {
+      throw new Error('Workflow API not available');
+    }
+    return this.api.getWorkflowOutputDir();
+  }
+
+  async openWorkflowOutputDir(outputDir: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.api?.openWorkflowOutputDir) {
+      throw new Error('Workflow API not available');
+    }
+    return this.api.openWorkflowOutputDir(outputDir);
+  }
+
+  async listWorkflowTree(): Promise<{ success: boolean; root?: string; tree?: unknown[]; error?: string }> {
+    if (!this.api?.listWorkflowTree) {
+      throw new Error('Workflow API not available');
+    }
+    return this.api.listWorkflowTree();
+  }
+
+  async readWorkflowFile(filePath: string): Promise<{ success: boolean; content?: string; error?: string }> {
+    if (!this.api?.readWorkflowFile) {
+      throw new Error('Workflow API not available');
+    }
+    return this.api.readWorkflowFile(filePath);
+  }
+
+  async saveWorkflowFile(filePath: string, content: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.api?.saveWorkflowFile) {
+      throw new Error('Workflow API not available');
+    }
+    return this.api.saveWorkflowFile(filePath, content);
+  }
+
+  async generateWorkflow(input: { modelId: string; request: string; outputDir?: string }): Promise<{
+    success: boolean;
+    outputDir?: string;
+    critique?: string;
+    workflowXml?: string;
+    formsJson?: string;
+    plan?: {
+      forms: Array<{ id: string; components: any[] }>;
+      activities: Array<{ id: string; type: string; attributes: Record<string, unknown> }>;
+      flows: Array<{ source: string; target: string }>;
+    };
+    files?: { workflowPath: string; formsPath: string };
+    error?: string;
+  }> {
+    if (!this.api?.generateWorkflow) {
+      throw new Error('Workflow API not available');
+    }
+    return this.api.generateWorkflow(input);
   }
 
   async getAvailableTools(): Promise<RegisteredTool[]> {

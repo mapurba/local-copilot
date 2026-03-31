@@ -46,7 +46,8 @@ export interface CopilotAPI {
     files?: { workflowPath: string; formsPath: string };
     error?: string;
   }>;
-  convertPrd: (input: { content?: string; filePath?: string }) => Promise<any>;
+  convertPrd: (input: { content?: string; filePath?: string; modelId?: string; fileName?: string; requestId?: string }) => Promise<any>;
+  onConvertPrdProgress: (callback: (event: Electron.IpcRendererEvent, data: { requestId: string; stage: string; message: string; percent?: number; details?: Record<string, unknown>; timestamp?: string }) => void) => () => void;
   // Terminal/session/file APIs removed from the public preload surface.
   checkForUpdate: () => void;
 }
@@ -104,7 +105,11 @@ contextBridge.exposeInMainWorld('copilot', {
   saveWorkflowFile: (filePath: string, content: string) => ipcRenderer.invoke('workflow:saveFile', filePath, content),
   generateWorkflow: (input: { modelId: string; request: string; outputDir?: string }) =>
     ipcRenderer.invoke('workflow:generate', input),
-  convertPrd: (input: { content?: string; filePath?: string }) => ipcRenderer.invoke('workflow:convertPrd', input),
+  convertPrd: (input: { content?: string; filePath?: string; modelId?: string; fileName?: string; requestId?: string }) => ipcRenderer.invoke('workflow:convertPrd', input),
+  onConvertPrdProgress: (callback: (event: Electron.IpcRendererEvent, data: { requestId: string; stage: string; message: string; percent?: number; details?: Record<string, unknown>; timestamp?: string }) => void) => {
+    ipcRenderer.on('workflow:convertPrd:progress', callback);
+    return () => ipcRenderer.removeListener('workflow:convertPrd:progress', callback);
+  },
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) =>
   //   ipcRenderer.invoke('terminal:create', options),

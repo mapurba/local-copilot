@@ -17,6 +17,16 @@ import { Component, Input } from '@angular/core';
         <!-- TODO: Integrate Form.io renderer here -->
       </div>
     </ng-container>
+    <ng-container *ngIf="file && file.endsWith('.md')">
+      <div class="h-full w-full bg-white dark:bg-gray-900 border rounded p-3 overflow-auto">
+        <pre class="text-xs text-gray-900 dark:text-white whitespace-pre-wrap">{{ content }}</pre>
+      </div>
+    </ng-container>
+    <ng-container *ngIf="file && !file.endsWith('.xml') && !file.endsWith('.json') && !file.endsWith('.md')">
+      <div class="h-full w-full bg-white dark:bg-gray-900 border rounded p-3 overflow-auto">
+        <pre class="text-xs text-gray-900 dark:text-white whitespace-pre-wrap">{{ content }}</pre>
+      </div>
+    </ng-container>
     <ng-container *ngIf="!file">
       <div class="text-gray-400 p-4">Select a file to view</div>
     </ng-container>

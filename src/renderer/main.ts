@@ -4,5 +4,5 @@ import './styles.css';
 
 platformBrowserDynamic()
   .bootstrapModule(AppModule)
-  .catch((err) => console.error(err));
+  .catch((err: unknown) => console.error(err));
 

@@ -1,9 +1,31 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
 import { ChatBridgeService } from '../../services/chat-bridge.service';
 import { CopilotService } from '../../services/copilot.service';
+import { DebugLoggerService } from '../../services/debug-logger.service';
+
+type TodoStatus = 'not-started' | 'in-progress' | 'completed';
+
+interface PrdTodoItem {
+  id: number;
+  title: string;
+  details?: string;
+  status: TodoStatus;
+}
+
+interface ConvertResult {
+  summary?: string;
+  decodedXml?: string;
+  prdTodoList?: unknown;
+  activities?: Array<Record<string, unknown>>;
+  workflowXml?: string;
+  formsJson?: string;
+  forms?: unknown[];
+  links?: unknown[];
+  [key: string]: unknown;
+}
 
 @Component({
   selector: 'app-convert-prd',
@@ -22,8 +44,18 @@ import { CopilotService } from '../../services/copilot.service';
         </div>
       </div>
 
+      <div class="mx-2 mb-2 rounded border border-blue-200 bg-blue-50 px-2 py-2 text-xs text-blue-800 dark:border-blue-900/70 dark:bg-blue-950/40 dark:text-blue-200" *ngIf="isConverting || convertStatusMessage">
+        <div class="flex items-center justify-between gap-2">
+          <span>{{ convertStatusMessage || 'Ready to convert PRD' }}</span>
+          <span *ngIf="convertProgressPercent > 0">{{ convertProgressPercent }}%</span>
+        </div>
+        <div class="mt-1 h-1.5 w-full overflow-hidden rounded bg-blue-200 dark:bg-blue-900/70" *ngIf="isConverting || convertProgressPercent > 0">
+          <div class="h-full rounded bg-blue-600 transition-all duration-150" [style.width.%]="convertProgressPercent"></div>
+        </div>
+      </div>
+
       <div class="flex-1 min-h-0">
-        <div class="h-full editor-host">
+        <div class="h-full editor-host" [class.opacity-75]="isConverting">
           <ngx-monaco-editor class="editor-control" [options]="editorOptions" [(ngModel)]="decodedXml"></ngx-monaco-editor>
         </div>
       </div>
@@ -36,6 +68,7 @@ import { CopilotService } from '../../services/copilot.service';
       <div *ngIf="summaryText" class="mt-2 px-2 overflow-auto max-h-48">
         <pre class="text-xs whitespace-pre-wrap">{{summaryText}}</pre>
       </div>
+
     </div>
   `,
   styles: [
@@ -44,12 +77,18 @@ import { CopilotService } from '../../services/copilot.service';
      .editor-control { display:block; height:100%; width:100%; }`
   ]
 })
-export class ConvertPrdComponent implements OnInit {
+export class ConvertPrdComponent implements OnInit, OnDestroy {
   decodedXml = '';
   summaryText = '';
   private pendingQuestions: Array<{ activityId: string; kind: 'form-id' | 'addressee' | string; text: string }> = [];
   savedFolder: string | null = null;
   llmUsed = false;
+  isConverting = false;
+  convertProgressPercent = 0;
+  convertStatusMessage = '';
+  private activeConvertRequestId: string | null = null;
+  private activeConvertProgressUnsub: (() => void) | null = null;
+  private progressNotifiedStages = new Set<string>();
 
   editorOptions = {
     theme: 'vs-light',
@@ -59,13 +98,22 @@ export class ConvertPrdComponent implements OnInit {
     wordWrap: 'on' as const,
   };
 
-  constructor(private chatBridge: ChatBridgeService, private copilotService: CopilotService) {}
+  constructor(
+    private chatBridge: ChatBridgeService,
+    private copilotService: CopilotService,
+    private debugLogger: DebugLoggerService
+  ) {}
+
+  ngOnDestroy() {
+    this.stopConvertProgressTracking();
+  }
 
   ngOnInit() {
     // listen for user replies from chat and consume pending PRD questions
     this.chatBridge.userMessages$.subscribe(async (m) => {
       try {
-        const text = (m && (m as any).content) || '';
+        const messageContent = (m as { content?: unknown } | null)?.content;
+        const text = typeof messageContent === 'string' ? messageContent : '';
         if (!text) return;
         if (!this.pendingQuestions || this.pendingQuestions.length === 0) return;
         const pending = this.pendingQuestions.shift()!;
@@ -78,15 +126,20 @@ export class ConvertPrdComponent implements OnInit {
 
         // re-run conversion on modified decoded XML to refresh summary / workflow
         try {
-          const res = await this.copilotService.convertPrd({ content: this.decodedXml });
+          const requestId = this.createConvertRequestId('chat-followup');
+          this.startConvertProgressTracking(requestId, 'follow-up update');
+          const res = await this.copilotService.convertPrd({ content: this.decodedXml, requestId });
           if (res && res.success && res.result) {
-            const out = res.result.results ? res.result.results[0] : res.result;
+            const out = this.pickBestResult(res.result);
             this.summaryText = out.summary || (out.summary === undefined ? JSON.stringify(out, null, 2) : '');
             this.decodedXml = out.decodedXml || this.decodedXml;
+            this.chatBridge.sendPrdTodo(this.normalizeTodoList(out.prdTodoList));
             this.chatBridge.sendAssistantMessage(`Applied answer to '${pending.text}': ${text}`);
           }
         } catch (e) {
           this.chatBridge.sendAssistantMessage(`Failed to re-run conversion after answer: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          this.stopConvertProgressTracking();
         }
       } catch {
         // ignore
@@ -98,44 +151,56 @@ export class ConvertPrdComponent implements OnInit {
     const input = event.target as HTMLInputElement;
     if (!input.files || input.files.length === 0) return;
     const file = input.files[0];
+    const requestId = this.createConvertRequestId(file.name);
+    this.startConvertProgressTracking(requestId, file.name);
+    this.chatBridge.sendAssistantMessage(`Processing PRD: ${file.name}`);
     const reader = new FileReader();
     reader.onload = async () => {
       const content = typeof reader.result === 'string' ? reader.result : '';
+      const previewDecoded = this.extractPreviewDecodedXml(content);
+      if (previewDecoded) {
+        this.decodedXml = previewDecoded;
+        await this.yieldToUi();
+      }
+
       try {
         // prefer a configured model if available, otherwise omit modelId
         let modelId: string | undefined = undefined;
         try {
           const models = await this.copilotService.getModels();
-          if (Array.isArray(models) && models.length) modelId = models[0].id || models[0].label || models[0];
+          if (Array.isArray(models) && models.length) modelId = String(models[0].id || models[0].label || models[0]);
         } catch {
           modelId = undefined;
         }
 
-        const res = await this.copilotService.convertPrd({ content, modelId, fileName: file.name });
+        const res = await this.copilotService.convertPrd({ content, modelId, fileName: file.name, requestId });
         if (res && res.success && res.result) {
-          const out = res.result.results ? res.result.results[0] : res.result;
+          const out = this.pickBestResult(res.result);
           this.summaryText = out.summary || (out.summary === undefined ? JSON.stringify(out, null, 2) : '');
+          this.chatBridge.sendPrdTodo(this.normalizeTodoList(out.prdTodoList));
           this.savedFolder = res && res.saved && res.saved.outputDir ? res.saved.outputDir : this.savedFolder;
           // If we passed a modelId earlier, assume LLM summary was requested
           this.llmUsed = !!(modelId);
-          this.decodedXml = out.decodedXml || '';
+          this.decodedXml = out.decodedXml || this.decodedXml;
 
           // Quick heuristics: ask chat about missing forms/addressee on user activities
           const questions: string[] = [];
           if (Array.isArray(out.activities)) {
-            out.activities.forEach((a: any) => {
+            out.activities.forEach((a: Record<string, unknown>) => {
               try {
-                if (a.type === 'user-activity') {
-                  const o = a.obj || {};
+                const activityType = typeof a['type'] === 'string' ? a['type'] : '';
+                if (activityType === 'user-activity') {
+                  const o = (a['obj'] && typeof a['obj'] === 'object') ? (a['obj'] as Record<string, unknown>) : {};
+                  const activityId = typeof a['id'] === 'string' ? a['id'] : '<unknown>';
                   if (!o['@_form-id'] && !o['form-id']) {
-                    const q = `User activity '${a.id}' is missing a form-id. Which form should be used?`;
+                    const q = `User activity '${activityId}' is missing a form-id. Which form should be used?`;
                     questions.push(q);
-                    this.pendingQuestions.push({ activityId: String(a.id), kind: 'form-id', text: q });
+                    this.pendingQuestions.push({ activityId, kind: 'form-id', text: q });
                   }
                   if (!o['@_addressee'] && !o['addressee']) {
-                    const q2 = `User activity '${a.id}' has no addressee configured. Who should be the approver?`;
+                    const q2 = `User activity '${activityId}' has no addressee configured. Who should be the approver?`;
                     questions.push(q2);
-                    this.pendingQuestions.push({ activityId: String(a.id), kind: 'addressee', text: q2 });
+                    this.pendingQuestions.push({ activityId, kind: 'addressee', text: q2 });
                   }
                 }
               } catch {
@@ -150,17 +215,174 @@ export class ConvertPrdComponent implements OnInit {
             const parts: string[] = [];
             if (res.saved.decoded && res.saved.decoded.length) parts.push(`Decoded: ${res.saved.decoded.join(', ')}`);
             if (res.saved.summaries && res.saved.summaries.length) parts.push(`Summaries: ${res.saved.summaries.join(', ')}`);
+            if (res.saved.todos && res.saved.todos.length) parts.push(`Todo: ${res.saved.todos.join(', ')}`);
+            if (res.saved.forms && res.saved.forms.length) parts.push(`Forms: ${res.saved.forms.join(', ')}`);
             this.chatBridge.sendAssistantMessage(`Artifacts saved to ${res.saved.outputDir}\n${parts.join('\n')}`);
+            this.chatBridge.sendPrdArtifactsSaved({
+              outputDir: res.saved.outputDir,
+              files: [
+                ...(Array.isArray(res.saved.workflows) ? res.saved.workflows : []),
+                ...(Array.isArray(res.saved.forms) ? res.saved.forms : []),
+                ...(Array.isArray(res.saved.summaries) ? res.saved.summaries : []),
+              ],
+            });
           }
         } else {
           this.summaryText = `Conversion failed: ${res && res.error ? res.error : 'Unknown'}`;
+          this.chatBridge.sendAssistantMessage(this.summaryText);
         }
       } catch (e) {
         this.summaryText = `Conversion error: ${e instanceof Error ? e.message : String(e)}`;
+        this.chatBridge.sendPrdTodo([]);
+        this.chatBridge.sendAssistantMessage(this.summaryText);
+      } finally {
+        this.stopConvertProgressTracking();
       }
     };
     reader.readAsText(file);
     input.value = '';
+  }
+
+  private createConvertRequestId(source: string): string {
+    const safe = (source || 'prd').replace(/[^a-zA-Z0-9-_\.]/g, '-').slice(0, 40) || 'prd';
+    return `convert-${safe}-${Date.now()}`;
+  }
+
+  private startConvertProgressTracking(requestId: string, source: string): void {
+    this.stopConvertProgressTracking();
+
+    this.isConverting = true;
+    this.convertProgressPercent = 1;
+    this.convertStatusMessage = `Starting conversion for ${source}`;
+    this.activeConvertRequestId = requestId;
+    this.progressNotifiedStages.clear();
+    this.debugLogger.addLog('tool', 'convert_prd:start', { requestId, source });
+    this.publishLiveTodoForStage('started');
+
+    this.activeConvertProgressUnsub = this.copilotService.onConvertPrdProgress((evt) => {
+      if (!evt || evt.requestId !== this.activeConvertRequestId) {
+        return;
+      }
+
+      if (typeof evt.percent === 'number' && Number.isFinite(evt.percent)) {
+        this.convertProgressPercent = Math.max(0, Math.min(100, Math.round(evt.percent)));
+      }
+      this.convertStatusMessage = evt.message || evt.stage || 'Converting PRD';
+
+      this.debugLogger.addLog('tool', `convert_prd:${evt.stage}`, {
+        requestId: evt.requestId,
+        message: evt.message,
+        percent: evt.percent,
+        details: evt.details,
+      });
+
+      this.publishLiveTodoForStage(evt.stage);
+
+      const stage = String(evt.stage || '').toLowerCase();
+      const shouldNotifyChat = ['started', 'parsing', 'llm-summary', 'saving', 'completed', 'failed'].includes(stage);
+      if (shouldNotifyChat && !this.progressNotifiedStages.has(stage)) {
+        this.progressNotifiedStages.add(stage);
+        this.chatBridge.sendAssistantMessage(`PRD convert: ${evt.message}`);
+      }
+    });
+  }
+
+  private stopConvertProgressTracking(): void {
+    if (this.activeConvertProgressUnsub) {
+      this.activeConvertProgressUnsub();
+      this.activeConvertProgressUnsub = null;
+    }
+
+    if (this.isConverting && this.convertProgressPercent < 100) {
+      this.convertProgressPercent = 100;
+    }
+    this.isConverting = false;
+    this.activeConvertRequestId = null;
+  }
+
+  private publishLiveTodoForStage(rawStage: string): void {
+    const stage = String(rawStage || '').toLowerCase();
+    const step = this.resolveLiveTodoStep(stage);
+    const items: PrdTodoItem[] = [
+      {
+        id: 1,
+        title: 'Import PRD file',
+        details: 'PRD upload has started.',
+        status: step > 1 ? 'completed' : step === 1 ? 'in-progress' : 'not-started',
+      },
+      {
+        id: 2,
+        title: 'Decode srvprvProcessXML payload',
+        details: 'Extracting ds-attribute srvprvProcessXML from CDATA and decoding base64.',
+        status: step > 2 ? 'completed' : step === 2 ? 'in-progress' : 'not-started',
+      },
+      {
+        id: 3,
+        title: 'Separate process artifacts',
+        details: 'Separating forms, data item mappings, and process workflow XML.',
+        status: step > 3 ? 'completed' : step === 3 ? 'in-progress' : 'not-started',
+      },
+      {
+        id: 4,
+        title: 'Analyze relationships',
+        details: 'Analyzing activity, form usage, and data mappings in process XML.',
+        status: step > 4 ? 'completed' : step === 4 ? 'in-progress' : 'not-started',
+      },
+      {
+        id: 5,
+        title: 'Create PRD todo list',
+        details: 'Building migration checklist from analysis findings.',
+        status: step > 5 ? 'completed' : step === 5 ? 'in-progress' : 'not-started',
+      },
+      {
+        id: 6,
+        title: 'Start implementation',
+        details: 'Generating workflow XML and form artifacts.',
+        status: step > 6 ? 'completed' : step === 6 ? 'in-progress' : 'not-started',
+      },
+      {
+        id: 7,
+        title: 'Store workflow and split forms',
+        details: 'Saving workflow XML and individual form files to output folder.',
+        status: step > 7 ? 'completed' : step === 7 ? 'in-progress' : 'not-started',
+      },
+    ];
+
+    if (stage === 'failed') {
+      const active = items.find((item) => item.status === 'in-progress');
+      if (active) {
+        active.details = `${active.details} Conversion failed before completion.`;
+      }
+    }
+
+    this.chatBridge.sendPrdTodo(items);
+  }
+
+  private resolveLiveTodoStep(stage: string): number {
+    switch (stage) {
+      case 'started':
+      case 'reading-file':
+        return 1;
+      case 'parsing':
+        return 2;
+      case 'parsed':
+        return 3;
+      case 'llm-summary':
+      case 'llm-summary-item':
+      case 'llm-summary-complete':
+        return 4;
+      case 'saving':
+      case 'output-ready':
+        return 5;
+      case 'saving-item':
+        return 6;
+      case 'completed':
+        return 8;
+      case 'failed':
+        return 6;
+      default:
+        return 1;
+    }
   }
 
   async saveArtifacts() {
@@ -177,11 +399,12 @@ export class ConvertPrdComponent implements OnInit {
       if (typeof choose === 'string') {
         outputDir = choose;
       } else if (typeof choose === 'object') {
-        if ((choose as any).cancelled) {
+        const choice = choose as { cancelled?: boolean; path?: string };
+        if (choice.cancelled) {
           this.chatBridge.sendAssistantMessage('Save cancelled.');
           return;
         }
-        outputDir = (choose as any).path || '';
+        outputDir = choice.path || '';
       }
       if (!outputDir) { this.chatBridge.sendAssistantMessage('No output dir selected'); return; }
 
@@ -208,10 +431,86 @@ export class ConvertPrdComponent implements OnInit {
     }
   }
 
+  private pickBestResult(result: unknown): ConvertResult {
+    if (!result) return {};
+    const maybeResults = (result as { results?: unknown }).results;
+    const rawCandidates = Array.isArray(maybeResults) ? maybeResults : [result];
+    const candidates = rawCandidates.filter(
+      (candidate): candidate is ConvertResult => !!candidate && typeof candidate === 'object'
+    );
+    if (!candidates.length) return {};
+
+    let best = candidates[0];
+    let bestScore = this.scoreResult(candidates[0]);
+    for (let i = 1; i < candidates.length; i++) {
+      const score = this.scoreResult(candidates[i]);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidates[i];
+      }
+    }
+    return best || {};
+  }
+
+  private scoreResult(candidate: ConvertResult): number {
+    const activities = Array.isArray(candidate.activities) ? candidate.activities.length : 0;
+    const links = Array.isArray(candidate.links) ? candidate.links.length : 0;
+    const forms = Array.isArray(candidate.forms) ? candidate.forms.length : 0;
+    const hasWorkflow = typeof candidate.workflowXml === 'string' && candidate.workflowXml.length > 0;
+    const hasFormsJson = typeof candidate.formsJson === 'string' && candidate.formsJson.length > 0;
+    const hasDecoded = typeof candidate.decodedXml === 'string' && candidate.decodedXml.length > 0;
+
+    return (hasWorkflow ? 120 : 0)
+      + (hasFormsJson ? 80 : 0)
+      + (hasDecoded ? 20 : 0)
+      + (activities * 2)
+      + links
+      + (forms * 4);
+  }
+
+  private extractPreviewDecodedXml(prdXml: string): string {
+    if (!prdXml) return '';
+    const process = this.decodeAttr(prdXml, 'srvprvProcessXML');
+    if (process) return process;
+
+    const xmlData = this.decodeAttr(prdXml, 'XMLData');
+    if (xmlData) return xmlData;
+
+    const request = this.decodeAttr(prdXml, 'srvprvRequestXML');
+    return request;
+  }
+
+  private decodeAttr(xmlText: string, attrName: string): string {
+    const escaped = attrName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`ds-attr-name\\s*=\\s*["']${escaped}["'][\\s\\S]*?<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>`, 'i');
+    const match = pattern.exec(xmlText);
+    if (!match || !match[1]) return '';
+    const raw = match[1].trim();
+    if (!raw) return '';
+    const cleaned = raw.replace(/\s+/g, '');
+
+    try {
+      const binary = atob(cleaned);
+      const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+      if (typeof TextDecoder !== 'undefined') {
+        return new TextDecoder('utf-8').decode(bytes);
+      }
+      return binary;
+    } catch {
+      return raw;
+    }
+  }
+
+  private async yieldToUi(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(() => resolve(), 0);
+    });
+  }
+
   private insertFormIdForActivity(xml: string, activityId: string, formId: string): string {
     if (!xml || !activityId) return xml;
     try {
-      const re = new RegExp(`(<[^>]*\\bactivity-id=(?:\"|\')${this.escapeRegExp(activityId)}(?:\"|\')[^>]*)(>)`, 'g');
+      const re = new RegExp(`(<[^>]*\\bactivity-id=(?:"|')${this.escapeRegExp(activityId)}(?:"|')[^>]*)(>)`, 'g');
       return xml.replace(re, (match, group1, close) => {
         if (/\bform-id=/.test(group1)) return match; // already has form-id
         return `${group1} form-id="${this.escapeXmlAttr(String(formId))}"${close}`;
@@ -224,7 +523,7 @@ export class ConvertPrdComponent implements OnInit {
   private insertAddresseeForActivity(xml: string, activityId: string, addressee: string): string {
     if (!xml || !activityId) return xml;
     try {
-      const re = new RegExp(`(<[^>]*\\bactivity-id=(?:\"|\')${this.escapeRegExp(activityId)}(?:\"|\')[^>]*)(>)`, 'g');
+      const re = new RegExp(`(<[^>]*\\bactivity-id=(?:"|')${this.escapeRegExp(activityId)}(?:"|')[^>]*)(>)`, 'g');
       return xml.replace(re, (match, group1, close) => {
         if (/\baddressee=/.test(group1)) return match; // already has addressee
         return `${group1} addressee="${this.escapeXmlAttr(String(addressee))}"${close}`;
@@ -240,5 +539,34 @@ export class ConvertPrdComponent implements OnInit {
 
   private escapeXmlAttr(s: string) {
     return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  private normalizeTodoList(todoList: unknown): PrdTodoItem[] {
+    if (!Array.isArray(todoList) || todoList.length === 0) {
+      return [];
+    }
+
+    const normalized = todoList.map((t, idx) => {
+      const item = t as { id?: unknown; title?: unknown; details?: unknown; status?: unknown };
+      const rawStatus = String(item.status || 'not-started');
+      const status: TodoStatus =
+        rawStatus === 'completed' || rawStatus === 'in-progress' ? rawStatus : 'not-started';
+
+      return {
+        id: Number.isFinite(Number(item.id)) ? Number(item.id) : idx + 1,
+        title: item.title ? String(item.title) : `Task ${idx + 1}`,
+        details: item.details ? String(item.details) : '',
+        status,
+      };
+    });
+
+    // When there are no outstanding conversion questions, promote remaining in-progress items.
+    if (this.pendingQuestions.length === 0) {
+      return normalized.map((todo) =>
+        todo.status === 'in-progress' ? { ...todo, status: 'completed' as TodoStatus } : todo
+      );
+    }
+
+    return normalized;
   }
 }
