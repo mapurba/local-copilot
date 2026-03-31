@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu } from 'electron';
 import { checkForUpdates } from './autoUpdater';
 import path from 'path';
-import { pathToFileURL } from 'url';
+import fs from 'fs';
 import { registerIpcHandlers } from './ipcHandlers';
 import { lspClient } from './lspClient';
 // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
@@ -74,7 +74,32 @@ function createWindow() {
 
   const isDevMode = !app.isPackaged;
   const startUrl = process.env.ELECTRON_START_URL;
-  const distIndexPath = path.join(__dirname, '../dist/renderer-angular/browser/index.html');
+  const resolveLocalIndexPath = () => {
+    const appPath = app.getAppPath();
+    const candidates = [
+      // Preferred: renderer output colocated under dist-electron.
+      path.join(__dirname, '../renderer-angular/browser/index.html'),
+      // Compatibility fallback during transition.
+      path.join(__dirname, '../../dist/renderer-angular/browser/index.html'),
+      // Packaged app fallbacks.
+      path.join(appPath, 'dist-electron/renderer-angular/browser/index.html'),
+      path.join(appPath, 'dist/renderer-angular/browser/index.html'),
+      path.join(appPath, 'dist/renderer-angular/index.html'),
+      path.join(appPath, 'dist/index.html'),
+    ];
+
+    const existing = candidates.find((candidate) => {
+      try {
+        return fs.existsSync(candidate);
+      } catch {
+        return false;
+      }
+    });
+
+    return existing || candidates[0];
+  };
+
+  const distIndexPath = resolveLocalIndexPath();
 
   // Handle SPA routing: redirect non-HTML routes back to index
   if (!isDevMode) {
@@ -125,43 +150,15 @@ function createWindow() {
     });
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    // Production: try multiple paths with async fallback
-    const appPath = app.getAppPath();
-    console.log('[Main] App path:', appPath);
-
-    const possiblePaths = [
-      path.join(appPath, 'dist/renderer-angular/browser/index.html'),
-      path.join(appPath, 'dist/renderer-angular/index.html'),
-      path.join(appPath, 'dist/index.html'),
-    ];
-
-    const attemptLoad = async (paths: string[], index: number = 0): Promise<boolean> => {
-      if (index >= paths.length) {
-        return false;
-      }
-
-      const indexPath = paths[index];
-      const fileUrl = pathToFileURL(indexPath).toString();
-      console.log(`[Main] Attempt ${index + 1}/${paths.length}: ${fileUrl}`);
-
-      try {
-        await mainWindow!.loadURL(fileUrl);
-        console.log('[Main] Successfully loaded');
-        return true;
-      } catch (err: any) {
-        console.error(`[Main] Attempt ${index + 1} failed:`, err?.message);
-        return attemptLoad(paths, index + 1);
-      }
-    };
-
-    attemptLoad(possiblePaths).then((success) => {
-      if (!success) {
-        const errorMsg = 'Unable to load app. Check console for details.';
-        console.error('[Main]', errorMsg);
-        mainWindow?.loadURL(
-          'data:text/html,<h1>Error</h1><p>' + errorMsg + '</p><p>Reload (Ctrl+R) to retry</p>'
-        );
-      }
+    // Production: always load local renderer bundle from dist-electron first.
+    console.log('[Main] App path:', app.getAppPath());
+    console.log('[Main] Loading renderer index:', distIndexPath);
+    mainWindow.loadFile(distIndexPath).catch((err) => {
+      const errorMsg = `Unable to load app bundle from ${distIndexPath}`;
+      console.error('[Main]', errorMsg, err instanceof Error ? err.message : String(err));
+      mainWindow?.loadURL(
+        'data:text/html,<h1>Error</h1><p>' + errorMsg + '</p><p>Reload (Ctrl+R) to retry</p>'
+      );
     });
   }
 

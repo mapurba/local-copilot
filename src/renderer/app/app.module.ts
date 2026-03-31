@@ -33,7 +33,7 @@ import { DebugPanelComponent } from './components/debug-panel/debug-panel.compon
     FormsModule,
     RouterModule.forRoot([
       { path: 'convert', loadComponent: () => import('./components/convert-prd/convert-prd.component').then(m => m.ConvertPrdComponent) },
-    ]),
+    ], { useHash: true }),
     MonacoEditorModule.forRoot({
       baseUrl: 'assets/monaco/min/vs',
     }),

@@ -41,7 +41,7 @@
           "builder": "@angular/build:application",
           "options": {
             "browser": "src/renderer/main.ts",
-            "outputPath": "dist/renderer-angular",
+            "outputPath": "dist-electron/renderer-angular",
             "index": "src/renderer/index.html",
             "polyfills": [
               "zone.js"
@@ -60,6 +60,7 @@
           },
           "configurations": {
             "production": {
+              "baseHref": "./",
               "budgets": [
                 {
                   "type": "initial",
