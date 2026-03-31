@@ -1,7 +1,9 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { CopilotService } from '../../services/copilot.service';
-import { ChatBridgeService } from '../../services/chat-bridge.service';
-import { FileNode } from '../file-tree/file-tree.component';
+import { DebugLoggerService } from '../../services/debug-logger.service';
+import { DebugPanelComponent } from '../debug-panel/debug-panel.component';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -11,11 +13,12 @@ interface Message {
 
 @Component({
   selector: 'app-chat',
-  standalone: false,
+  standalone: true,
+  imports: [CommonModule, FormsModule, DebugPanelComponent],
   templateUrl: './chat.component.html',
   styleUrls: ['./chat.component.css']
 })
-export class ChatComponent implements OnInit {
+export class ChatComponent implements OnInit, OnDestroy {
   messages: Message[] = [];
   inputText: string = '';
   isLoading: boolean = false;
@@ -41,29 +44,53 @@ export class ChatComponent implements OnInit {
   formioRenderOptions = {};
 
 //   constructor(private copilotService: CopilotService) { }
-  constructor(private copilotService: CopilotService, private chatBridge: ChatBridgeService) { }
+  // constructor(private copilotService: CopilotService, private chatBridge: ChatBridgeService) { }
+
+  availableTools: Array<{ name: string; category: string; description: string }> = [];
+  showSettings = false;
+  toolResult: any = null;
+  selectedTool: string | null = null;
+  debugPanelPosition: 'bottom' | 'right' = 'bottom';
+  toolsInUse: Map<string, any> = new Map();
+  private toolPromptSuffix = '';
+  private readonly teardownCallbacks: Array<() => void> = [];
+
+  constructor(private copilotService: CopilotService, private debugLogger: DebugLoggerService,private chatBridge: ChatBridgeService) {}
 
   async ngOnInit() {
+    this.debugLogger.addLog('info', 'Chat component initialized');
     await this.loadModels();
-    if (this.copilotService.isAvailable()) {
-      console.log('[Chat] Loading output directory from storage...');
-      const dir = await this.copilotService.getWorkflowOutputDir();
-      console.log('[Chat] Got directory from storage:', dir);
-      this.outputDir = this.extractDirPath(dir);
-      console.log('[Chat] Final outputDir:', this.outputDir);
-      await this.refreshOutputTree();
+    await this.loadTools();
+    this.subscribeToToolEvents();
+  }
+
+  ngOnDestroy() {
+    for (const teardown of this.teardownCallbacks) {
+      teardown();
     }
-    // Subscribe to assistant messages from other UI components
-    this.chatBridge.assistantMessages$.subscribe((m) => {
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: m.content,
-        timestamp: new Date(),
-      };
-      this.messages.push(assistantMessage);
-      // ensure chat tab is active so user sees it
-      this.switchToChatTab();
+    this.teardownCallbacks.length = 0;
+  }
+
+  subscribeToToolEvents() {
+    // Listen for tool calls made by the LLM
+    const toolCalledOff = this.copilotService.onToolCalled((toolName, result, args) => {
+      this.toolsInUse.set(toolName, result);
+      this.debugLogger.logTool(toolName, args ?? [], result);
+      console.log('[Chat] Tool called by LLM:', toolName, result);
     });
+
+    // Listen for tool errors
+    const toolErrorOff = this.copilotService.onToolError((toolName, error) => {
+      this.debugLogger.logError(`Tool error in ${toolName}`, error);
+      this.messages.push({
+        role: 'assistant',
+        content: `⚠️ Tool error: ${toolName}\nError: ${error}`,
+        timestamp: new Date()
+      });
+      console.log('[Chat] Tool error:', toolName, error);
+    });
+
+    this.teardownCallbacks.push(toolCalledOff, toolErrorOff);
   }
 
   onKeyDown(event: KeyboardEvent) {
@@ -73,43 +100,90 @@ export class ChatComponent implements OnInit {
     }
   }
 
-  private extractDirPath(dir: unknown): string {
-    console.log('[extractDirPath] Input:', dir);
-    if (typeof dir === 'string') {
-      console.log('[extractDirPath] Is string:', dir);
-      return dir;
-    }
-    if (dir && typeof dir === 'object') {
-      if ('path' in dir && typeof (dir as { path?: unknown }).path === 'string') {
-        const result = (dir as { path: string }).path;
-        console.log('[extractDirPath] Found path property:', result);
-        return result;
-      }
-      if ('directory' in dir && typeof (dir as { directory?: unknown }).directory === 'string') {
-        const result = (dir as { directory: string }).directory;
-        console.log('[extractDirPath] Found directory property:', result);
-        return result;
-      }
-    }
-    console.log('[extractDirPath] No path found, returning empty string');
-    return '';
-  }
-
   async loadModels() {
     try {
+      this.debugLogger.startTimer('load-models');
       const models = await this.copilotService.getModels();
-      console.log('Available models:', models);
       this.models = Array.isArray(models)
-        ? models.filter(m => m && (m.id || m.label)).map(m => ({
-            id: String(m.id || m.label || 'default'),
-            label: String(m.label || m.id || 'Default Model'),
+        ? models.filter((model) => model && (model.id || model.label)).map((model) => ({
+            id: String(model.id || model.label || 'default'),
+            label: String(model.label || model.id || 'Default Model'),
           }))
         : [];
-      if (this.models.length > 0 && !this.selectedModel) {
+
+      if (this.models.length > 0 && !this.models.some((model) => model.id === this.selectedModel)) {
         this.selectedModel = this.models[0].id;
       }
+      this.debugLogger.endTimer('load-models', 'info', 'Models loaded', { count: this.models.length });
     } catch (error) {
-      console.error('Failed to load models:', error);
+      this.debugLogger.logError('Failed to load models', error);
+    }
+  }
+
+  async loadTools() {
+    try {
+      this.debugLogger.startTimer('load-tools');
+      this.availableTools = await this.copilotService.getAvailableTools();
+      this.toolPromptSuffix = this.availableTools.length > 0
+        ? `\n\nAvailable tools you can use:\n${this.availableTools
+            .map((tool) => `- ${tool.name}: ${tool.description}`)
+            .join('\n')}`
+        : '';
+      this.debugLogger.endTimer('load-tools', 'info', 'Tools loaded', { count: this.availableTools.length, tools: this.availableTools.map(t => t.name) });
+    } catch (error) {
+      this.debugLogger.logError('Failed to load tools', error);
+    }
+  }
+
+  openSettings() {
+    this.showSettings = true;
+  }
+
+  closeSettings(event?: Event) {
+    if (event) {
+      event.preventDefault();
+    }
+    this.showSettings = false;
+  }
+
+  async callTool(toolName: string, args?: any) {
+    try {
+      this.isLoading = true;
+      this.selectedTool = toolName;
+      this.toolResult = null;
+
+      this.debugLogger.startTimer(`tool-${toolName}`);
+      this.debugLogger.addLog('tool', `Calling tool: ${toolName}`, { args });
+
+      // Add message to chat
+      this.messages.push({
+        role: 'user',
+        content: `Tool: ${toolName}${args ? ' ' + JSON.stringify(args) : ''}`,
+        timestamp: new Date()
+      });
+
+      // Call the tool - tools are already bound via service
+      const result = await this.copilotService.invokeTool(toolName, args);
+
+      this.debugLogger.endTimer(`tool-${toolName}`, 'tool', `Tool result: ${toolName}`, result);
+      this.toolResult = result;
+      this.messages.push({
+        role: 'assistant',
+        content: `Tool result: ${JSON.stringify(result, null, 2)}`,
+        timestamp: new Date()
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to call tool';
+      this.debugLogger.logError(`Tool failed: ${toolName}`, error);
+      this.toolResult = { error: message };
+      this.messages.push({
+        role: 'assistant',
+        content: `Tool error: ${message}`,
+        timestamp: new Date()
+      });
+    } finally {
+      this.isLoading = false;
+      this.selectedTool = null;
     }
   }
 
@@ -119,96 +193,159 @@ export class ChatComponent implements OnInit {
       return;
     }
 
-    const userMessage: Message = {
+    // Log the user message once
+    this.debugLogger.addLog('info', `User: ${input.substring(0, 60)}${input.length > 60 ? '...' : ''}`);
+    this.messages.push({
       role: 'user',
-      content: this.inputText,
+      content: input,
       timestamp: new Date()
-    };
-    this.messages.push(userMessage);
-    // Publish user message so other components (Convert screen, etc.) can consume replies
-    try { this.chatBridge.sendUserMessage(userMessage.content); } catch { /* ignore */ }
+    });
     this.inputText = '';
-
-    // Check if this is a workflow generation request
-    const isWorkflowRequest = this.isWorkflowGenerationRequest(input);
-
     this.isLoading = true;
-    try {
-      if (!isWorkflowRequest) {
-        const llmReply = await this.copilotService.askLlm(this.selectedModel, input);
-        const assistantMessage: Message = {
-          role: 'assistant',
-          content: llmReply || 'No response returned by the model.',
-          timestamp: new Date()
-        };
-        this.messages.push(assistantMessage);
-        return;
-      }
 
-      const result = await this.copilotService.generateWorkflow({
-        modelId: this.selectedModel,
-        request: input,
-        outputDir: this.outputDir || undefined
+    try {
+      // Build enhanced prompt with tool info
+      const enhancedPrompt = input + this.toolPromptSuffix;
+      let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
+
+      // Start fresh thinking chain for this request
+      this.debugLogger.startThinkingChain();
+
+      // Log initial analysis
+      this.debugLogger.addThinkingStep(
+        `Processing: "${input.substring(0, 80)}..."`,
+        'analysis',
+        { inputLength: input.length, toolsAvailable: this.availableTools.length }
+      );
+
+      // Log that we're about to invoke the LLM
+      this.debugLogger.startTimer(`llm-request-${this.selectedModel}`);
+
+      const llmReply = await this.copilotService.askLlm(
+        this.selectedModel,
+        enhancedPrompt,
+        (chunk, type) => {
+          if (!chunk.trim()) {
+            return;
+          }
+
+          if (type === 'thinking') {
+            // Try to parse structured JSON from LangGraph node events
+            let thinkingContent = chunk.trim();
+            let category: 'analysis' | 'planning' | 'decision' | 'reasoning' | 'synthesis' = 'reasoning';
+            let metadata: Record<string, any> = { source: 'llm_stream' };
+
+            try {
+              const parsed = JSON.parse(thinkingContent);
+              if (parsed.node === 'agent') {
+                thinkingContent = `LangGraph agent node (${parsed.messageCount} messages in state)`;
+                category = 'analysis';
+                metadata = { node: 'agent', messageCount: parsed.messageCount };
+              } else if (parsed.node === 'tools') {
+                thinkingContent = `LangGraph tools node — invoking ${parsed.toolCount} tool(s): ${(parsed.tools || []).join(', ')}`;
+                category = 'decision';
+                metadata = { node: 'tools', toolCount: parsed.toolCount, tools: parsed.tools };
+              } else {
+                metadata = { ...metadata, ...parsed };
+              }
+            } catch {
+              // Plain text thinking chunk — categorize by content
+              const lower = thinkingContent.toLowerCase();
+              if (lower.includes('analyze') || lower.includes('understand')) {
+                category = 'analysis';
+              } else if (lower.includes('plan') || lower.includes('approach') || lower.includes('need to')) {
+                category = 'planning';
+              } else if (lower.includes('decid') || lower.includes('choose') || lower.includes('select')) {
+                category = 'decision';
+              } else if (lower.includes('conclude') || lower.includes('therefore') || lower.includes('result') || lower.includes('final')) {
+                category = 'synthesis';
+              }
+            }
+
+            this.debugLogger.addThinkingStep(
+              thinkingContent,
+              category,
+              metadata,
+              Math.ceil(thinkingContent.split(' ').length)
+            );
+            return;
+          }
+
+          if (type === 'tool') {
+            try {
+              const parsed = JSON.parse(chunk);
+              if (parsed.phase === 'start') {
+                this.debugLogger.addThinkingStep(
+                  `Calling tool: ${parsed.name}`,
+                  'decision',
+                  { toolName: parsed.name, arguments: parsed.args, phase: 'invoking' }
+                );
+              } else if (parsed.phase === 'result') {
+                this.debugLogger.addThinkingStep(
+                  `Tool result: ${parsed.name}`,
+                  'synthesis',
+                  { toolName: parsed.name, arguments: parsed.args, result: parsed.result, phase: 'completed' }
+                );
+              }
+            } catch {
+              // Fallback for plain text tool chunk
+              this.debugLogger.addThinkingStep(
+                `Tool: ${chunk}`,
+                'decision',
+                { toolCall: true, raw: chunk }
+              );
+            }
+            return;
+          }
+
+          if (type === 'usage') {
+            try {
+              tokenUsage = JSON.parse(chunk) as { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+            } catch {
+              // Ignore malformed usage
+            }
+          }
+        }
+      );
+
+      // Log completion with stats (not a duplicate thanks to deduplication)
+      this.debugLogger.endTimer(`llm-request-${this.selectedModel}`, 'api', 'LLM response received', {
+        responseLength: llmReply?.length || 0,
+        model: this.selectedModel,
+        tokens: tokenUsage?.totalTokens
       });
 
-      if (result.success && result.files) {
-        // Generate workflow summary from plan
-        const summary = result.plan ? this.generateWorkflowSummary(result.plan) : '';
-        
-        let messageContent = `Workflow generation complete!\n\n`;
-        
-        if (summary) {
-          messageContent += `${summary}\n\n`;
-        }
-        
-        messageContent += `**Artifacts generated:**\n- **workflow.xml**: ${result.files.workflowPath}\n- **forms.json**: ${result.files.formsPath}`;
-        
-        const assistantMessage: Message = {
-          role: 'assistant',
-          content: messageContent,
-          timestamp: new Date()
-        };
-        this.messages.push(assistantMessage);
+      // Add synthesis thinking step
+      this.debugLogger.addThinkingStep(
+        `Generated response (${llmReply?.length || 0} chars)`,
+        'synthesis',
+        { model: this.selectedModel }
+      );
 
-        // Refresh output tree and open files
-        await this.refreshOutputTree();
-        if (result.files.workflowPath) {
-          await this.openFile(result.files.workflowPath);
-        }
-        if (result.files.formsPath) {
-          await this.openFile(result.files.formsPath);
-        }
-
-        if (result.critique) {
-          const critiqueMessage: Message = {
-            role: 'assistant',
-            content: `**Critique**: ${result.critique}`,
-            timestamp: new Date()
-          };
-          this.messages.push(critiqueMessage);
-        }
-      } else {
-        const errorMessage: Message = {
-          role: 'assistant',
-          content: `Error: Workflow generation failed. Please try again.`,
-          timestamp: new Date()
-        };
-        this.messages.push(errorMessage);
+      // Log reasoning stats once
+      const stats = this.debugLogger.getThinkingStats();
+      if (stats.stepCount > 0) {
+        this.debugLogger.addLog('info', `Reasoning: ${stats.stepCount} steps, ${stats.totalTokens} tokens`, stats.byCategory);
       }
+
+      this.messages.push({
+        role: 'assistant',
+        content: llmReply || 'No response returned by the model.',
+        timestamp: new Date()
+      });
     } catch (error: unknown) {
-      let message = 'Unknown error occurred';
-      if (error && typeof error === 'object' && 'message' in error) {
-        const maybeMessage = (error as { message?: unknown }).message;
-        if (typeof maybeMessage === 'string') {
-          message = maybeMessage;
-        }
-      }
-      const errorMessage: Message = {
+      const message = error instanceof Error ? error.message : 'Unknown error occurred';
+      this.debugLogger.logError('LLM request failed', error);
+      this.debugLogger.addThinkingStep(
+        `Failed: ${message}`,
+        'synthesis',
+        { error: true }
+      );
+      this.messages.push({
         role: 'assistant',
         content: `Error: ${message}`,
         timestamp: new Date()
-      };
-      this.messages.push(errorMessage);
+      });
     } finally {
       this.isLoading = false;
     }

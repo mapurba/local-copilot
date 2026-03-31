@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import { lspClient } from './lspClient';
 import { tokenManager } from './tokenManager';
 import { getModels, streamChatCompletion, ChatMessage } from './copilotChatApi';
@@ -25,6 +25,8 @@ import { generateJson } from './workflow/llm';
 //   setTerminalDirectory,
 //   writeRemoteFile,
 // } from './sftpManager';
+import { toolRegistry, initializeDefaultTools } from './tools';
+import { workspaceContext } from './workspaceContext';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -44,81 +46,42 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-type FileNode = {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-  children?: FileNode[];
-};
-
-function slugify(input: string): string {
-  const normalized = input
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-_]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return normalized.slice(0, 60) || 'workflow';
-}
-
-function isWithin(baseDir: string, targetPath: string): boolean {
-  const resolvedBase = path.resolve(baseDir) + path.sep;
-  const resolvedTarget = path.resolve(targetPath);
-  return resolvedTarget.startsWith(resolvedBase);
-}
-
-async function buildTree(dir: string): Promise<FileNode[]> {
-  try {
-    console.log('[buildTree] Reading directory:', dir);
-    const stat = await fs.stat(dir);
-    if (!stat.isDirectory()) {
-      console.error('[buildTree] Path is not a directory:', dir);
-      return [];
-    }
-    
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    console.log('[buildTree] Found', entries.length, 'entries in', dir);
-    
-    const nodes: FileNode[] = [];
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        nodes.push({
-          name: entry.name,
-          path: fullPath,
-          isDirectory: true,
-          children: await buildTree(fullPath),
-        });
-      } else {
-        nodes.push({
-          name: entry.name,
-          path: fullPath,
-          isDirectory: false,
-        });
-      }
-    }
-    const sorted = nodes.sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    console.log('[buildTree] Sorted nodes:', sorted.length);
-    return sorted;
-  } catch (err) {
-    console.error('[buildTree] Error building tree for', dir, ':', err);
-    return [];
-  }
-}
-
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
+  // Initialize workspace (non-blocking, errors are non-fatal)
+  workspaceContext.initialize().catch((err) => {
+    console.warn('[IPC] Workspace init failed (non-fatal):', err);
+  });
+
+  // Initialize tools registry
+  initializeDefaultTools();
+
+  // ============================================================================
+  // DEBUG HANDLERS
+  // ============================================================================
+
+  // Dev tools logging for debugging
+  ipcMain.on('dev:log', (_event, level: string, ...args: any[]) => {
+    if (level === 'error') {
+      console.error('[Dev]', ...args);
+    } else if (level === 'warn') {
+      console.warn('[Dev]', ...args);
+    } else {
+      console.log('[Dev]', ...args);
+    }
+  });
+
   // Manual update check from renderer
   ipcMain.on('check-for-update', async () => {
     checkForUpdates(mainWindow);
   });
+
   // Initialize LSP on startup
   lspClient.start();
   lspClient.initialize().catch((e) => console.error('[IPC] LSP init error:', e));
 
-  // Auth: Check status
+  // ============================================================================
+  // AUTH HANDLERS
+  // ============================================================================
   ipcMain.handle('copilot:status', async () => {
     try {
       await withTimeout(lspClient.initialize(), 10000, 'lspInitialize');
@@ -192,22 +155,31 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     streamChatCompletion(
       modelId,
       messages,
-      (chunk) => {
-        mainWindow.webContents.send('chat:stream-chunk', chunk);
+      (chunk, type) => {
+        mainWindow.webContents.send('chat:stream-chunk', chunk, type);
       },
       () => {
         mainWindow.webContents.send('chat:stream-end');
       },
       (err) => {
         mainWindow.webContents.send('chat:stream-error', err.message);
+      },
+      async (toolName: string, toolArgs: any) => {
+        // Handle tool calls from the LLM
+        try {
+          const args = Array.isArray(toolArgs) ? toolArgs : (toolArgs === undefined ? [] : [toolArgs]);
+          const result = await toolRegistry.call(toolName, ...args);
+          mainWindow.webContents.send('chat:tool-called', { toolName, args, result });
+          return result;
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          mainWindow.webContents.send('chat:tool-error', { toolName, error });
+          throw new Error(error);
+        }
       }
     );
     return { started: true };
   });
-  ipcMain.handle('workflow:chooseOutputDir', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openDirectory', 'createDirectory'],
-    });
 
     if (result.canceled || result.filePaths.length === 0) {
       console.log('[IPC] Directory selection cancelled');
@@ -523,78 +495,39 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     });
   });
 
-  // Legacy VCD and VM handlers removed.
+  // ============================================================================
+  // TOOLS HANDLER (Generic dispatcher for all registered tools)
+  // ============================================================================
+  ipcMain.handle('tools:call', async (_event, toolName: string, ...args: any[]) => {
+    return toolRegistry.call(toolName, ...args);
+  });
 
-  // DISABLED: SSH2/SFTP file handlers disabled to prevent antivirus quarantine
-  // ipcMain.handle('file:connect', async (_event, options: { terminalId: string; command: string; password?: string }) => {
-  //   return connectTerminalFileSession(options.terminalId, options.command, { password: options.password });
-  // });
+  ipcMain.handle('tools:list', async (_event) => {
+    return toolRegistry.list();
+  });
 
-  // ipcMain.handle('file:disconnect', async (_event, options: { terminalId: string }) => {
-  //   return disconnectTerminalFileSession(options.terminalId);
-  // });
+  // ============================================================================
+  // WORKSPACE HANDLERS
+  // ============================================================================
+  ipcMain.handle('workspace:getPath', async () => {
+    return workspaceContext.getWorkspacePath();
+  });
 
-  // ipcMain.handle('file:getDirectory', async (_event, options: { terminalId: string }) => {
-  //   try {
-  //     return getTerminalDirectory(options.terminalId);
-  //   } catch (err) {
-  //     return { success: false, error: err instanceof Error ? err.message : String(err) };
-  //   }
-  // });
+  ipcMain.handle('workspace:setPath', async (_event, newPath: string) => {
+    try {
+      await workspaceContext.setWorkspacePath(newPath);
+      return { success: true, path: workspaceContext.getWorkspacePath() };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 
-  // ipcMain.handle('file:setDirectory', async (_event, options: { terminalId: string; directory: string }) => {
-  //   try {
-  //     return setTerminalDirectory(options.terminalId, options.directory);
-  //   } catch (err) {
-  //     return { success: false, error: err instanceof Error ? err.message : String(err) };
-  //   }
-  // });
-
-  // ipcMain.handle('file:list', async (_event, options: { terminalId: string; path?: string }) => {
-  //   try {
-  //     return await listDirectory(options.terminalId, options.path);
-  //   } catch (err) {
-  //     return { success: false, error: err instanceof Error ? err.message : String(err), entries: [] };
-  //   }
-  // });
-
-  // ipcMain.handle('file:read', async (_event, options: { terminalId: string; path: string }) => {
-  //   try {
-  //     return await readRemoteFile(options.terminalId, options.path);
-  //   } catch (err) {
-  //     return { success: false, error: err instanceof Error ? err.message : String(err) };
-  //   }
-  // });
-
-  // ipcMain.handle('file:write', async (_event, options: { terminalId: string; path: string; content: string }) => {
-  //   try {
-  //     return await writeRemoteFile(options.terminalId, options.path, options.content);
-  //   } catch (err) {
-  //     return { success: false, error: err instanceof Error ? err.message : String(err) };
-  //   }
-  // });
-
-  // ipcMain.handle('file:delete', async (_event, options: { terminalId: string; path: string }) => {
-  //   try {
-  //     return await deleteRemotePath(options.terminalId, options.path);
-  //   } catch (err) {
-  //     return { success: false, error: err instanceof Error ? err.message : String(err) };
-  //   }
-  // });
-
-  // ipcMain.handle('file:rename', async (_event, options: { terminalId: string; oldPath: string; newPath: string }) => {
-  //   try {
-  //     return await renameRemotePath(options.terminalId, options.oldPath, options.newPath);
-  //   } catch (err) {
-  //     return { success: false, error: err instanceof Error ? err.message : String(err) };
-  //   }
-  // });
-
-  // ipcMain.handle('file:mkdir', async (_event, options: { terminalId: string; path: string }) => {
-  //   try {
-  //     return await makeRemoteDirectory(options.terminalId, options.path);
-  //   } catch (err) {
-  //     return { success: false, error: err instanceof Error ? err.message : String(err) };
-  //   }
-  // });
+  // ============================================================================
+  // EXTENSION POINT FOR CUSTOM HANDLERS
+  // ============================================================================
+  // To add a new tool category, create a module in src/main/tools/, then:
+  // 1. Import it in src/main/tools/registry.ts
+  // 2. Register tools in initializeDefaultTools()
+  // 3. Expose them in src/preload/preload.ts
+  // See docs/CUSTOM_TOOLS_GUIDE.md for full walkthrough.
 }

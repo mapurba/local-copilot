@@ -1,0 +1,131 @@
+<div class="debug-panel" [class.collapsed]="!isExpanded">
+  <!-- Resize handle: top edge for bottom panel, left edge for right panel -->
+  <div
+    class="resize-handle"
+    [class.resize-handle-top]="position === 'bottom'"
+    [class.resize-handle-left]="position === 'right'"
+    (mousedown)="onResizeStart($event)"
+    title="Drag to resize">
+  </div>
+  <!-- Header -->
+  <div class="debug-header">
+    <div class="debug-header-title">
+      <button (click)="togglePanel()" class="debug-toggle-btn">
+        {{ isExpanded ? '▼' : '▶' }} DEBUG CONSOLE
+      </button>
+    </div>
+    <div class="debug-header-actions">
+      <button
+        *ngIf="position === 'bottom'"
+        (click)="moveToRight()"
+        class="debug-action-btn debug-position-btn"
+        title="Move to right panel">
+        ▶ Right
+      </button>
+      <button
+        *ngIf="position === 'right'"
+        (click)="moveToBottom()"
+        class="debug-action-btn debug-position-btn"
+        title="Move to bottom panel">
+        ▼ Bottom
+      </button>
+      <button (click)="clearLogs()" class="debug-action-btn" title="Clear logs">
+        Clear
+      </button>
+      <button (click)="exportLogs()" class="debug-action-btn" title="Export logs">
+        Export
+      </button>
+    </div>
+  </div>
+
+  <!-- Panel Content -->
+  <div *ngIf="isExpanded" class="debug-content">
+    <!-- Toolbar -->
+    <div class="debug-toolbar">
+      <div class="debug-search">
+        <input
+          type="text"
+          placeholder="Search logs..."
+          [(ngModel)]="searchText"
+          (input)="onSearchChange(searchText)"
+          class="debug-search-input"
+        />
+      </div>
+      <div class="debug-filters">
+        <button
+          *ngFor="let filter of filterOptions"
+          (click)="onFilterChange(filter)"
+          [class.active]="selectedFilter === filter"
+          class="debug-filter-btn">
+          {{ filter | uppercase }}
+        </button>
+      </div>
+      <div class="debug-mode-toggle">
+        <button (click)="toggleCompactMode()" class="debug-mode-btn" [title]="isCompactMode ? 'Switch to detailed view' : 'Switch to compact view'">
+          {{ isCompactMode ? '◻' : '◼' }} {{ isCompactMode ? 'COMPACT' : 'DETAILED' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Logs Container -->
+    <div class="debug-logs-scroll">
+      <div *ngIf="filteredLogs.length === 0" class="debug-empty">
+        <p>No logs to display</p>
+      </div>
+
+      <div *ngFor="let log of filteredLogs" [attr.data-type]="log.type" class="debug-log-entry" [class.compact]="isCompactMode">
+        <!-- Log Header -->
+        <div class="debug-log-header" (click)="toggleLog(log.id)">
+          <span class="debug-log-icon">{{ getLogIcon(log.type) }}</span>
+          <span class="debug-log-time">{{ log.timestamp | date:'HH:mm:ss.SSS' }}</span>
+          <span class="debug-log-type" [class]="'type-' + log.type">{{ log.type }}</span>
+          <span class="debug-log-message">{{ log.message }}</span>
+          <span *ngIf="log.details || log.thinkingChain" class="debug-log-expand">
+            {{ isLogExpanded(log.id) ? '▼' : '▶' }}
+          </span>
+        </div>
+
+        <!-- Log Details -->
+        <div *ngIf="isLogExpanded(log.id) && log.details" class="debug-log-details">
+          <pre>{{ log.details | json }}</pre>
+        </div>
+
+        <!-- Thinking Chain -->
+        <div *ngIf="isLogExpanded(log.id) && log.thinkingChain && log.thinkingChain.length > 0" class="thinking-chain">
+          <div class="thinking-chain-header">💭 Reasoning Chain ({{ log.thinkingChain.length }} steps)</div>
+          
+          <div *ngFor="let step of log.thinkingChain" class="thinking-step-container">
+            <div 
+              class="thinking-step-header" 
+              [class]="getThinkingStepClass(step)"
+              (click)="toggleThinkingStep(step.id)">
+              <span class="thinking-step-number">[{{ step.stepNumber }}]</span>
+              <span class="thinking-step-category">{{ step.category?.toUpperCase() || 'REASONING' }}</span>
+              <span *ngIf="step.tokens" class="thinking-step-tokens">{{ step.tokens }} tokens</span>
+              <span class="thinking-step-preview">{{ step.content.substring(0, 80) }}{{ step.content.length > 80 ? '...' : '' }}</span>
+              <span class="thinking-step-toggle">{{ isThinkingStepExpanded(step.id) ? '▼' : '▶' }}</span>
+            </div>
+
+            <div *ngIf="isThinkingStepExpanded(step.id)" class="thinking-step-content">
+              <pre>{{ step.content }}</pre>
+              <div *ngIf="step.metadata" class="thinking-step-metadata">
+                <strong>Metadata:</strong>
+                <pre>{{ step.metadata | json }}</pre>
+              </div>
+              <div *ngIf="step.children && step.children.length > 0" class="thinking-substeps">
+                <div *ngFor="let substep of step.children" class="thinking-substep">
+                  <div class="thinking-substep-header">
+                    <span class="thinking-step-number">└─[{{ substep.stepNumber }}]</span>
+                    <span class="thinking-step-category">{{ substep.category?.toUpperCase() }}</span>
+                    <span *ngIf="substep.tokens" class="thinking-step-tokens">{{ substep.tokens }} tokens</span>
+                  </div>
+                  <pre class="thinking-substep-content">{{ substep.content }}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

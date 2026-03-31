@@ -1,9 +1,0 @@
-/* Minimal styling for the file tree */
-ul {
-  list-style: none;
-  margin: 0;
-  padding-left: 0.5em;
-}
-li {
-  margin-bottom: 2px;
-}
