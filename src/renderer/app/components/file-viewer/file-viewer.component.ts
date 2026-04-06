@@ -19,7 +19,7 @@ import { Component, Input } from '@angular/core';
     </ng-container>
     <ng-container *ngIf="file && file.endsWith('.md')">
       <div class="h-full w-full bg-white dark:bg-gray-900 border rounded p-3 overflow-auto">
-        <pre class="text-xs text-gray-900 dark:text-white whitespace-pre-wrap">{{ content }}</pre>
+        <markdown [data]="content || ''" [mermaid]="true" class="prose dark:prose-invert max-w-none"></markdown>
       </div>
     </ng-container>
     <ng-container *ngIf="file && !file.endsWith('.xml') && !file.endsWith('.json') && !file.endsWith('.md')">

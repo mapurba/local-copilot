@@ -1,10 +1,11 @@
-import { NgModule, CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
+import { NgModule, CUSTOM_ELEMENTS_SCHEMA, SecurityContext } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { HttpClientModule } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
 import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
+import { MarkdownModule, MERMAID_OPTIONS } from 'ngx-markdown';
 import { FormioModule } from '@iam/angular-formio';
 
 import { App } from './app';
@@ -38,6 +39,13 @@ import { DebugPanelComponent } from './components/debug-panel/debug-panel.compon
       baseUrl: 'assets/monaco/min/vs',
     }),
     FormioModule,
+    MarkdownModule.forRoot({
+      sanitize: SecurityContext.NONE,
+      mermaidOptions: {
+        provide: MERMAID_OPTIONS,
+        useValue: { startOnLoad: false, securityLevel: 'loose' },
+      },
+    }),
     WorkflowBuilderViewerComponent,
     ConvertPrdComponent,
     DebugPanelComponent,

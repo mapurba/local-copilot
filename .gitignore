@@ -6,3 +6,4 @@ release/
 *.js
 .angular/
 workflow-agent/output/
+public/assets/monaco/

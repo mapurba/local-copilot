@@ -29346,3 +29346,17 @@ td>code {
 .properties-pannel {
     padding: 0px 16px !important;
 }
+
+
+.formarea {
+    overflow: scroll;
+    height: 80em;
+}
+
+.collapse:not(.show) {
+    display: none !important;
+}
+
+.collapse {
+    visibility: visible !important;
+}

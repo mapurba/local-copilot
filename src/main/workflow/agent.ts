@@ -1,11 +1,15 @@
-import { buildUnderstandingPrompt, buildToolSelectorPrompt, buildPlanningPrompt, PLANNING_SYSTEM_PROMPT } from './prompts';
+import {
+  buildUnderstandingPrompt,
+  buildToolSelectorPrompt,
+  buildActivityDetailPrompt,
+  buildFlowDesignPrompt,
+  buildPlanningPrompt,
+  buildCritiquePrompt,
+  buildRevisionPrompt,
+  PLANNING_SYSTEM_PROMPT,
+} from './prompts';
 import { generateJson } from './llm';
-import { WorkflowBuilder, StartActivity, UserActivity, RestActivity, EntityActivity, ConditionActivity, LogActivity, FinishActivity, NotificationActivity, MessageActivity } from './builder';
-
-function normalizeStringArray(value: any): string[] {
-  if (Array.isArray(value)) return value.map((v) => String(v));
-  return [];
-}
+import { WorkflowBuilder, StartActivity, UserActivity, RestActivity, EntityActivity, ConditionActivity, LogActivity, FinishActivity } from './builder';
 
 function toSafeKey(input: string) {
   return (
@@ -148,12 +152,142 @@ function generateFolderName(request: string) {
   return r.replace(/[^a-z0-9\s-_]/g, '').replace(/\s+/g, '-').slice(0, 40).replace(/^-|-$/g, '') || 'workflow';
 }
 
+// Mermaid shape per activity type
+const MERMAID_SHAPES: Record<string, [string, string]> = {
+  'start':        ['([', '])'],
+  'finish':       ['([', '])'],
+  'user':         ['[', ']'],
+  'rest':         ['[(', ')]'],
+  'entity':       ['[(', ')]'],
+  'condition':    ['{', '}'],
+  'log':          ['[/', '/]'],
+  'notification': ['[[', ']]'],
+};
+
+function safeNodeId(raw: string): string {
+  return raw.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+function generateMermaidDiagram(request: string, plan: any): string {
+  const activities: any[] = Array.isArray(plan?.activities) ? plan.activities : [];
+  const flows: any[] = Array.isArray(plan?.flows) ? plan.flows : [];
+
+  if (activities.length === 0) {
+    return `# Workflow Flow Diagram\n\n> No activities found in the generated plan.\n`;
+  }
+
+  const lines: string[] = ['flowchart TD'];
+
+  // Emit node definitions
+  for (const act of activities) {
+    const id = safeNodeId(String(act.id || 'unknown'));
+    const label = String(act.name || act.id || act.type || 'Step').replace(/"/g, "'");
+    const type = String(act.type || '').toLowerCase();
+    const [open, close] = MERMAID_SHAPES[type] ?? ['[', ']'];
+    lines.push(`    ${id}${open}"${label}"${close}`);
+  }
+
+  lines.push('');
+
+  // Emit edges
+  for (const flow of flows) {
+    const src = safeNodeId(String(flow.source || ''));
+    const tgt = safeNodeId(String(flow.target || ''));
+    if (!src || !tgt) continue;
+    const label = flow.label ? ` -->|"${String(flow.label).replace(/"/g, "'")}"| ` : ' --> ';
+    lines.push(`    ${src}${label}${tgt}`);
+  }
+
+  // Add styling classes
+  lines.push('');
+  lines.push('    classDef startFinish fill:#4CAF50,stroke:#388E3C,color:#fff');
+  lines.push('    classDef userTask fill:#2196F3,stroke:#1565C0,color:#fff');
+  lines.push('    classDef serviceTask fill:#FF9800,stroke:#E65100,color:#fff');
+  lines.push('    classDef conditionTask fill:#9C27B0,stroke:#6A1B9A,color:#fff');
+  lines.push('    classDef logTask fill:#607D8B,stroke:#37474F,color:#fff');
+
+  const startIds = activities.filter((a) => a.type === 'start' || a.type === 'finish').map((a) => safeNodeId(a.id));
+  const userIds = activities.filter((a) => a.type === 'user').map((a) => safeNodeId(a.id));
+  const serviceIds = activities.filter((a) => ['rest', 'entity', 'notification'].includes(a.type)).map((a) => safeNodeId(a.id));
+  const condIds = activities.filter((a) => a.type === 'condition').map((a) => safeNodeId(a.id));
+  const logIds = activities.filter((a) => a.type === 'log').map((a) => safeNodeId(a.id));
+
+  if (startIds.length) lines.push(`    class ${startIds.join(',')} startFinish`);
+  if (userIds.length) lines.push(`    class ${userIds.join(',')} userTask`);
+  if (serviceIds.length) lines.push(`    class ${serviceIds.join(',')} serviceTask`);
+  if (condIds.length) lines.push(`    class ${condIds.join(',')} conditionTask`);
+  if (logIds.length) lines.push(`    class ${logIds.join(',')} logTask`);
+
+  const mermaidBlock = ['```mermaid', ...lines, '```'].join('\n');
+
+  return [
+    `# Workflow Flow Diagram`,
+    ``,
+    `> Generated from request: _${request}_`,
+    ``,
+    mermaidBlock,
+    ``,
+    `## Activity Legend`,
+    ``,
+    `| Shape | Colour | Activity Type |`,
+    `|-------|--------|---------------|`,
+    `| Stadium \`([ ])\` | Green | Start / Finish |`,
+    `| Rectangle \`[ ]\` | Blue | User Task (Approval/Form) |`,
+    `| Cylinder \`[( )]\` | Orange | REST / Entity (Service Task) |`,
+    `| Diamond \`{ }\` | Purple | Condition (Branch) |`,
+    `| Parallelogram \`[/ /]\` | Grey | Log / Audit |`,
+  ].join('\n');
+}
+
 export async function runWorkflowAgent(request: string, modelId: string) {
+  // ── Round 1: Deep understanding ──────────────────────────────────────────────
   const understanding = await generateJson(modelId, buildUnderstandingPrompt(request));
+
+  // ── Round 2: Activity type selection ─────────────────────────────────────────
   const toolSelection = await generateJson(modelId, buildToolSelectorPrompt(understanding));
-  const selectedTools = normalizeStringArray(toolSelection?.selected_tools);
-  const plan = await generateJson(modelId, buildPlanningPrompt(request, understanding, selectedTools), PLANNING_SYSTEM_PROMPT);
-  const critique = validatePlan(plan);
+
+  // ── Round 3: Detailed activity design (IDs, attributes, forms) ───────────────
+  const activityDetail = await generateJson(
+    modelId,
+    buildActivityDetailPrompt(request, understanding, toolSelection),
+    PLANNING_SYSTEM_PROMPT,
+  );
+  const designedActivities: any[] = Array.isArray(activityDetail?.activities) ? activityDetail.activities : [];
+  const designedForms: any[] = Array.isArray(activityDetail?.forms) ? activityDetail.forms : [];
+
+  // ── Round 4: Flow design ──────────────────────────────────────────────────────
+  const flowDesign = await generateJson(
+    modelId,
+    buildFlowDesignPrompt(understanding, designedActivities),
+  );
+  const designedFlows: any[] = Array.isArray(flowDesign?.flows) ? flowDesign.flows : [];
+
+  // ── Round 5: Final plan assembly ──────────────────────────────────────────────
+  let plan = await generateJson(
+    modelId,
+    buildPlanningPrompt(request, understanding, designedActivities, designedFlows, designedForms),
+    PLANNING_SYSTEM_PROMPT,
+  );
+
+  // ── Round 6: Self-critique ────────────────────────────────────────────────────
+  const critiqueResult = await generateJson(modelId, buildCritiquePrompt(request, plan));
+
+  // ── Round 7: Conditional revision ────────────────────────────────────────────
+  let wasRevised = false;
+  if (critiqueResult?.needs_revision === true) {
+    const revised = await generateJson(
+      modelId,
+      buildRevisionPrompt(request, plan, critiqueResult),
+      PLANNING_SYSTEM_PROMPT,
+    );
+    if (revised && Array.isArray(revised.activities)) {
+      plan = revised;
+      wasRevised = true;
+    }
+  }
+
+  // ── Build the workflow ────────────────────────────────────────────────────────
+  const validationResult = validatePlan(plan);
   const builder = new WorkflowBuilder();
   const sanitizedForms = sanitizeFormsForFormio(plan);
   if (sanitizedForms.length > 0) {
@@ -165,12 +299,24 @@ export async function runWorkflowAgent(request: string, modelId: string) {
     const target = idMap[flow.target];
     if (source && target) builder.addFlow(source, target);
   }
+
+  // ── Generate Mermaid diagram from the final plan ──────────────────────────────
+  const mermaidMd = generateMermaidDiagram(request, plan);
+
   const folderName = generateFolderName(request);
   return {
     workflowXml: builder.generateXml(),
     formsJson: builder.generateFormsJson(),
-    critique,
+    mermaidMd,
+    critique: validationResult,
     plan,
     folderName,
+    agentInsights: {
+      understanding,
+      toolSelection,
+      qualityScore: critiqueResult?.score ?? null,
+      qualityIssues: critiqueResult?.issues ?? [],
+      wasRevised,
+    },
   };
 }

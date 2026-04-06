@@ -43,10 +43,11 @@ export interface CopilotAPI {
       activities: Array<{ id: string; type: string; attributes: Record<string, unknown> }>;
       flows: Array<{ source: string; target: string }>;
     };
-    files?: { workflowPath: string; formsPath: string };
+    files?: { workflowPath: string; formsPath: string; mermaidPath?: string };
     error?: string;
   }>;
   convertPrd: (input: { content?: string; filePath?: string; modelId?: string; fileName?: string; requestId?: string }) => Promise<any>;
+  cancelConvertPrd: (requestId: string) => Promise<{ ok: boolean }>;
   onConvertPrdProgress: (callback: (event: Electron.IpcRendererEvent, data: { requestId: string; stage: string; message: string; percent?: number; details?: Record<string, unknown>; timestamp?: string }) => void) => () => void;
   // Terminal/session/file APIs removed from the public preload surface.
   checkForUpdate: () => void;
@@ -106,6 +107,7 @@ contextBridge.exposeInMainWorld('copilot', {
   generateWorkflow: (input: { modelId: string; request: string; outputDir?: string }) =>
     ipcRenderer.invoke('workflow:generate', input),
   convertPrd: (input: { content?: string; filePath?: string; modelId?: string; fileName?: string; requestId?: string }) => ipcRenderer.invoke('workflow:convertPrd', input),
+  cancelConvertPrd: (requestId: string) => ipcRenderer.invoke('workflow:cancelConvertPrd', requestId),
   onConvertPrdProgress: (callback: (event: Electron.IpcRendererEvent, data: { requestId: string; stage: string; message: string; percent?: number; details?: Record<string, unknown>; timestamp?: string }) => void) => {
     ipcRenderer.on('workflow:convertPrd:progress', callback);
     return () => ipcRenderer.removeListener('workflow:convertPrd:progress', callback);

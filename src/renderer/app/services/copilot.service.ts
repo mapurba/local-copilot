@@ -60,6 +60,12 @@ export class CopilotService {
     });
   }
 
+  async cancelConvertPrd(requestId: string): Promise<void> {
+    if (this.api?.cancelConvertPrd && requestId) {
+      await this.api.cancelConvertPrd(requestId).catch(() => {});
+    }
+  }
+
   async signIn(): Promise<{ userCode: string; verificationUri: string; status: string }> {
     if (!this.api?.signIn) {
       throw new Error('Sign-in API is not available');
@@ -223,7 +229,7 @@ export class CopilotService {
       activities: Array<{ id: string; type: string; attributes: Record<string, unknown> }>;
       flows: Array<{ source: string; target: string }>;
     };
-    files?: { workflowPath: string; formsPath: string };
+    files?: { workflowPath: string; formsPath: string; mermaidPath?: string };
     error?: string;
   }> {
     if (!this.api?.generateWorkflow) {

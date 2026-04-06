@@ -109,7 +109,7 @@ export class WorkflowBuilderViewerComponent implements OnChanges {
   @Output() errorCountChanged = new EventEmitter<number>();
   @Output() hasChangesUpdate = new EventEmitter<boolean>();
 
-  viewMode: 'editor' | 'builder' = 'editor';
+  viewMode: 'editor' | 'builder' = 'builder';
   builderCompatible = false;
   currentXml: string = '';
   hasChanges: boolean = false;
@@ -247,7 +247,7 @@ export class WorkflowBuilderViewerComponent implements OnChanges {
     this.hasChangesUpdate.emit(false);
   }
 
-  resetChanges() {
+  resetChanges() { 
     this.currentXml = this.originalXml;
     this.hasChanges = false;
     this.hasChangesUpdate.emit(false);

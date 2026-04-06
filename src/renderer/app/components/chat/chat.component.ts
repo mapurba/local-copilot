@@ -28,6 +28,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   selectedModel: string = 'gpt-4.1';
   models: { id: string; label: string }[] = [];
   fileTree: FileNode[] = [];
+  explorerFilterText: string = '';
+  explorerExpandedState: Record<string, boolean> = {};
   openFiles: Array<{
     path: string;
     name: string;
@@ -69,7 +71,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   private resizingTarget: 'explorer' | 'chat' | null = null;
   private resizeStartX: number = 0;
   private resizeStartValue: number = 0;
-  private lastTodoProgressSignature: string = '';
+
   private readonly onWindowMouseMove = (event: MouseEvent) => this.onResizeMove(event);
   private readonly onWindowMouseUp = () => this.stopResize();
 
@@ -142,7 +144,6 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     const bridgeTodoSub = this.chatBridge.prdTodo$.subscribe((items) => {
       this.prdTodos = Array.isArray(items) ? items : [];
-      this.publishTodoProgressToChat();
     });
 
     this.teardownCallbacks.push(
@@ -468,12 +469,15 @@ export class ChatComponent implements OnInit, OnDestroy {
   async refreshOutputTree() {
     if (!this.outputDir) {
       this.fileTree = [];
+      this.explorerExpandedState = {};
       return;
     }
     try {
       const result = await this.copilotService.listWorkflowTree();
       if (result.success && result.tree) {
         this.fileTree = result.tree as FileNode[];
+        this.pruneExplorerExpandedState();
+        this.expandTopLevelFoldersIfNeeded();
         console.log('[Chat] Tree refreshed:', this.fileTree.length, 'items');
       } else {
         console.warn('[Chat] Tree refresh failed:', result.error);
@@ -483,6 +487,38 @@ export class ChatComponent implements OnInit, OnDestroy {
       console.error('[Chat] Error refreshing tree:', error);
       this.fileTree = [];
     }
+  }
+
+  get filteredFileTree(): FileNode[] {
+    const query = this.explorerFilterText.trim().toLowerCase();
+    if (!query) {
+      return this.fileTree;
+    }
+    return this.filterTreeNodes(this.fileTree, query);
+  }
+
+  get totalGeneratedFileCount(): number {
+    return this.countFiles(this.fileTree);
+  }
+
+  get visibleGeneratedFileCount(): number {
+    return this.countFiles(this.filteredFileTree);
+  }
+
+  expandAllExplorerFolders() {
+    const next = { ...this.explorerExpandedState };
+    this.collectDirectoryPaths(this.fileTree).forEach((path) => {
+      next[path] = true;
+    });
+    this.explorerExpandedState = next;
+  }
+
+  collapseAllExplorerFolders() {
+    this.explorerExpandedState = {};
+  }
+
+  clearExplorerFilter() {
+    this.explorerFilterText = '';
   }
 
   async onFileSelected(node: FileNode) {
@@ -634,29 +670,93 @@ export class ChatComponent implements OnInit, OnDestroy {
     return Math.max(min, Math.min(max, value));
   }
 
-  private publishTodoProgressToChat() {
-    if (!this.prdTodos.length) {
-      this.lastTodoProgressSignature = '';
+  private filterTreeNodes(nodes: FileNode[], query: string): FileNode[] {
+    const filtered: FileNode[] = [];
+
+    for (const node of nodes) {
+      const nameMatches = node.name.toLowerCase().includes(query);
+      const pathMatches = node.path.toLowerCase().includes(query);
+
+      if (!node.isDirectory) {
+        if (nameMatches || pathMatches) {
+          filtered.push(node);
+        }
+        continue;
+      }
+
+      const children = Array.isArray(node.children) ? node.children : [];
+      const filteredChildren = this.filterTreeNodes(children, query);
+
+      if (nameMatches || pathMatches || filteredChildren.length > 0) {
+        filtered.push({
+          ...node,
+          children: filteredChildren,
+        });
+      }
+    }
+
+    return filtered;
+  }
+
+  private countFiles(nodes: FileNode[]): number {
+    let count = 0;
+    for (const node of nodes) {
+      if (node.isDirectory) {
+        count += this.countFiles(Array.isArray(node.children) ? node.children : []);
+      } else {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private collectDirectoryPaths(nodes: FileNode[], out: string[] = []): string[] {
+    for (const node of nodes) {
+      if (!node.isDirectory) {
+        continue;
+      }
+      out.push(node.path);
+      this.collectDirectoryPaths(Array.isArray(node.children) ? node.children : [], out);
+    }
+    return out;
+  }
+
+  private expandTopLevelFoldersIfNeeded() {
+    if (Object.keys(this.explorerExpandedState).length > 0) {
       return;
     }
 
-    const completed = this.prdTodos.filter((t) => t.status === 'completed').length;
-    const inProgress = this.prdTodos.filter((t) => t.status === 'in-progress').length;
-    const pending = this.prdTodos.filter((t) => t.status === 'not-started').length;
-    const total = this.prdTodos.length;
-
-    const signature = `${completed}/${inProgress}/${pending}/${total}`;
-    if (signature === this.lastTodoProgressSignature) {
-      return;
+    const next: Record<string, boolean> = {};
+    for (const node of this.fileTree) {
+      if (node.isDirectory) {
+        next[node.path] = true;
+      }
     }
-    this.lastTodoProgressSignature = signature;
+    this.explorerExpandedState = next;
+  }
 
-    const summary = `PRD Todo Progress: ${completed}/${total} completed, ${inProgress} in progress, ${pending} pending.`;
-    this.messages.push({
-      role: 'assistant',
-      content: summary,
-      timestamp: new Date(),
-    });
+  private pruneExplorerExpandedState() {
+    const valid = new Set(this.collectDirectoryPaths(this.fileTree));
+    const next: Record<string, boolean> = {};
+    for (const [path, expanded] of Object.entries(this.explorerExpandedState)) {
+      if (expanded && valid.has(path)) {
+        next[path] = true;
+      }
+    }
+    this.explorerExpandedState = next;
+  }
+
+  get prdCompletedCount(): number {
+    return this.prdTodos.filter((t) => t.status === 'completed').length;
+  }
+
+  get prdInProgressCount(): number {
+    return this.prdTodos.filter((t) => t.status === 'in-progress').length;
+  }
+
+  get prdProgressPercent(): number {
+    if (!this.prdTodos.length) return 0;
+    return Math.round((this.prdCompletedCount / this.prdTodos.length) * 100);
   }
 
   async generateWorkflowFromRequest() {
@@ -710,6 +810,9 @@ export class ChatComponent implements OnInit, OnDestroy {
       }
       if (result.files?.formsPath) {
         await this.openFile(result.files.formsPath);
+      }
+      if (result.files?.mermaidPath) {
+        await this.openFile(result.files.mermaidPath);
       }
 
       const summary = this.generateWorkflowSummary(result.plan);

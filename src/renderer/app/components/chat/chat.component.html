@@ -64,11 +64,38 @@
           <button type="button" (click)="refreshOutputTree()" [disabled]="!outputDir" class="workflow-btn">Refresh</button>
         </div>
 
-        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Generated Files</div>
+        <div class="tree-header-row mb-2">
+          <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Generated Files</div>
+          <div class="tree-count text-xs text-slate-500 dark:text-slate-400">{{ visibleGeneratedFileCount }} / {{ totalGeneratedFileCount }}</div>
+        </div>
+
+        <div class="explorer-filter-row mb-2">
+          <input
+            [(ngModel)]="explorerFilterText"
+            type="text"
+            placeholder="Filter files"
+            class="explorer-filter-input"
+            title="Filter files by name or path" />
+          <button
+            *ngIf="explorerFilterText"
+            type="button"
+            (click)="clearExplorerFilter()"
+            class="workflow-btn workflow-btn-mini"
+            title="Clear filter">
+            Clear
+          </button>
+        </div>
+
+        <div class="flex gap-2 mb-2">
+          <button type="button" (click)="expandAllExplorerFolders()" [disabled]="!fileTree.length" class="workflow-btn workflow-btn-mini">Expand all</button>
+          <button type="button" (click)="collapseAllExplorerFolders()" [disabled]="!fileTree.length" class="workflow-btn workflow-btn-mini">Collapse all</button>
+        </div>
+
         <div class="workflow-tree-wrap">
           <app-file-tree
-            [nodes]="fileTree"
+            [nodes]="filteredFileTree"
             [activeFilePath]="activeFilePath"
+            [expandedState]="explorerExpandedState"
             (fileSelected)="onFileSelected($event)">
           </app-file-tree>
         </div>
@@ -131,13 +158,27 @@
       <section class="chat-pane">
         <div class="chat-scroll flex-1 overflow-y-auto p-4 sm:p-5">
           <div class="chat-todo-panel" *ngIf="prdTodos.length">
-            <div class="chat-todo-heading">PRD Todo</div>
-            <div *ngFor="let todo of prdTodos" class="todo-item" [class.todo-completed]="todo.status === 'completed'">
-              <span class="todo-status" [class.status-done]="todo.status === 'completed'" [class.status-progress]="todo.status === 'in-progress'">
-                {{ todo.status === 'completed' ? 'Done' : (todo.status === 'in-progress' ? 'In Progress' : 'Pending') }}
+            <div class="chat-todo-header">
+              <span class="chat-todo-heading">PRD Conversion</span>
+              <span class="todo-progress-label">{{ prdCompletedCount }}&thinsp;/&thinsp;{{ prdTodos.length }} done</span>
+            </div>
+            <div class="todo-progress-track">
+              <div class="todo-progress-fill" [style.width.%]="prdProgressPercent"></div>
+            </div>
+            <div *ngFor="let todo of prdTodos" class="todo-item"
+              [class.todo-completed]="todo.status === 'completed'"
+              [class.todo-in-progress]="todo.status === 'in-progress'">
+              <span class="todo-icon">
+                <ng-container [ngSwitch]="todo.status">
+                  <span *ngSwitchCase="'completed'" aria-label="done">&#10003;</span>
+                  <span *ngSwitchCase="'in-progress'" class="todo-spinner" aria-label="in progress"></span>
+                  <span *ngSwitchDefault aria-label="pending">&#8226;</span>
+                </ng-container>
               </span>
-              <div class="todo-title">{{ todo.title }}</div>
-              <div class="todo-details" *ngIf="todo.details">{{ todo.details }}</div>
+              <div class="todo-body">
+                <div class="todo-title">{{ todo.title }}</div>
+                <div class="todo-details" *ngIf="todo.details">{{ todo.details }}</div>
+              </div>
             </div>
           </div>
 
@@ -148,7 +189,12 @@
 
           <div *ngFor="let msg of messages" class="chat-row" [ngClass]="msg.role === 'user' ? 'is-user' : 'is-assistant'">
             <div class="chat-bubble" [ngClass]="msg.role === 'user' ? 'bubble-user' : 'bubble-assistant'">
-              <p class="chat-text leading-relaxed">{{ msg.content }}</p>
+              <ng-container *ngIf="msg.role === 'assistant'; else plainMsg">
+                <markdown [data]="msg.content" [mermaid]="true" class="chat-markdown"></markdown>
+              </ng-container>
+              <ng-template #plainMsg>
+                <p class="chat-text leading-relaxed">{{ msg.content }}</p>
+              </ng-template>
               <p class="chat-time">{{ msg.timestamp | date:'HH:mm:ss' }}</p>
             </div>
           </div>

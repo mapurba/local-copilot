@@ -12,6 +12,10 @@ import { runWorkflowAgent } from './workflow/agent';
 import { getWorkflowOutputDir, setWorkflowOutputDir } from './workflow/storage';
 import { extractAndAnalyzeFromPrdXml } from './workflow/prdConverter';
 import { generateJson } from './workflow/llm';
+
+// Tracks requestIds that have been cancelled so the convertPrd handler can abort early
+const cancelledConvertRequests = new Set<string>();
+
 // DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
 // import {
 //   connectTerminalFileSession,
@@ -268,6 +272,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     return { success: true, content };
   });
 
+  ipcMain.handle('workflow:cancelConvertPrd', (_event, requestId: string) => {
+    if (typeof requestId === 'string' && requestId.trim()) {
+      cancelledConvertRequests.add(requestId.trim());
+    }
+    return { ok: true };
+  });
+
   ipcMain.handle('workflow:convertPrd', async (_event, input: { content?: string; filePath?: string; modelId?: string; fileName?: string; requestId?: string }) => {
     const requestId = typeof input?.requestId === 'string' && input.requestId.trim().length > 0
       ? input.requestId.trim()
@@ -289,8 +300,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       });
     };
 
+    cancelledConvertRequests.delete(requestId);
+    const isCancelled = () => cancelledConvertRequests.has(requestId);
+
     try {
       emitProgress('started', 'Starting PRD conversion', 2);
+      if (isCancelled()) { emitProgress('cancelled', 'Cancelled by user', 100); return { success: false, error: 'Cancelled' }; }
 
       let prdXml = input.content || '';
       if (!prdXml && input.filePath) {
@@ -310,7 +325,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
 
       // If caller supplied a modelId, ask the LLM for a deeper, deterministic Markdown summary
       const modelId = (input as any).modelId as string | undefined;
-      if (modelId) {
+      if (modelId && !isCancelled()) {
           emitProgress('llm-summary', 'Generating deep summary with LLM', 38, { modelId });
           try {
             const resultsArray = normalizeResults(result);
@@ -336,6 +351,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
             };
 
           for (let i = 0; i < resultsArray.length; i++) {
+            if (isCancelled()) { emitProgress('cancelled', 'Cancelled by user', 100); cancelledConvertRequests.delete(requestId); return { success: false, error: 'Cancelled' }; }
             const r = resultsArray[i];
             if (r && r.decodedXml) {
               const itemPercent = 42 + Math.min(22, Math.round(((i + 1) / Math.max(resultsArray.length, 1)) * 22));
@@ -379,6 +395,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       }
 
       // Try to persist artifacts into configured workflow output directory
+      if (isCancelled()) { emitProgress('cancelled', 'Cancelled by user', 100); cancelledConvertRequests.delete(requestId); return { success: false, error: 'Cancelled' }; }
       emitProgress('saving', 'Preparing output folder and artifacts', 72);
       const baseOutputDir = await getWorkflowOutputDir();
       const saved: any = { outputDir: null, decoded: [], summaries: [], workflows: [], forms: [], todos: [] };
@@ -534,7 +551,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         throw new Error('No output folder selected. Choose an output directory first.');
       }
 
-      const { workflowXml, formsJson, critique, plan, folderName = 'workflow' } = await runWorkflowAgent(input.request, input.modelId);
+      const { workflowXml, formsJson, mermaidMd, critique, plan, folderName = 'workflow' } = await runWorkflowAgent(input.request, input.modelId);
       
       // Use LLM-suggested folder name with timestamp to ensure uniqueness
       const uniqueFolderName = `${folderName}-${Date.now()}`;
@@ -543,8 +560,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       await fs.mkdir(outputDir, { recursive: true });
       const workflowPath = path.join(outputDir, 'workflow.xml');
       const formsPath = path.join(outputDir, 'forms.json');
+      const mermaidPath = path.join(outputDir, 'flow-diagram.md');
       await fs.writeFile(workflowPath, workflowXml, 'utf8');
       await fs.writeFile(formsPath, formsJson, 'utf8');
+      if (mermaidMd) await fs.writeFile(mermaidPath, mermaidMd, 'utf8');
 
       return {
         success: true,
@@ -554,9 +573,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         files: {
           workflowPath,
           formsPath,
+          mermaidPath,
         },
         workflowXml,
         formsJson,
+        mermaidMd,
       };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };

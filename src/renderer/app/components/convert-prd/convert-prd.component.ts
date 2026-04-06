@@ -2,6 +2,7 @@ import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
+import { MarkdownModule } from 'ngx-markdown';
 import { ChatBridgeService } from '../../services/chat-bridge.service';
 import { CopilotService } from '../../services/copilot.service';
 import { DebugLoggerService } from '../../services/debug-logger.service';
@@ -30,56 +31,297 @@ interface ConvertResult {
 @Component({
   selector: 'app-convert-prd',
   standalone: true,
-  imports: [CommonModule, FormsModule, MonacoEditorModule],
+  imports: [CommonModule, FormsModule, MonacoEditorModule, MarkdownModule],
   template: `
-    <div class="flex flex-col h-full">
-      <div class="flex items-center justify-between mb-2 px-2">
-        <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">Convert PRD</div>
-        <div class="flex gap-2">
-          <label class="px-2 py-1 rounded text-xs bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-200 cursor-pointer">
+    <div class="prd-shell">
+
+      <!-- ── Top bar ─────────────────────────────────────────────── -->
+      <div class="prd-topbar">
+        <span class="prd-title">Convert PRD</span>
+        <div class="prd-topbar-actions">
+          <label class="prd-btn prd-btn-upload">
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M10 3a1 1 0 01.707.293l4 4a1 1 0 01-1.414 1.414L11 6.414V14a1 1 0 11-2 0V6.414L6.707 8.707A1 1 0 015.293 7.293l4-4A1 1 0 0110 3z"/><path d="M3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"/></svg>
             Upload PRD
             <input #fileInput type="file" accept=".xml,.prd" (change)="onFileSelected($event)" style="display:none" />
           </label>
-          <button type="button" (click)="saveArtifacts()" class="px-2 py-1 rounded text-xs bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-200">Save Artifacts</button>
+          <button type="button" (click)="saveArtifacts()" class="prd-btn" [disabled]="!decodedXml && !summaryText">
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M17 4H6L3 7v10a1 1 0 001 1h13a1 1 0 001-1V5a1 1 0 00-1-1zm-5 13a2 2 0 110-4 2 2 0 010 4zm3-8H5V5h10v4z"/></svg>
+            Save Artifacts
+          </button>
         </div>
       </div>
 
-      <div class="mx-2 mb-2 rounded border border-blue-200 bg-blue-50 px-2 py-2 text-xs text-blue-800 dark:border-blue-900/70 dark:bg-blue-950/40 dark:text-blue-200" *ngIf="isConverting || convertStatusMessage">
-        <div class="flex items-center justify-between gap-2">
-          <span>{{ convertStatusMessage || 'Ready to convert PRD' }}</span>
-          <span *ngIf="convertProgressPercent > 0">{{ convertProgressPercent }}%</span>
+      <!-- ── Progress banner ─────────────────────────────────────── -->
+      <div class="prd-progress-banner" *ngIf="isConverting || convertProgressPercent > 0">
+        <div class="prd-progress-row">
+          <span class="prd-progress-msg">{{ convertStatusMessage || 'Converting…' }}</span>
+          <div class="prd-progress-right">
+            <span class="prd-progress-pct">{{ convertProgressPercent }}%</span>
+            <button *ngIf="isConverting" class="prd-cancel-btn" (click)="cancelConversion()" title="Stop conversion">&#x2715;</button>
+          </div>
         </div>
-        <div class="mt-1 h-1.5 w-full overflow-hidden rounded bg-blue-200 dark:bg-blue-900/70" *ngIf="isConverting || convertProgressPercent > 0">
-          <div class="h-full rounded bg-blue-600 transition-all duration-150" [style.width.%]="convertProgressPercent"></div>
+        <div class="prd-progress-track">
+          <div class="prd-progress-fill" [style.width.%]="convertProgressPercent"></div>
         </div>
       </div>
 
-      <div class="flex-1 min-h-0">
-        <div class="h-full editor-host" [class.opacity-75]="isConverting">
-          <ngx-monaco-editor class="editor-control" [options]="editorOptions" [(ngModel)]="decodedXml"></ngx-monaco-editor>
+      <!-- ── Empty state (no file yet) ──────────────────────────── -->
+      <div class="prd-empty" *ngIf="!decodedXml && !isConverting">
+        <div class="prd-empty-icon">
+          <svg width="40" height="40" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="8" y="4" width="32" height="40" rx="3" stroke-opacity=".4"/>
+            <path d="M16 14h16M16 20h16M16 26h10" stroke-opacity=".4"/>
+            <circle cx="36" cy="36" r="9" fill="white" stroke-width="2"/>
+            <path d="M36 32v8M32 36h8" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
         </div>
-      </div>
-      <div class="mt-2 px-2 text-xs text-gray-600 dark:text-gray-300">
-        <div *ngIf="savedFolder">Saved folder: <span class="font-mono">{{savedFolder}}</span></div>
-        <div *ngIf="llmUsed">Summary: generated by LLM</div>
-        <div *ngIf="!llmUsed">Summary: deterministic analyzer used</div>
+        <div class="prd-empty-title">No PRD loaded</div>
+        <div class="prd-empty-sub">Upload an Identity Manager PRD (.xml) to decode, analyse and convert it into workflow artifacts.</div>
+        <label class="prd-btn prd-btn-upload prd-btn-lg">
+          <svg width="15" height="15" viewBox="0 0 20 20" fill="currentColor"><path d="M10 3a1 1 0 01.707.293l4 4a1 1 0 01-1.414 1.414L11 6.414V14a1 1 0 11-2 0V6.414L6.707 8.707A1 1 0 015.293 7.293l4-4A1 1 0 0110 3z"/><path d="M3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"/></svg>
+          Choose PRD file
+          <input type="file" accept=".xml,.prd" (change)="onFileSelected($event)" style="display:none" />
+        </label>
       </div>
 
-      <div *ngIf="summaryText" class="mt-2 px-2 overflow-auto max-h-48">
-        <pre class="text-xs whitespace-pre-wrap">{{summaryText}}</pre>
+      <!-- ── Content area (once a file is loaded) ───────────────── -->
+      <div class="prd-content" *ngIf="decodedXml || isConverting">
+
+        <!-- Tab bar -->
+        <div class="prd-tabs">
+          <button class="prd-tab" [class.active]="activeView === 'xml'" (click)="activeView = 'xml'">
+            Decoded XML
+          </button>
+          <button class="prd-tab" [class.active]="activeView === 'summary'" (click)="activeView = 'summary'" [disabled]="!summaryText">
+            Summary
+            <span class="prd-tab-badge" *ngIf="summaryText">&#10003;</span>
+          </button>
+          <div class="prd-tabs-spacer"></div>
+          <span class="prd-meta" *ngIf="llmUsed">&#x2728; LLM summary</span>
+          <span class="prd-meta" *ngIf="!llmUsed && decodedXml">&#x26A1; Deterministic</span>
+          <span class="prd-meta prd-meta-folder" *ngIf="savedFolder" [title]="savedFolder">
+            &#x1F4C1; {{ savedFolder | slice:-28 }}
+          </span>
+        </div>
+
+        <!-- Decoded XML editor -->
+        <div class="prd-tab-body" [class.hidden]="activeView !== 'xml'">
+          <ngx-monaco-editor class="prd-editor" [options]="editorOptions" [(ngModel)]="decodedXml"></ngx-monaco-editor>
+        </div>
+
+        <!-- Summary markdown view -->
+        <div class="prd-tab-body prd-summary-body" [class.hidden]="activeView !== 'summary'">
+          <markdown [data]="summaryText" [mermaid]="true" class="prd-markdown"></markdown>
+        </div>
+
       </div>
 
     </div>
   `,
-  styles: [
-    `:host { display:block; height:100%; width:100%; }
-     .editor-host { height: 100%; width:100%; }
-     .editor-control { display:block; height:100%; width:100%; }`
-  ]
+  styles: [`
+    :host { display: block; height: 100%; width: 100%; }
+
+    .prd-shell {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      width: 100%;
+      background: #f8fafc;
+    }
+
+    /* ── Top bar ── */
+    .prd-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid #e2e8f0;
+      background: #fff;
+      flex-shrink: 0;
+    }
+    .prd-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #374151;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .prd-topbar-actions { display: flex; gap: 6px; }
+
+    .prd-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      color: #374151;
+      cursor: pointer;
+      transition: background .12s, border-color .12s;
+      white-space: nowrap;
+    }
+    .prd-btn:hover { background: #f1f5f9; border-color: #9ca3af; }
+    .prd-btn:disabled { opacity: .45; cursor: default; }
+    .prd-btn-upload {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+    }
+    .prd-btn-upload:hover { background: #1d4ed8; border-color: #1d4ed8; }
+    .prd-btn-lg { padding: 8px 18px; font-size: 13px; margin-top: 16px; }
+
+    /* ── Progress banner ── */
+    .prd-progress-banner {
+      padding: 8px 12px;
+      border-bottom: 1px solid #bfdbfe;
+      background: #eff6ff;
+      flex-shrink: 0;
+    }
+    .prd-progress-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #1e40af;
+      margin-bottom: 5px;
+    }
+    .prd-progress-right { display: flex; align-items: center; gap: 6px; }
+    .prd-progress-pct { font-weight: 600; }
+    .prd-cancel-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #dc2626;
+      font-size: 14px;
+      padding: 0 2px;
+      line-height: 1;
+      opacity: .8;
+    }
+    .prd-cancel-btn:hover { opacity: 1; }
+    .prd-progress-track {
+      height: 5px;
+      border-radius: 999px;
+      background: #bfdbfe;
+      overflow: hidden;
+    }
+    .prd-progress-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #3b82f6, #1d4ed8);
+      transition: width .35s ease;
+    }
+
+    /* ── Empty state ── */
+    .prd-empty {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 32px 24px;
+      color: #64748b;
+      text-align: center;
+    }
+    .prd-empty-icon { opacity: .5; margin-bottom: 4px; }
+    .prd-empty-title { font-size: 15px; font-weight: 600; color: #374151; }
+    .prd-empty-sub { font-size: 12px; max-width: 320px; line-height: 1.5; }
+
+    /* ── Content tabs ── */
+    .prd-content {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .prd-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 0 8px;
+      border-bottom: 1px solid #e2e8f0;
+      background: #fff;
+      flex-shrink: 0;
+    }
+    .prd-tab {
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      border: none;
+      background: none;
+      color: #64748b;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: color .12s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .prd-tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+    .prd-tab:hover:not(.active) { color: #374151; }
+    .prd-tab:disabled { opacity: .4; cursor: default; }
+    .prd-tab-badge { font-size: 10px; color: #16a34a; }
+    .prd-tabs-spacer { flex: 1; }
+    .prd-meta {
+      font-size: 11px;
+      color: #94a3b8;
+      padding: 0 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      max-width: 180px;
+      text-overflow: ellipsis;
+    }
+    .prd-meta-folder { cursor: default; }
+
+    .prd-tab-body {
+      flex: 1;
+      height: 0;          /* key for Monaco layout in flex */
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .prd-tab-body.hidden {
+      flex: 0 0 0;
+      height: 0 !important;
+      overflow: hidden;
+      visibility: hidden;  /* keep in DOM so Monaco stays initialised */
+    }
+
+    .prd-editor {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+    }
+
+    /* ── Summary markdown ── */
+    .prd-summary-body { overflow-y: auto; padding: 16px; }
+    .prd-markdown {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #1e293b;
+    }
+    .prd-markdown :is(h1, h2, h3) { font-weight: 700; margin: .8em 0 .3em; }
+    .prd-markdown h1 { font-size: 1.2em; }
+    .prd-markdown h2 { font-size: 1.05em; }
+    .prd-markdown h3 { font-size: .95em; }
+    .prd-markdown p { margin: .35em 0; }
+    .prd-markdown ul, .prd-markdown ol { padding-left: 1.3em; margin: .3em 0; }
+    .prd-markdown code { background: rgba(0,0,0,.06); border-radius: 3px; padding: 1px 4px; font-size: 12px; }
+    .prd-markdown pre { background: rgba(0,0,0,.05); border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
+    .prd-markdown pre code { background: none; padding: 0; }
+    .prd-markdown table { border-collapse: collapse; width: 100%; font-size: 12px; margin: .5em 0; }
+    .prd-markdown th, .prd-markdown td { border: 1px solid #d1d5db; padding: 4px 8px; text-align: left; }
+    .prd-markdown th { background: rgba(0,0,0,.04); font-weight: 600; }
+    .prd-markdown svg { max-width: 100%; height: auto; }
+  `]
 })
 export class ConvertPrdComponent implements OnInit, OnDestroy {
   decodedXml = '';
   summaryText = '';
+  activeView: 'xml' | 'summary' = 'xml';
   private pendingQuestions: Array<{ activityId: string; kind: 'form-id' | 'addressee' | string; text: string }> = [];
   savedFolder: string | null = null;
   llmUsed = false;
@@ -89,6 +331,7 @@ export class ConvertPrdComponent implements OnInit, OnDestroy {
   private activeConvertRequestId: string | null = null;
   private activeConvertProgressUnsub: (() => void) | null = null;
   private progressNotifiedStages = new Set<string>();
+  private isCancelled = false;
 
   editorOptions = {
     theme: 'vs-light',
@@ -147,9 +390,20 @@ export class ConvertPrdComponent implements OnInit, OnDestroy {
     });
   }
 
+  cancelConversion() {
+    this.isCancelled = true;
+    if (this.activeConvertRequestId) {
+      this.copilotService.cancelConvertPrd(this.activeConvertRequestId);
+    }
+    this.stopConvertProgressTracking();
+    this.convertStatusMessage = 'Conversion cancelled.';
+    this.convertProgressPercent = 0;
+  }
+
   async onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     if (!input.files || input.files.length === 0) return;
+    this.isCancelled = false;
     const file = input.files[0];
     const requestId = this.createConvertRequestId(file.name);
     this.startConvertProgressTracking(requestId, file.name);
@@ -174,6 +428,7 @@ export class ConvertPrdComponent implements OnInit, OnDestroy {
         }
 
         const res = await this.copilotService.convertPrd({ content, modelId, fileName: file.name, requestId });
+        if (this.isCancelled) return;
         if (res && res.success && res.result) {
           const out = this.pickBestResult(res.result);
           this.summaryText = out.summary || (out.summary === undefined ? JSON.stringify(out, null, 2) : '');
@@ -182,6 +437,8 @@ export class ConvertPrdComponent implements OnInit, OnDestroy {
           // If we passed a modelId earlier, assume LLM summary was requested
           this.llmUsed = !!(modelId);
           this.decodedXml = out.decodedXml || this.decodedXml;
+          // Auto-switch to summary tab when content is ready
+          if (this.summaryText) this.activeView = 'summary';
 
           // Quick heuristics: ask chat about missing forms/addressee on user activities
           const questions: string[] = [];
