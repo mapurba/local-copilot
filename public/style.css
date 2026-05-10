@@ -180,3 +180,60 @@ footer {
   position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 99;
 }
 #overlay.hidden { display: none; }
+
+/* ── Toggle (Always Allow) ───────────────────────────────────────────── */
+.toggle-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.82rem; color: var(--text-dim); cursor: pointer; user-select: none;
+}
+.toggle-label input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+
+/* ── Approval card ────────────────────────────────────────────────────── */
+/* Shown when human-in-loop is active and the LLM requests a tool call.  */
+.approval-card {
+  background: #1a1200;
+  border: 1px solid #d29922;
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+  width: 100%;
+}
+.approval-card.resolved {
+  opacity: .55;
+  border-color: var(--border);
+}
+.approval-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.approval-icon { font-size: 1rem; }
+.approval-title { font-weight: 600; color: #d29922; }
+.approval-name {
+  font-family: var(--mono); font-size: 0.82rem; color: var(--accent-h);
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; padding: 2px 7px; margin-left: auto;
+}
+.approval-args {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px; font-family: var(--mono); font-size: 0.78rem;
+  white-space: pre-wrap; word-break: break-all; margin-bottom: 10px;
+  max-height: 120px; overflow-y: auto;
+}
+.approval-btns { display: flex; gap: 8px; }
+.btn-allow {
+  background: #1a4a1a; border: 1px solid #238636; color: #3fb950;
+  padding: 5px 16px; border-radius: var(--radius); font-weight: 600;
+  cursor: pointer; font-size: 0.82rem; transition: background .15s;
+}
+.btn-allow:hover { background: #238636; color: white; }
+.btn-deny {
+  background: #3d1a1a; border: 1px solid #f85149; color: #f85149;
+  padding: 5px 16px; border-radius: var(--radius); font-weight: 600;
+  cursor: pointer; font-size: 0.82rem; transition: background .15s;
+}
+.btn-deny:hover { background: #f85149; color: white; }
+.approval-verdict {
+  font-size: 0.8rem; font-weight: 600; padding: 4px 0;
+}
+.approval-verdict.allowed { color: #3fb950; }
+.approval-verdict.denied  { color: #f85149; }

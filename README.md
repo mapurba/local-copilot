@@ -1,29 +1,25 @@
-# Copilot Chat
+## Design Overview
 
-Minimal Electron + Angular desktop client for GitHub Copilot chat.
+This project is a minimal Electron + Angular desktop client for GitHub Copilot chat, designed for extensibility and clarity:
 
-## Quick Start
+- **Architecture**:  
+  - Electron provides the desktop shell.  
+  - Angular powers the renderer/UI.  
+  - The main process handles authentication, IPC, chat streaming, and tool execution.  
+  - The preload script securely exposes APIs to the renderer via `window.copilot`.
 
-- Install: npm install
-- Dev: npm run dev
-- Build renderer: npm run build
-- Build Electron package: npm run build:electron
+- **Tool System**:  
+  - Tools are simple functions registered in the main process and can be called by the LLM or UI.  
+  - All file operations are sandboxed to a configurable workspace directory.  
+  - Adding new tools is as simple as creating a file in `src/main/tools/` and registering it.
 
-## Docs
+- **Authentication**:  
+  - Supports GitHub Copilot authentication via device code flow or token.
 
-- Setup: docs/GETTING_STARTED.md
-- Custom tools: docs/CUSTOM_TOOLS_GUIDE.md
-- Thinking logs: docs/THINKING_LOGS_QUICK_REFERENCE.md
-- Dedup logs: docs/LOG_DEDUPLICATION_SUMMARY.md
+- **Debug Panel**:  
+  - Real-time display of tool calls, LLM thinking chains, and API logs.  
+  - Toggleable and resizable in the UI.
 
-## Structure
-
-- src/main: Electron main process (auth, IPC, chat stream)
-- src/preload: secure bridge exposed to renderer
-- src/renderer: Angular UI
-
-## Notes
-
-- Dev renderer runs on http://localhost:4100
-- Renderer build output: dist/renderer-angular
-- Safe to delete generated folders: dist, dist-electron, release
+- **Development**:  
+  - Hot reload for both Angular and Electron processes.  
+  - All IPC, preload, and service wiring for tools is already in place.
