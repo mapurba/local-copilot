@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Agent Demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header>
+    <h1>🤖 AI Agent Demo</h1>
+    <div class="header-controls">
+      <label for="model-select">Model:</label>
+      <select id="model-select" disabled>
+        <option>Loading models…</option>
+      </select>
+      <button id="btn-tools" title="Show available tools">🛠 Tools</button>
+    </div>
+  </header>
+
+  <!-- ── Main layout ────────────────────────────────────────────────────── -->
+  <div class="layout">
+
+    <!-- Message list -->
+    <main id="messages" role="log" aria-live="polite">
+      <div class="welcome">
+        <p><strong>Welcome!</strong> This is a minimal AI agent with real tools.</p>
+        <p>Try asking: <em>"List files in the current directory"</em>, <em>"Solve 2x² - 3x - 5 = 0"</em>, or <em>"Fetch https://api.github.com"</em></p>
+      </div>
+    </main>
+
+    <!-- Input area -->
+    <footer>
+      <div class="input-row">
+        <textarea
+          id="user-input"
+          rows="1"
+          placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+          autofocus
+        ></textarea>
+        <button id="btn-send" title="Send">Send</button>
+      </div>
+      <div id="status-bar"></div>
+    </footer>
+  </div>
+
+  <!-- ── Tools panel (hidden by default) ───────────────────────────────── -->
+  <div id="tools-panel" class="panel hidden">
+    <div class="panel-header">
+      <h2>Available Tools</h2>
+      <button class="btn-close" id="btn-close-tools">✕</button>
+    </div>
+    <div id="tools-list"></div>
+  </div>
+  <div id="overlay" class="hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
