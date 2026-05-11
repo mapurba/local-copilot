@@ -19,6 +19,8 @@ const browserTools = require('./browser');
 const agentTools  = require('./agent');
 const sshTools    = require('./ssh');
 const gitTools    = require('./git');
+const javaTools   = require('./java');
+const nodeTools   = require('./node');
 
 class ToolRegistry {
   constructor() {
@@ -157,6 +159,46 @@ function initializeDefaultTools() {
   toolRegistry.register('github:listIssues',        gitTools.listIssues,        'github', 'List open issues for a repo as structured JSON. Args: repoFullName, labels (optional array), assignee (optional), perPage (default 30).');
   toolRegistry.register('github:updateIssueOrPR',   gitTools.updateIssueOrPR,   'github', 'Close/reopen an issue or PR and/or post a comment. Args: repoFullName, number, status ("open"/"closed", optional), commentBody (optional).');
   toolRegistry.register('github:searchCode',        gitTools.searchCode,        'github', 'Search code across a GitHub repo without cloning. Supports GitHub search syntax (e.g. "functionName extension:ts"). Args: repoFullName, query, perPage (default 20).');
+
+  // ── java ─────────────────────────────────────────────────────────────────────
+  // All java: tools accept executionTarget: 'local' (default) or an ssh: sessionId.
+  // Use these tools after git:cloneRepository has cloned a Java/Maven/Gradle project.
+
+  // Static analysis
+  toolRegistry.register('java:inspectProject',      javaTools.inspectProject,      'java', 'Detect build system (Maven/Gradle), Java version, main class, and whether a Dockerfile exists. Run this first on any newly cloned Java repo. Args: workspacePath, executionTarget.');
+  toolRegistry.register('java:getPackageHierarchy', javaTools.getPackageHierarchy, 'java', 'List all .java source files under src/main/java sorted by path. Use this to map the project structure before reading or editing code. Args: workspacePath, executionTarget.');
+  toolRegistry.register('java:findComponent',       javaTools.findComponent,       'java', 'Find Java source files carrying a specific annotation (e.g. @RestController, @Service, @Entity). Args: workspacePath, annotationName, executionTarget.');
+  toolRegistry.register('java:analyzeDependencies', javaTools.analyzeDependencies, 'java', 'Parse pom.xml or build.gradle and return a structured list of declared dependencies with groupId, artifactId, version, and scope. Args: workspacePath, executionTarget.');
+
+  // Dockerized build & run
+  toolRegistry.register('java:generateDockerfile',    javaTools.generateDockerfile,    'java', 'Write a production-ready multi-stage Dockerfile to the workspace. Stage 1 builds the jar (Maven or Gradle with dependency caching). Stage 2 runs on a slim JRE. Call before java:dockerBuild if no Dockerfile exists. Args: workspacePath, buildSystem ("maven"/"gradle"/"auto"), javaVersion (e.g. "17"), executionTarget.');
+  toolRegistry.register('java:dockerBuild',           javaTools.dockerBuild,           'java', 'Build a Docker image from the workspace Dockerfile. Captures stderr so the LLM can self-correct on compilation errors. Args: workspacePath, imageName (e.g. "my-app:latest"), executionTarget.');
+  toolRegistry.register('java:runContainerizedApp',   javaTools.runContainerizedApp,   'java', 'Start the compiled application in a Docker container with port mapping, environment variable injection, a 2 GB memory limit, and an automatic health check. Args: workspacePath, imageName, hostPort (default 8080), envVars (object), healthPath (default "/actuator/health"), executionTarget.');
+
+  // Verification
+  toolRegistry.register('java:runTests',     javaTools.runTests,     'java', 'Run the Maven or Gradle test suite inside a Docker container (no local JDK required). Returns pass/fail counts parsed from Surefire or Gradle output. Args: workspacePath, buildSystem ("maven"/"gradle"/"auto"), executionTarget.');
+  toolRegistry.register('java:curlEndpoint', javaTools.curlEndpoint, 'java', 'Send an HTTP request to a deployed endpoint and return status code, response body, and latency. Use this to verify that a fix or feature works after deploying. Args: url, method (GET/POST/PUT/DELETE), body (optional), headers (optional object), executionTarget.');
+
+  // ── node ────────────────────────────────────────────────────────────────────
+  // All node: tools accept executionTarget: 'local' (default) or an ssh: sessionId.
+  // Use these tools after git:cloneRepository has cloned a Node.js project.
+  // Frameworks auto-detected: Next.js, Nuxt, Remix, SvelteKit, NestJS, Fastify,
+  // Express, Koa, Hapi, Hono, React (CRA+Vite), Vue, Angular, Svelte, Vite.
+
+  // Static analysis
+  toolRegistry.register('node:inspectProject',    nodeTools.inspectProject,    'node', 'Detect Node.js framework (Express, NestJS, React, Next.js, Vue, Angular, etc.), project type (frontend/backend/fullstack), package manager (npm/yarn/pnpm/bun), Node version, and whether a Dockerfile exists. Call this first after cloning any Node.js repo. Args: workspacePath, executionTarget.');
+  toolRegistry.register('node:listDependencies',  nodeTools.listDependencies,  'node', 'Parse package.json and return all dependencies, devDependencies, and peerDependencies as structured JSON. Useful for checking if a library is already installed before adding it. Args: workspacePath, executionTarget.');
+  toolRegistry.register('node:findComponent',     nodeTools.findComponent,     'node', 'Find source files by role shorthand or grep pattern. Role shortcuts: routes, controllers, services, components, models, middleware. Or pass a plain grep pattern string. Args: workspacePath, pattern, role, executionTarget.');
+  toolRegistry.register('node:analyzeScripts',    nodeTools.analyzeScripts,    'node', 'List all npm scripts from package.json with their commands. Reveals how to build, test, start, dev-serve, and lint the project. Args: workspacePath, executionTarget.');
+
+  // Dockerized build & run
+  toolRegistry.register('node:generateDockerfile',   nodeTools.generateDockerfile,   'node', 'Generate a production-ready, framework-aware Dockerfile. Frontend SPAs (React/Vue/Angular/Svelte) get a multi-stage build with nginx:alpine runtime and an nginx.conf for SPA client-side routing. Backends and SSR apps (Express/NestJS/Next.js/Nuxt) get node:alpine with dumb-init and a non-root user. Also auto-detects Node version, package manager, and dist directory. Args: workspacePath, executionTarget.');
+  toolRegistry.register('node:dockerBuild',          nodeTools.dockerBuild,          'node', 'Build a Docker image from the workspace Dockerfile. Captures stderr so the LLM can self-correct on build or TypeScript compilation failures. Args: workspacePath, imageName (e.g. "my-app:latest"), executionTarget.');
+  toolRegistry.register('node:runContainerizedApp',  nodeTools.runContainerizedApp,  'node', 'Start the Node.js application in a Docker container. Auto-detects the correct internal port (80 for nginx/frontend, app port for backend). Supports port mapping, env variable injection, 1 GB memory limit, and health check polling. Args: workspacePath, imageName, hostPort (default auto), envVars (object), healthPath (optional), executionTarget.');
+
+  // Verification
+  toolRegistry.register('node:runTests',     nodeTools.runTests,     'node', 'Run the project test suite (Jest, Vitest, or Mocha) inside a Docker container. Auto-detects the test runner and passes appropriate no-watch/CI flags. Returns parsed pass/fail/total counts. Args: workspacePath, executionTarget.');
+  toolRegistry.register('node:curlEndpoint', nodeTools.curlEndpoint, 'node', 'Send an HTTP request to a deployed endpoint and return status code, response body, and latency in milliseconds. Use this to verify a fix or new feature works after deployment. Args: url, method (GET/POST/PUT/DELETE/PATCH), body (optional), headers (optional object), executionTarget.');
 
   console.log(`[Tools] Ready: ${toolRegistry.list().length} tools loaded\n`);
 }
