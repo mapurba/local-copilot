@@ -1,21 +1,47 @@
 /* ── Reset & base ───────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Light theme (default) ──────────────────────────────────────────── */
 :root {
-  --bg:        #0d1117;
-  --surface:   #161b22;
-  --border:    #30363d;
-  --accent:    #1f6feb;
-  --accent-h:  #388bfd;
-  --text:      #c9d1d9;
-  --text-dim:  #8b949e;
-  --user-bg:   #1f3d52;
-  --ai-bg:     #161b22;
-  --tool-bg:   #0d2137;
-  --tool-border:#1f6feb;
-  --radius:    8px;
-  --font:      -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --mono:      'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  --bg:            #f6f8fa;
+  --surface:       #ffffff;
+  --border:        #d0d7de;
+  --accent:        #0969da;
+  --accent-h:      #0550ae;
+  --text:          #1f2328;
+  --text-dim:      #656d76;
+  --user-bg:       #ddf4ff;
+  --user-border:   #79c0ff;
+  --ai-bg:         #ffffff;
+  --tool-bg:       #f6f8fa;
+  --tool-border:   #0969da;
+  --table-header:  rgba(0,0,0,.04);
+  --table-row-alt: rgba(0,0,0,.02);
+  --approval-bg:   #fffbf0;
+  --radius:        8px;
+  --font:          -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono:          'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  color-scheme: light;
+}
+
+/* ── Dark theme ──────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg:            #0d1117;
+  --surface:       #161b22;
+  --border:        #30363d;
+  --accent:        #1f6feb;
+  --accent-h:      #388bfd;
+  --text:          #c9d1d9;
+  --text-dim:      #8b949e;
+  --user-bg:       #1f3d52;
+  --user-border:   #2a5178;
+  --ai-bg:         #161b22;
+  --tool-bg:       #0d2137;
+  --tool-border:   #1f6feb;
+  --table-header:  rgba(255,255,255,.05);
+  --table-row-alt: rgba(255,255,255,.02);
+  --approval-bg:   #1a1200;
+  color-scheme: dark;
 }
 
 html, body { height: 100%; font-family: var(--font); background: var(--bg); color: var(--text); }
@@ -78,7 +104,7 @@ select:disabled { opacity: .5; cursor: not-allowed; }
 }
 /* user bubbles keep pre-wrap; assistant overrides to normal (markdown renders own whitespace) */
 .msg.assistant .bubble { white-space: normal; }
-.msg.user .bubble      { background: var(--user-bg); border: 1px solid #2a5178; }
+.msg.user .bubble      { background: var(--user-bg); border: 1px solid var(--user-border); }
 .msg.assistant .bubble { background: var(--ai-bg);   border: 1px solid var(--border); }
 
 /* ── Markdown prose inside assistant bubbles ────────────────────────── */
@@ -120,8 +146,8 @@ select:disabled { opacity: .5; cursor: not-allowed; }
 .msg.assistant .bubble td {
   border: 1px solid var(--border); padding: 5px 10px; text-align: left;
 }
-.msg.assistant .bubble th { background: rgba(255,255,255,.05); font-weight: 600; }
-.msg.assistant .bubble tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+.msg.assistant .bubble th { background: var(--table-header); font-weight: 600; }
+.msg.assistant .bubble tr:nth-child(even) td { background: var(--table-row-alt); }
 .msg.assistant .bubble hr { border: none; border-top: 1px solid var(--border); margin: .6em 0; }
 .msg.assistant .bubble a { color: var(--accent-h); text-decoration: underline; }
 .msg.assistant .bubble strong { font-weight: 600; }
@@ -239,7 +265,7 @@ footer {
 /* ── Approval card ────────────────────────────────────────────────────── */
 /* Shown when human-in-loop is active and the LLM requests a tool call.  */
 .approval-card {
-  background: #1a1200;
+  background: var(--approval-bg);
   border: 1px solid #d29922;
   border-radius: var(--radius);
   padding: 12px 14px;

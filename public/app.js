@@ -17,6 +17,7 @@ const btnSend       = document.getElementById('btn-send');
 const messagesEl    = document.getElementById('messages');
 const statusBar     = document.getElementById('status-bar');
 const btnTools      = document.getElementById('btn-tools');
+const btnTheme      = document.getElementById('btn-theme');
 const toolsPanel    = document.getElementById('tools-panel');
 const btnCloseTools = document.getElementById('btn-close-tools');
 const toolsList     = document.getElementById('tools-list');
@@ -32,6 +33,19 @@ const activeToolCards = new Map();
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadModels();
 loadTools();
+initTheme();
+
+// ── Theme toggle ─────────────────────────────────────────────────────────────
+function initTheme() {
+  const isDark = () => document.documentElement.dataset.theme === 'dark';
+  btnTheme.textContent = isDark() ? '☀️' : '🌙';
+  btnTheme.addEventListener('click', () => {
+    const next = isDark() ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    btnTheme.textContent = next === 'dark' ? '☀️' : '🌙';
+    localStorage.setItem('theme', next);
+  });
+}
 
 // ── Model loading ─────────────────────────────────────────────────────────────
 async function loadModels() {
