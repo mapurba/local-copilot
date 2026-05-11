@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-demo",
   "version": "1.0.0",
-  "description": "Minimal AI agent web server with tools — brownbag demo",
+  "description": "Minimal AI agent web server with tools ï¿½ brownbag demo",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,7 +12,8 @@
     "@langchain/langgraph": "^0.2.0",
     "@langchain/openai": "^0.3.0",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "ssh2": "^1.17.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
