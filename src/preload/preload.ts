@@ -98,6 +98,10 @@ contextBridge.exposeInMainWorld('copilot', {
     ipcRenderer.invoke('vcd:signIn', input),
   vcdStatus: () => ipcRenderer.invoke('vcd:status'),
   vcdSignOut: () => ipcRenderer.invoke('vcd:signOut'),
+  onVcdSessionExpired: (callback: () => void) => {
+    ipcRenderer.on('vcd:session-expired', callback);
+    return () => ipcRenderer.removeListener('vcd:session-expired', callback);
+  },
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) =>
   //   ipcRenderer.invoke('terminal:create', options),

@@ -26,6 +26,7 @@ export interface CopilotAPI {
   vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdStatus: () => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdSignOut: () => Promise<{ connected: boolean }>;
+  onVcdSessionExpired: (callback: () => void) => () => void;
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) => Promise<{ success: boolean; terminalId?: string; error?: string }>;
   // terminalInput: (options: { terminalId: string; data: string }) => Promise<{ success: boolean; error?: string }>;

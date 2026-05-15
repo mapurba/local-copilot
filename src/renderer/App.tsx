@@ -83,6 +83,15 @@ const App: React.FC = () => {
   useEffect(() => {
     checkAuth();
     checkVcd();
+
+    // Listen for VCD session expiry
+    const cleanup = window.copilot.onVcdSessionExpired(() => {
+      console.log('[App] VCD session expired, showing login modal');
+      setVcdStatus({ connected: false });
+      setShowVcdModal(true);
+    });
+
+    return cleanup;
   }, []);
 
   // Handle authentication completion
@@ -103,12 +112,13 @@ const App: React.FC = () => {
     }
   };
 
-  // DISABLED: Unused handler stubs - kept for future reference if needed
-  // const _handleVcdLogout = async () => {
-  //   await window.copilot.vcdSignOut();
-  //   setVcdStatus({ connected: false });
-  // };
+  // Handle VCD logout
+  const handleVcdLogout = async () => {
+    await window.copilot.vcdSignOut();
+    setVcdStatus({ connected: false });
+  };
 
+  // DISABLED: Unused handler stub - kept for future reference if needed
   // const _handleCopilotDisconnect = async () => {
   //   await window.copilot.signOut();
   //   setAuthStatus('Unknown');
@@ -136,6 +146,7 @@ const App: React.FC = () => {
             <Sidebar
               vcdConnected={vcdStatus.connected}
               onVcdSignIn={() => setShowVcdModal(true)}
+              onVcdSignOut={handleVcdLogout}
             />
           }
           right={

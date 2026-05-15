@@ -4,9 +4,13 @@ import { XMLParser } from 'fast-xml-parser';
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
+import { BrowserWindow } from 'electron';
 import { getVcdContext, setPendingForm, getPendingForm, VcdCreateForm } from './vcdStore';
 import { rewriteEnvWithVmIp } from './envRewrite';
 import { logApi } from './apiLogger';
+import { attemptAutoReauth } from './vcdAuth';
+
+let isAutoReauthInProgress = false;
 
 /**
  * Parse vApp XML and return an array of vApp details.
@@ -128,6 +132,71 @@ function httpsRequest(
   });
 }
 
+/**
+ * Notify renderer that VCD session has expired and user needs to re-authenticate.
+ */
+function notifySessionExpired(): void {
+  const mainWindow = BrowserWindow.getAllWindows()[0];
+  if (mainWindow) {
+    mainWindow.webContents.send('vcd:session-expired');
+  }
+}
+
+/**
+ * Wrapper around httpsRequest that detects 401/403 errors and attempts auto-reauth.
+ * If auto-reauth succeeds, retries the request once with the new token.
+ * If auto-reauth fails, notifies the renderer to show the login modal.
+ */
+async function httpsRequestWithAutoReauth(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body?: string,
+  timeoutMs = 30000,
+  rejectUnauthorized?: boolean
+): Promise<HttpResult> {
+  const result = await httpsRequest(url, method, headers, body, timeoutMs, rejectUnauthorized);
+  
+  // Check if session expired (401 Unauthorized or 403 Forbidden)
+  if (result.status === 401 || result.status === 403) {
+    console.log(`[vcdApi] Got ${result.status}, attempting auto re-authentication...`);
+    
+    // Prevent concurrent re-auth attempts
+    if (isAutoReauthInProgress) {
+      console.log('[vcdApi] Auto re-auth already in progress, skipping...');
+      return result;
+    }
+    
+    try {
+      isAutoReauthInProgress = true;
+      const reauthSuccess = await attemptAutoReauth();
+      
+      if (reauthSuccess) {
+        console.log('[vcdApi] Auto re-authentication successful, retrying request...');
+        // Get updated context with new token
+        const ctx = getVcdContext();
+        // Update Authorization header with new token
+        const updatedHeaders = { ...headers, Authorization: `Bearer ${ctx.token}` };
+        // Retry the request with new token
+        const retryResult = await httpsRequest(url, method, updatedHeaders, body, timeoutMs, rejectUnauthorized);
+        return retryResult;
+      } else {
+        console.log('[vcdApi] Auto re-authentication failed, notifying renderer...');
+        notifySessionExpired();
+        return result;
+      }
+    } catch (error) {
+      console.error('[vcdApi] Error during auto re-auth:', error);
+      notifySessionExpired();
+      return result;
+    } finally {
+      isAutoReauthInProgress = false;
+    }
+  }
+  
+  return result;
+}
+
 function jsonParseSafe(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -236,7 +305,7 @@ async function queryRecords(
   if (sortDesc) url.searchParams.set('sortDesc', sortDesc);
 
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`);
-  const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`query_records(${recordType}) failed: HTTP ${result.status}`);
   }
@@ -275,7 +344,7 @@ export async function listVApps(pageSize = 100): Promise<Record<string, unknown>
   // Remove any empty headers
   Object.keys(headers).forEach((k) => { if (!headers[k]) delete headers[k]; });
 
-  const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`listVApps failed: HTTP ${result.status}`);
   }
@@ -288,7 +357,7 @@ export async function listVApps(pageSize = 100): Promise<Record<string, unknown>
 async function getVappDetailsXml(vappHref: string): Promise<string> {
   const ctx = getVcdContext();
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`);
-  const result = await httpsRequest(vappHref, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(vappHref, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`get_vapp_details failed: HTTP ${result.status}`);
   }
@@ -298,7 +367,7 @@ async function getVappDetailsXml(vappHref: string): Promise<string> {
 async function getVmDetailsXml(vmHref: string): Promise<string> {
   const ctx = getVcdContext();
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`);
-  const result = await httpsRequest(vmHref, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(vmHref, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`get_vm_details failed: HTTP ${result.status}`);
   }
@@ -334,7 +403,7 @@ export async function getVmDetails(vmId: string): Promise<Record<string, unknown
   const id = vmId.startsWith('http') ? vmId.split('/vm-')[1] : vmId;
   const url = `https://${ctx.host}/api/vApp/vm-${id}`;
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`);
-  const result = await httpsRequest(url, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`get_vm_details failed: HTTP ${result.status}`);
   }
@@ -350,7 +419,7 @@ export async function powerOnVm(vmHref: string): Promise<Record<string, unknown>
     ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`),
     'Content-Length': '0',
   };
-  const result = await httpsRequest(url, 'POST', headers, '', 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url, 'POST', headers, '', 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`power_on failed: HTTP ${result.status}`);
   }
@@ -364,7 +433,7 @@ export async function powerOffVm(vmHref: string): Promise<Record<string, unknown
     ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`),
     'Content-Length': '0',
   };
-  const result = await httpsRequest(url, 'POST', headers, '', 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url, 'POST', headers, '', 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`power_off failed: HTTP ${result.status}`);
   }
@@ -374,7 +443,7 @@ export async function powerOffVm(vmHref: string): Promise<Record<string, unknown
 export async function deleteVm(vmHref: string): Promise<Record<string, unknown>> {
   const ctx = getVcdContext();
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`);
-  const result = await httpsRequest(vmHref, 'DELETE', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(vmHref, 'DELETE', headers, undefined, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`delete_vm failed: HTTP ${result.status}`);
   }
@@ -398,7 +467,7 @@ export async function listTemplates(nameFilter = ''): Promise<Record<string, unk
   url.searchParams.set('links', 'true');
 
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`);
-  const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
 
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`list_templates failed: HTTP ${result.status}`);
@@ -439,7 +508,7 @@ async function resolveTemplateVmHref(vappTemplateUuid: string): Promise<string> 
     ctx.orgName,
     ctx.orgUuid
   );
-  const result = await httpsRequest(url, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
   if (result.status >= 200 && result.status < 300) {
     const match = result.body.match(/<Vm[^>]*href="([^"]*\/vm-[^"]+)"/i);
     if (match && match[1]) return match[1];
@@ -965,7 +1034,7 @@ async function waitForTask(taskHref: string, timeoutSec = 60): Promise<boolean> 
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`);
   const start = Date.now();
   while ((Date.now() - start) / 1000 < timeoutSec) {
-    const result = await httpsRequest(taskHref, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
+    const result = await httpsRequestWithAutoReauth(taskHref, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
     if (result.status !== 200) return false;
     if (result.body.includes('status="success"')) return true;
     if (result.body.includes('status="error"') || result.body.includes('status="aborted"')) return false;
@@ -982,7 +1051,7 @@ async function updateHardwareItem(vmHref: string, sectionName: 'cpu' | 'memory',
     ctx.token,
     `application/vnd.vmware.vcloud.rasdItem+xml;version=${ctx.apiVersion}`
   );
-  const getRes = await httpsRequest(sectionUrl, 'GET', getHeaders, undefined, 30000, ctx.rejectUnauthorized);
+  const getRes = await httpsRequestWithAutoReauth(sectionUrl, 'GET', getHeaders, undefined, 30000, ctx.rejectUnauthorized);
   if (getRes.status < 200 || getRes.status >= 300) {
     throw new Error(`Failed to fetch ${sectionName} section: HTTP ${getRes.status}`);
   }
@@ -1005,7 +1074,7 @@ async function updateHardwareItem(vmHref: string, sectionName: 'cpu' | 'memory',
     ...baseHeaders(ctx.apiVersion, ctx.token, `application/vnd.vmware.vcloud.task+xml;version=${ctx.apiVersion}`),
     'Content-Type': 'application/vnd.vmware.vcloud.rasdItem+xml',
   };
-  const putRes = await httpsRequest(sectionUrl, 'PUT', putHeaders, xml, 30000, ctx.rejectUnauthorized);
+  const putRes = await httpsRequestWithAutoReauth(sectionUrl, 'PUT', putHeaders, xml, 30000, ctx.rejectUnauthorized);
   if (putRes.status < 200 || putRes.status >= 300) {
     throw new Error(`Failed to update ${sectionName}: HTTP ${putRes.status}`);
   }
@@ -1134,7 +1203,7 @@ export async function createSnapshot(
     memory,
     quiesce,
   });
-  const res = await httpsRequest(cloudapiUrl, 'POST', jsonHeaders, body, 30000, ctx.rejectUnauthorized);
+  const res = await httpsRequestWithAutoReauth(cloudapiUrl, 'POST', jsonHeaders, body, 30000, ctx.rejectUnauthorized);
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`create_snapshot failed: cloudapi vm snapshots HTTP ${res.status} - ${res.body.slice(0, 600)}`);
   }
@@ -1160,7 +1229,7 @@ export async function revertSnapshot(vmNameOrHref: string): Promise<Record<strin
       ...baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
       'Content-Length': '0',
     };
-    const result = await httpsRequest(url, 'POST', headers, '', 30000, ctx.rejectUnauthorized);
+    const result = await httpsRequestWithAutoReauth(url, 'POST', headers, '', 30000, ctx.rejectUnauthorized);
     if (result.status >= 200 && result.status < 300) {
       return { status: 'success', action: 'revertSnapshot', vm_href: vmHref };
     }
@@ -1178,7 +1247,7 @@ export async function listVmSnapshots(vmNameOrHref: string): Promise<Record<stri
   const vmId = getVmIdFromHref(vmHref);
   const sectionUrl = `${vmHref}/snapshotSection`;
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`);
-  const result = await httpsRequest(sectionUrl, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(sectionUrl, 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
 
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`list_vm_snapshots failed: HTTP ${result.status}`);
@@ -1353,7 +1422,7 @@ export async function createVmCopy(
 
   const attemptRecompose = async (sections: string[]) => {
     const body = buildXmlBody(sections);
-    const response = await httpsRequest(recomposeUrl, 'POST', xmlHeaders, body, 30000, ctx.rejectUnauthorized);
+    const response = await httpsRequestWithAutoReauth(recomposeUrl, 'POST', xmlHeaders, body, 30000, ctx.rejectUnauthorized);
     return response;
   };
 
@@ -1588,7 +1657,7 @@ export async function createVmFromTemplate(params: {
   );
 
   const url = `https://${ctx.host}/api/vdc/${params.vdc_id}/action/instantiateVmFromTemplate`;
-  const result = await httpsRequest(url, 'POST', headers, xmlPayload, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url, 'POST', headers, xmlPayload, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`create_vm failed: HTTP ${result.status} - ${result.body.slice(0, 500)}`);
   }
@@ -1682,7 +1751,7 @@ export async function listTasks(minutesAgo = 60, pageSize = 50): Promise<Record<
   url.searchParams.set('links', 'true');
 
   const headers = baseHeaders(ctx.apiVersion, ctx.token, `application/*+json;version=${ctx.apiVersion}`);
-  const result = await httpsRequest(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
+  const result = await httpsRequestWithAutoReauth(url.toString(), 'GET', headers, undefined, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`list_tasks failed: HTTP ${result.status}`);
   }

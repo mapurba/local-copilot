@@ -34,6 +34,7 @@ interface SavedSession {
 interface SidebarProps {
   vcdConnected: boolean;
   onVcdSignIn?: () => void;
+  onVcdSignOut?: () => void;
   onOpenTerminal?: (vm: VM, user?: string, password?: string, command?: string) => void;
   hasTerminals?: boolean;
   activeTerminalId?: string | null;
@@ -48,6 +49,7 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({
   vcdConnected,
   onVcdSignIn,
+  onVcdSignOut,
   onOpenTerminal,
   // DISABLED: These parameters are no longer used since explorer tab was disabled
   // hasTerminals,
@@ -116,11 +118,20 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Sidebar Panel */}
       <div className="flex flex-col flex-1 min-h-0 bg-gray-900 border-r border-gray-700 overflow-hidden">
-        {/* Header with title */}
-        <div className="px-4 py-3 bg-gray-800 border-b border-gray-700">
+        {/* Header with title and logout button */}
+        <div className="px-4 py-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
           <h2 className="text-xs font-semibold text-gray-300">
             {tabs.find(t => t.id === activeTab)?.label}
           </h2>
+          {vcdConnected && onVcdSignOut && (
+            <button
+              onClick={onVcdSignOut}
+              className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
+              title="Disconnect from VCD"
+            >
+              Logout
+            </button>
+          )}
         </div>
 
         {/* Content Area */}

@@ -34,6 +34,7 @@ interface StoredVcdSession {
   host: string;
   org: string;
   username: string;
+  password?: string; // Encrypted password for auto-reauth
   token: string;
   apiVersion: string;
   vdcId?: string;
@@ -187,6 +188,7 @@ export async function vcdSignIn(input: VcdLoginInput): Promise<{ connected: bool
     host: VCD_HOST,
     org: orgName,
     username: input.username,
+    password: input.password, // Store password for auto-reauth
     token,
     apiVersion,
     vdcId: input.vdcId || orgDefaults.vdcId,
@@ -246,4 +248,48 @@ export async function vcdSignOut(): Promise<{ connected: false }> {
   await clearSession();
   clearVcdContext();
   return { connected: false };
+}
+
+/**
+ * Get stored credentials for auto-reauth.
+ * Returns null if no credentials are stored.
+ */
+export async function getStoredCredentials(): Promise<VcdLoginInput | null> {
+  const session = await readSession();
+  if (!session || !session.password) {
+    return null;
+  }
+  return {
+    host: session.host,
+    org: session.org,
+    username: session.username,
+    password: session.password,
+    apiVersion: session.apiVersion,
+    vdcId: session.vdcId,
+    orgUuid: session.orgUuid,
+    networkName: session.networkName,
+    gateway: session.gateway,
+    dnsServers: session.dnsServers?.join(','),
+    storageProfileId: session.storageProfileId,
+    computePolicyId: session.computePolicyId,
+    rejectUnauthorized: session.rejectUnauthorized,
+  };
+}
+
+/**
+ * Attempt automatic re-authentication using stored credentials.
+ * Returns true if successful, false otherwise.
+ */
+export async function attemptAutoReauth(): Promise<boolean> {
+  try {
+    const credentials = await getStoredCredentials();
+    if (!credentials) {
+      return false;
+    }
+    await vcdSignIn(credentials);
+    return true;
+  } catch (error) {
+    console.error('[vcdAuth] Auto re-authentication failed:', error);
+    return false;
+  }
 }
