@@ -24,6 +24,9 @@ import {
 } from './vcdApi';
 import { setVcdContext, getVcdContext } from './vcdStore';
 import { formatToolResult } from './toolResultFormatter';
+import { toolRegistry, approvalSystem } from './tools';
+import { taskTracker } from './taskTracker';
+import { vmWatcher } from './vmWatcher';
 
 // Dynamic requires — avoids TypeScript resolving @langchain/* type declarations at build time
 const { ChatOpenAI } = require('@langchain/openai');
@@ -44,10 +47,14 @@ export interface ChatMessage {
 }
 
 const TOOL_SYSTEM_PROMPT = [
-  'You are a VMware Cloud Director assistant. Use tools for all data lookups and actions.',
+  'You are a VMware Cloud Director and Linux systems assistant. Use tools for ALL data lookups and actions — never describe how to do something manually when a tool can do it directly.',
+  '',
+  '── VM MANAGEMENT ──',
   'When the user asks to create a VM, do the following in a single turn without questions:',
-  '1) Call list_templates with a name_filter matching the OS mentioned.',
-  '2) Pick the closest template by OS name/version.',
+  '1) If the user explicitly provides a template UUID (a string matching xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), use it directly — skip list_templates.',
+  '   Otherwise call list_templates with a name_filter for the OS mentioned.',
+  '   Note: "seles", "sles", "suse" all mean SUSE Linux Enterprise Server (SLES) — use name_filter="sles" for those.',
+  '2) Pick the closest template by OS name/version (skip if UUID was provided directly).',
   '3) Call create_vm_draft with vm_name, template_id, template_name, and any provided params.',
   '4) Do not ask for confirmation before create_vm_draft. The draft is the review step.',
   '5) Call create_vm_confirmed only after the user explicitly confirms.',
@@ -56,6 +63,38 @@ const TOOL_SYSTEM_PROMPT = [
   'For recent task lookups: use list_tasks or list_recent_tasks with minutes_ago.',
   'For VM copy/clone requests in chat, call list_vapps, select a target vApp, then call create_vm_copy_draft with target_vapp_href so the UI can show an editable review form.',
   'Do not call create_vm_copy directly in chat unless the user explicitly asks to skip review.',
+  '',
+  '── SSH / REMOTE EXECUTION ──',
+  'When the user asks to connect to a VM, run commands on a VM, or perform any remote operation:',
+  '1) Call ssh_connect with the host, username, and password (or privateKey) to establish a session.',
+  '2) Use the returned sessionId for all subsequent ssh_runCommand, ssh_runSudoCommand, or other ssh_* calls.',
+  '3) Always call ssh_connect first — do NOT instruct the user to run SSH commands themselves.',
+  '4) After completing the requested task, report the results directly from tool output.',
+  '5) Call ssh_disconnect when done or when the user asks to disconnect.',
+  'IMPORTANT: ssh_connect and all ssh_runCommand / ssh_runSudoCommand calls require user approval — the approval dialog will appear automatically before each execution.',
+  '',
+  '── LONG-RUNNING TASKS (installs, configuration, multi-step operations) ──',
+  'When the user asks to perform a multi-step operation (e.g., install software, configure a server):',
+  '1) Call task_start at the very beginning with a descriptive name and the SSH sessionId.',
+  '2) Before EACH command, call ssh_runCommand (it will prompt for approval).',
+  '3) After EACH command, call task_log_step with the description, command, output, and exit_code.',
+  '4) If a step fails (exit_code != 0), assess whether to retry, skip, or abort — then call task_done.',
+  '5) When all steps are complete, call task_done.',
+  'If uploaded docs contain installation steps, read them with docs_ask or docs_search and follow those steps.',
+  'Long command output is automatically truncated. If you need to read the full output, use task_get_log with the logId shown in the truncated output.',
+  '',
+  '── BACKGROUND VM MONITORING ──',
+  'When the user asks to "wait for a VM to come up", "create a background task", "monitor a VM", or "notify me when a VM is ready":',
+  '1) ALWAYS call vm_watch immediately — do NOT just say you will monitor it.',
+  '2) Pass vm_name (exact VM name), ip (expected IP), username, password, and commands to run once up.',
+  '3) vm_watch returns a taskId; confirm to the user that the real background task has been created.',
+  '4) The task appears in the Tasks panel on the left. A chat notification will appear automatically when the VM is reachable and the commands have been run.',
+  '5) To cancel a running watch, call vm_watch_cancel with the taskId.',
+  'Default commands if the user only wants OS version: ["cat /etc/os-release"]',
+  '',
+  '── DOCUMENT Q&A ──',
+  'When the user asks about uploaded documents: use docs_list, docs_search, docs_ask, docs_getContent.',
+  'To upload a document: call docs_upload with the file path.',
   '',
   'IMPORTANT: For all tool results (especially list_vms, list_vapps, list_templates, list_tasks):',
   '- Do NOT show raw JSON responses.',
@@ -421,6 +460,65 @@ const listRecentTasksTool = lcTool(
   }
 );
 
+const vmWatchTool = lcTool(
+  async (args) => {
+    const commands: string[] = args.commands
+      ? (Array.isArray(args.commands) ? args.commands : [String(args.commands)])
+      : ['cat /etc/os-release'];
+
+    // Create a real taskTracker task so it appears in the Tasks panel
+    const task = taskTracker.createTask(
+      `Watch VM: ${args.vm_name}`,
+      `Monitoring VM "${args.vm_name}" (${args.ip}) — will SSH and run: ${commands.join('; ')} once up.`
+    );
+
+    vmWatcher.watch({
+      vmName: String(args.vm_name),
+      ip: String(args.ip),
+      username: String(args.username),
+      password: String(args.password),
+      commands,
+      taskId: task.id,
+      pollIntervalMs: args.poll_interval_secs ? Number(args.poll_interval_secs) * 1000 : 30_000,
+      timeoutMs: 60 * 60_000, // always 60-minute ceiling — no need for user to specify
+    });
+
+    return JSON.stringify({
+      taskId: task.id,
+      message: `Background watch created (task ID: ${task.id}). Will poll every 30s for up to 60 minutes and retry SSH automatically after power-on. A chat notification will appear when the VM is reachable.`,
+    });
+  },
+  {
+    name: 'vm_watch',
+    description: 'Create a REAL background monitoring task that polls a VM until it is powered on, then SSHes in and runs the specified commands. Use this whenever the user asks to "monitor", "watch", or "wait for" a VM to come up. Always call this instead of just describing what you would do.',
+    schema: z.object({
+      vm_name: z.string().describe('Exact VM name as shown in VCD'),
+      ip: z.string().describe('Expected IP address of the VM (used as SSH host)'),
+      username: z.string().describe('SSH username (e.g., root)'),
+      password: z.string().describe('SSH password'),
+      commands: z.array(z.string()).optional().describe('Commands to run once the VM is reachable (default: ["cat /etc/os-release"])'),
+      poll_interval_secs: z.number().optional().describe('How often to check VM status in seconds (default 30)'),
+    }),
+  }
+);
+
+const vmWatchCancelTool = lcTool(
+  async (args) => {
+    const cancelled = vmWatcher.cancel(String(args.task_id));
+    return JSON.stringify({
+      cancelled,
+      message: cancelled ? `Watch ${args.task_id} cancelled.` : `No active watch found for task ID ${args.task_id}.`,
+    });
+  },
+  {
+    name: 'vm_watch_cancel',
+    description: 'Cancel an active background VM watch by its task ID.',
+    schema: z.object({
+      task_id: z.string().describe('Task ID returned by vm_watch'),
+    }),
+  }
+);
+
 // Ordered list of all LangChain tools
 const LC_TOOLS = [
   setVcdContextTool,
@@ -442,7 +540,242 @@ const LC_TOOLS = [
   // createVmConfirmedTool,
   listTasksTool,
   listRecentTasksTool,
+  vmWatchTool,
+  vmWatchCancelTool,
 ];
+
+// ── Task tracking LangChain tools ─────────────────────────────────────────────
+
+const taskStartTool = lcTool(
+  async (args) => {
+    const task = taskTracker.createTask(
+      String(args.name),
+      args.description ? String(args.description) : undefined,
+      args.session_id ? String(args.session_id) : undefined
+    );
+    return JSON.stringify({
+      taskId: task.id,
+      message: `Task "${task.name}" started. Use taskId "${task.id}" for step logging.`,
+    });
+  },
+  {
+    name: 'task_start',
+    description: 'Start tracking a long-running multi-step task (e.g., software installation). Returns a taskId. Call this before beginning any multi-step operation.',
+    schema: z.object({
+      name: z.string().describe('Short descriptive task name (e.g., "Install NetIQ IDM")'),
+      description: z.string().optional().describe('Longer description of what the task will do'),
+      session_id: z.string().optional().describe('SSH session ID this task runs inside'),
+    }),
+  }
+);
+
+const taskLogStepTool = lcTool(
+  async (args) => {
+    const taskId = String(args.task_id);
+    const step = taskTracker.beginStep(taskId, String(args.description), args.command ? String(args.command) : undefined);
+    if (!step) return JSON.stringify({ error: `Task not found: ${taskId}` });
+    const exitCode = typeof args.exit_code === 'number' ? args.exit_code : 0;
+    taskTracker.completeStep(taskId, step.id, String(args.output ?? ''), exitCode);
+    return JSON.stringify({ stepId: step.id, status: exitCode !== 0 ? 'failed' : 'done' });
+  },
+  {
+    name: 'task_log_step',
+    description: 'Record a completed step within a running task. Call after every ssh_runCommand to track progress. Stores output and handles log truncation automatically.',
+    schema: z.object({
+      task_id: z.string().describe('Task ID returned by task_start'),
+      description: z.string().describe('Human-readable step label (e.g., "Install Java runtime")'),
+      command: z.string().optional().describe('The exact command that was executed'),
+      output: z.string().describe('Full stdout + stderr from the command'),
+      exit_code: z.number().optional().describe('Exit code (0 = success, non-zero = failure)'),
+    }),
+  }
+);
+
+const taskDoneTool = lcTool(
+  async (args) => {
+    const task = taskTracker.completeTask(
+      String(args.task_id),
+      args.error ? String(args.error) : undefined
+    );
+    if (!task) return JSON.stringify({ error: `Task not found: ${args.task_id}` });
+    return JSON.stringify({ status: task.status, message: `Task "${task.name}" ${task.status}.` });
+  },
+  {
+    name: 'task_done',
+    description: 'Mark a task as completed or failed. Always call this when all steps are done.',
+    schema: z.object({
+      task_id: z.string().describe('Task ID from task_start'),
+      error: z.string().optional().describe('Error message if the task failed (omit on success)'),
+    }),
+  }
+);
+
+const taskListTool2 = lcTool(
+  async () => {
+    const tasks = taskTracker.listTasks(10);
+    return JSON.stringify({
+      count: tasks.length,
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        name: t.name,
+        status: t.status,
+        totalSteps: t.steps.length,
+        doneSteps: t.steps.filter((s) => s.status === 'done').length,
+        failedSteps: t.steps.filter((s) => s.status === 'failed').length,
+        createdAt: new Date(t.createdAt).toISOString(),
+      })),
+    });
+  },
+  {
+    name: 'task_list',
+    description: 'List recent agent tasks and their status',
+    schema: z.object({}),
+  }
+);
+
+const taskGetLogTool = lcTool(
+  async (args) => {
+    const result = taskTracker.getLog(String(args.log_id));
+    if (!result.found) return JSON.stringify({ error: `Log not found: ${args.log_id}` });
+    return JSON.stringify({ logId: args.log_id, totalBytes: result.total, tail: result.tail });
+  },
+  {
+    name: 'task_get_log',
+    description: 'Retrieve the tail of a stored command log. Use this when a step output was truncated (the logId appears in the truncated output). Useful for diagnosing failed steps.',
+    schema: z.object({
+      log_id: z.string().describe('Log ID shown in truncated step output'),
+    }),
+  }
+);
+
+const TASK_TOOLS = [taskStartTool, taskLogStepTool, taskDoneTool, taskListTool2, taskGetLogTool];
+
+// ── Tool manifest (for renderer Configure Tools panel) ────────────────────────
+
+export interface ToolManifestEntry {
+  name: string;
+  category: string;
+  description: string;
+}
+
+/**
+ * Returns a flat manifest of every tool available to the LLM, with its
+ * category and description. Used by the renderer Configure Tools panel.
+ */
+export function getToolManifest(): ToolManifestEntry[] {
+  // These LC_TOOLS perform SSH operations and must be gated with the ssh category
+  const SSH_LC_TOOL_NAMES = new Set(['vm_watch', 'vm_watch_cancel']);
+
+  const vcdEntries: ToolManifestEntry[] = LC_TOOLS.map((t) => ({
+    name: t.name,
+    category: SSH_LC_TOOL_NAMES.has(t.name) ? 'ssh' : 'vcd',
+    description: t.description,
+  }));
+
+  const taskEntries: ToolManifestEntry[] = TASK_TOOLS.map((t) => ({
+    name: t.name,
+    category: 'tasks',
+    description: t.description,
+  }));
+
+  const sanitize = (n: string) => n.replace(/[^a-zA-Z0-9_.\-]/g, '_');
+  const registryEntries = toolRegistry.list().tools.map((t) => ({
+    name: sanitize(t.name),
+    category: t.category,
+    description: t.description,
+  }));
+
+  return [...vcdEntries, ...taskEntries, ...registryEntries];
+}
+
+// ── Registry tool builder (with approval + log truncation) ────────────────────
+
+/** Build a one-line impact description shown in the approval dialog */
+function buildImpactText(toolName: string, args: Record<string, unknown>): string {
+  if (toolName === 'ssh:connect') {
+    return `Establish SSH connection → ${args.username}@${args.host}`;
+  }
+  if (toolName === 'ssh:runCommand' || toolName === 'ssh:runSudoCommand') {
+    return `Execute on remote host: \`${String(args.command ?? '').slice(0, 200)}\``;
+  }
+  if (toolName === 'ssh:runScript') {
+    const preview = String(args.script ?? '').split('\n').slice(0, 3).join(' | ');
+    return `Run script on remote host: \`${preview}...\``;
+  }
+  if (toolName === 'docs:delete') {
+    return `Permanently delete document: ${args.docId}`;
+  }
+  return `Execute ${toolName}: ${JSON.stringify(args).slice(0, 200)}`;
+}
+
+/**
+ * Build LangChain tool wrappers for registry tools in a given category.
+ * - Sanitizes names to meet OpenAI's ^[a-zA-Z0-9_.-]+$ requirement
+ * - Requests human approval for non-safe (review/dangerous) tools
+ * - Truncates large outputs and stores full logs via taskTracker
+ */
+function buildRegistryTools(category: string) {
+  const OUTPUT_TRUNCATE = 3000;
+  const registryTools = toolRegistry.getToolsForLangChain(category as never);
+
+  return registryTools.map((t) => {
+    const safeName = t.name.replace(/[^a-zA-Z0-9_.\-]/g, '_');
+    const toolMeta = toolRegistry.get(t.name);
+    const riskLevel = toolMeta?.metadata.riskLevel ?? 'review';
+
+    return lcTool(
+      async (args: Record<string, unknown>) => {
+        // ── Human-in-the-loop approval ────────────────────────────────────
+        if (riskLevel !== 'safe') {
+          const needsApproval = approvalSystem.requiresApproval(t.name, riskLevel);
+          if (needsApproval) {
+            try {
+              const response = await approvalSystem.requestApproval(
+                t.name,
+                toolMeta!.metadata,
+                args,
+                String(toolMeta!.metadata.target),
+                buildImpactText(t.name, args)
+              );
+              if (!response.approved) {
+                return JSON.stringify({
+                  denied: true,
+                  reason: response.denialReason ?? 'User denied execution',
+                });
+              }
+            } catch (approvalErr) {
+              return JSON.stringify({ denied: true, reason: String(approvalErr) });
+            }
+          }
+        }
+
+        // ── Execute tool ──────────────────────────────────────────────────
+        const result = await toolRegistry.execute({ toolName: t.name, args, context: { approved: true } });
+        if (!result.success) {
+          return JSON.stringify({ error: result.error ?? 'Tool execution failed' });
+        }
+
+        // ── Log truncation ────────────────────────────────────────────────
+        let output = typeof result.result === 'string'
+          ? result.result
+          : JSON.stringify(result.result);
+
+        if (output.length > OUTPUT_TRUNCATE) {
+          const logId = taskTracker.storeLog(output);
+          const head = output.slice(0, 1200);
+          const tail = output.slice(-500);
+          output =
+            head +
+            `\n...[output truncated — ${output.length} bytes total, logId: "${logId}" — use task_get_log to read full output]...\n` +
+            tail;
+        }
+
+        return output;
+      },
+      { name: safeName, description: t.description, schema: t.schema }
+    );
+  });
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -629,6 +962,17 @@ export function streamChatCompletion(
     });
 }
 
+// Module-level abort controller for the currently-running chatWithTools call
+let _activeChatAbort: AbortController | null = null;
+
+/** Cancel any in-progress chatWithTools request. Safe to call when idle. */
+export function cancelChatWithTools(): void {
+  if (_activeChatAbort) {
+    _activeChatAbort.abort();
+    _activeChatAbort = null;
+  }
+}
+
 // Agentic tool-calling loop — powered by LangChain (ChatOpenAI + bindTools)
 export async function chatWithTools(
   modelId: string,
@@ -637,21 +981,74 @@ export async function chatWithTools(
   onEnd: () => void,
   onError: (err: Error) => void,
   onVmDraft?: (form: Record<string, unknown>) => void,
-  onVmCopyDraft?: (form: Record<string, unknown>) => void
+  onVmCopyDraft?: (form: Record<string, unknown>) => void,
+  disabledToolNames?: string[]
 ): Promise<void> {
+  // Set up cancellation for this request
+  const abortController = new AbortController();
+  _activeChatAbort = abortController;
+
+  // Snapshot tasks that were already running so we can auto-complete any tasks the
+  // agent starts during this conversation but forgets to call task_done on.
+  const runningBefore = new Set(
+    taskTracker.listTasks(50).filter((t) => t.status === 'running').map((t) => t.id)
+  );
+
   try {
     console.log('[ChatAPI] chatWithTools starting - model:', modelId, 'messages:', messages.length);
     const token = await getValidToken();
-    console.log('[ChatAPI] Token obtained, building LLM with', LC_TOOLS.length, 'tools');
-    const llm = buildCopilotLlm(token, modelId).bindTools(LC_TOOLS);
+    const registryDocTools = buildRegistryTools('docs');
+    const registrySshTools = buildRegistryTools('ssh');
+    let allTools = [...LC_TOOLS, ...TASK_TOOLS, ...registryDocTools, ...registrySshTools];
+    if (disabledToolNames && disabledToolNames.length > 0) {
+      const disabledSet = new Set(disabledToolNames);
+      allTools = allTools.filter((t) => !disabledSet.has(t.name));
+    }
+    console.log('[ChatAPI] Token obtained, building LLM with', allTools.length, 'tools',
+      `(${LC_TOOLS.length} VCD + ${TASK_TOOLS.length} tasks + ${registryDocTools.length} docs + ${registrySshTools.length} ssh)`);
+    const llm = buildCopilotLlm(token, modelId).bindTools(allTools);
+
+    // Build dynamic addendum listing exactly what is/isn't available
+    const toolNames = new Set(allTools.map((t) => t.name));
+    const sshAvailable = toolNames.has('ssh_connect') || toolNames.has('ssh:connect');
+
+    // Derive disabled categories from the manifest vs. what's actually in allTools
+    const manifest = getToolManifest();
+    const disabledSet2 = new Set(disabledToolNames ?? []);
+    const disabledByCategory: Record<string, string[]> = {};
+    for (const entry of manifest) {
+      if (disabledSet2.has(entry.name)) {
+        if (!disabledByCategory[entry.category]) disabledByCategory[entry.category] = [];
+        disabledByCategory[entry.category].push(entry.name);
+      }
+    }
+    const disabledCategories = Object.keys(disabledByCategory);
+
+    let dynamicAddendum = '';
+    if (disabledCategories.length > 0) {
+      const lines = [
+        '',
+        '── TOOL AVAILABILITY NOTICE ──',
+        'The following tool groups have been DISABLED by the user and are NOT available to you:',
+        ...disabledCategories.map((cat) => `  • ${cat}: ${disabledByCategory[cat].join(', ')}`),
+        '',
+        'Rules for disabled tools:',
+        '  • Do NOT attempt to use any of the disabled tools above.',
+        '  • If the user asks for an action that requires a disabled tool, immediately say which',
+        '    tool group is turned off and instruct them to re-enable it via the Configure Tools (⚙) button.',
+        sshAvailable ? '' : '  • SSH/remote-execution is disabled — do NOT call check_vm_status in a loop as a workaround.',
+      ].filter((l) => l !== undefined);
+      dynamicAddendum = lines.join('\n');
+    }
 
     const lcMessages: BaseMessage[] = [
-      new SystemMessage(TOOL_SYSTEM_PROMPT),
+      new SystemMessage(TOOL_SYSTEM_PROMPT + dynamicAddendum),
       ...toLcMessages(messages),
     ];
 
     const maxIterations = 10;
     for (let i = 0; i < maxIterations; i++) {
+      if (abortController.signal.aborted) break;
       // Stream the LLM response, accumulating content and tool calls
       let responseContent = '';
       const toolCallChunks: Record<number, { id: string; name: string; argsText: string }> = {};
@@ -707,7 +1104,7 @@ export async function chatWithTools(
       }
 
       // Execute each tool and feed results back as ToolMessages
-      const toolMap = Object.fromEntries(LC_TOOLS.map((t) => [t.name, t]));
+      const toolMap = Object.fromEntries(allTools.map((t) => [t.name, t]));
       const toolMessages: ToolMessage[] = [];
 
       for (const tc of resolvedToolCalls) {
@@ -779,6 +1176,12 @@ export async function chatWithTools(
 
     onEnd();
   } catch (err) {
+    // Treat user-initiated abort as a clean end, not an error
+    if (abortController.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+      console.log('[ChatAPI] chatWithTools cancelled by user');
+      onEnd();
+      return;
+    }
     console.error('[ChatAPI] chatWithTools error:', err);
     
     // Enhanced error logging for debugging
@@ -801,5 +1204,18 @@ export async function chatWithTools(
     }
     
     onError(err instanceof Error ? new Error(errorMessage) : new Error(String(err)));
+  } finally {
+    // Clear the active abort controller now that we're done
+    if (_activeChatAbort === abortController) _activeChatAbort = null;
+    // Auto-complete any tasks started during this conversation that the agent didn't
+    // explicitly close — prevents tasks from being stuck in "running" forever.
+    // vmWatcher tasks are legitimate background tasks; skip them.
+    const activeWatches = new Set(vmWatcher.listActive());
+    for (const task of taskTracker.listTasks(50)) {
+      if (task.status === 'running' && !runningBefore.has(task.id) && !activeWatches.has(task.id)) {
+        console.log(`[ChatAPI] Auto-abandoning orphaned task: ${task.id} "${task.name}"`);
+        taskTracker.completeTask(task.id, 'Task not completed by agent — abandoned when conversation ended');
+      }
+    }
   }
 }

@@ -1,5 +1,10 @@
 // Robust vApp XML parser using fast-xml-parser
 import { XMLParser } from 'fast-xml-parser';
+import { PROXY_CLEANUP_SCRIPT } from './scripts/proxyCleanup';
+import { ILM_SETUP_SCRIPT } from './scripts/ilmSetup';
+import { SLES_NETWORK_SCRIPT, UBUNTU_NETWORK_SCRIPT, RHEL_NETWORK_SCRIPT } from './scripts/networkSetup';
+import { PACKAGE_INSTALL_SCRIPT } from './scripts/packageInstall';
+import { FINALIZATION_SCRIPT } from './scripts/finalization';
 
 import https from 'https';
 import http from 'http';
@@ -173,11 +178,22 @@ async function httpsRequestWithAutoReauth(
       
       if (reauthSuccess) {
         console.log('[vcdApi] Auto re-authentication successful, retrying request...');
-        // Get updated context with new token
+        // Get updated context with new token and (possibly corrected) orgUuid
         const ctx = getVcdContext();
-        // Update Authorization header with new token
-        const updatedHeaders = { ...headers, Authorization: `Bearer ${ctx.token}` };
-        // Retry the request with new token
+        const updatedHeaders: Record<string, string> = { ...headers, Authorization: `Bearer ${ctx.token}` };
+        // Refresh X-VMWARE-VCLOUD-TENANT-CONTEXT — the orgUuid may have changed
+        // after re-auth (e.g. was wrong before due to stale stored value).
+        const tenantKey = Object.keys(updatedHeaders)
+          .find((k) => k.toLowerCase() === 'x-vmware-vcloud-tenant-context');
+        if (ctx.orgUuid) {
+          // Overwrite whichever casing variant is already present, or add fresh
+          if (tenantKey) updatedHeaders[tenantKey] = ctx.orgUuid;
+          else updatedHeaders['x-vmware-vcloud-tenant-context'] = ctx.orgUuid;
+        } else if (tenantKey) {
+          // orgUuid is now empty — drop the header so VCD uses the auth context
+          delete updatedHeaders[tenantKey];
+        }
+        // Retry the request with updated headers
         const retryResult = await httpsRequest(url, method, updatedHeaders, body, timeoutMs, rejectUnauthorized);
         return retryResult;
       } else {
@@ -502,19 +518,59 @@ export async function listTemplates(nameFilter = ''): Promise<Record<string, unk
 
 async function resolveTemplateVmHref(vappTemplateUuid: string): Promise<string> {
   const ctx = getVcdContext();
-  const url = `https://${ctx.host}/api/vAppTemplate/vappTemplate-${vappTemplateUuid}`;
   const headers = addTenantHeaders(
     baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
     ctx.orgName,
     ctx.orgUuid
   );
-  const result = await httpsRequestWithAutoReauth(url, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
-  if (result.status >= 200 && result.status < 300) {
-    const match = result.body.match(/<Vm[^>]*href="([^"]*\/vm-[^"]+)"/i);
-    if (match && match[1]) return match[1];
+
+  // Step 1: fetch the vAppTemplate and look for any href pointing to a child VM
+  // (i.e. .../api/vAppTemplate/vm-<uuid>).  Search the entire XML body so the
+  // match is independent of element name, namespace prefix, and attribute order.
+  const vappUrl = `https://${ctx.host}/api/vAppTemplate/vappTemplate-${vappTemplateUuid}`;
+  const vappResult = await httpsRequestWithAutoReauth(vappUrl, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
+  if (vappResult.status >= 200 && vappResult.status < 300) {
+    // Match href=".../api/vAppTemplate/vm-<uuid>" (double or single quotes)
+    const vmHrefRe = /href=["']([^"']*\/api\/vAppTemplate\/vm-[^"']+)["']/i;
+    const match = vappResult.body.match(vmHrefRe);
+    if (match && match[1]) {
+      console.log(`[resolveTemplateVmHref] Resolved child VM href: ${match[1]}`);
+      return match[1];
+    }
+    // vAppTemplate XML found but contains no child vm- href.
+    // Fall through to the vm- path — the UUID may double as the VM UUID.
+    console.warn(`[resolveTemplateVmHref] vAppTemplate ${vappTemplateUuid} has no child vm- href in XML; trying vm- path`);
   }
-  return `https://${ctx.host}/api/vAppTemplate/vm-${vappTemplateUuid}`;
+
+  // Step 2: UUID may be the child VM UUID directly (stripped from vm-<uuid> by listTemplates)
+  const vmUrl = `https://${ctx.host}/api/vAppTemplate/vm-${vappTemplateUuid}`;
+  const vmResult = await httpsRequestWithAutoReauth(vmUrl, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
+  if (vmResult.status >= 200 && vmResult.status < 300) {
+    console.log(`[resolveTemplateVmHref] Resolved as direct VM href: ${vmUrl}`);
+    return vmUrl;
+  }
+
+  // Neither path confirmed — return the vm- URL anyway and let the instantiate
+  // call surface the real error with VCD's own error message.
+  console.warn(`[resolveTemplateVmHref] Could not confirm template (vappTemplate HTTP ${vappResult.status}, vm HTTP ${vmResult.status}); proceeding with vm- URL`);
+  return vmUrl;
 }
+
+/** ILM version → download artefact mapping */
+const ILM_VERSION_MAP: Record<string, { url: string; full: string }> = {
+  '1.3.0': {
+    url: 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.3.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.3.0.0000/compose-1.3.0.0000.zip',
+    full: '1.3.0.0000',
+  },
+  '1.2.0': {
+    url: 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.2.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.2.0.0000/compose-1.2.0.0000.zip',
+    full: '1.2.0.0000',
+  },
+  '1.0.0': {
+    url: 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.0.0.0000/compose-1.0.0.0000.zip',
+    full: '1.0.0.0000',
+  },
+};
 
 function getUnifiedCustomizationScript(
   ipAddress: string,
@@ -526,410 +582,81 @@ function getUnifiedCustomizationScript(
 ): string {
   const ipWithCidr = ipAddress.includes('/') ? ipAddress : `${ipAddress}/21`;
   const dnsPrimary = dnsServers.length ? dnsServers[0] : '15.122.222.53';
-  const dnsAll = dnsServers.length ? dnsServers.join(' ') : dnsPrimary;
+  const dnsAll  = dnsServers.length ? dnsServers.join(' ') : dnsPrimary;
   const dnsYaml = dnsServers.length ? dnsServers.join('\n          - ') : dnsPrimary;
-  const ilmEnabled = setupIlm ? 'true' : 'false';
+  const ilmEnabled       = setupIlm ? 'true' : 'false';
   const ilmVersionMapped = ilmVersion === 'latest' ? '1.3.0' : ilmVersion;
-  const versionMapping: Record<string, { url: string; full: string }> = {
-    '1.3.0': {
-      url: 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.3.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.3.0.0000/compose-1.3.0.0000.zip',
-      full: '1.3.0.0000',
-    },
-    '1.2.0': {
-      url: 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.2.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.2.0.0000/compose-1.2.0.0000.zip',
-      full: '1.2.0.0000',
-    },
-    '1.0.0': {
-      url: 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.0.0.0000/compose-1.0.0.0000.zip',
-      full: '1.0.0.0000',
-    },
-  };
-  const ilmEntry = versionMapping[ilmVersionMapped] || versionMapping['1.3.0'];
+  const ilmEntry = ILM_VERSION_MAP[ilmVersionMapped] || ILM_VERSION_MAP['1.3.0'];
+
+  // Single-quoted heredoc (<<'EOF_ENV') is fully literal — no bash interpolation,
+  // so no escaping of $ or backticks is required.
+  const envInjectionBlock = customEnvContent
+    ? `if [ "$SETUP_ILM" = "true" ]; then\n  echo "Writing custom .env..." >> "$LOG"\n  cat > /root/uploaded.env <<'EOF_ENV'\n${customEnvContent}\nEOF_ENV\n  echo "Custom .env written." >> "$LOG"\nfi`
+    : `# No custom .env provided; will use default .env from compose zip`;
 
   let script = `#!/bin/bash
 #scriptversion:20250302-unified-fixed-final
-#Auto-detecting customization script for VCD guest OS
 set -u
 
 LOG="/root/vcdcustlog"
 touch "$LOG"
-
 echo "Script Start" >> "$LOG"
-echo "Customization status is: __DOLLAR_CURLY__1:-}" >> "$LOG"
-echo "Running PostCust check" >> "$LOG"
 
-# Fix: Use __DOLLAR_CURLY__1:-} to handle empty variable safely
+# ── VCD post-customization guard ─────────────────────────────────────────────
 if [ "x__DOLLAR_CURLY__1:-}" != "xpostcustomization" ]; then
-    echo "VCD Post IF statement was not accepted" >> "$LOG"
+    echo "Not a post-customization run — exiting." >> "$LOG"
     exit 0
 fi
 
-echo "VCD Post IF statement accepted" >> "$LOG"
-
-# ============================================================================
-
-# ILM SETUP CONFIGURATION VARIABLES
-# ============================================================================
+# ── ILM variables ────────────────────────────────────────────────────────────
 SETUP_ILM="__ILM_ENABLED__"
 ILM_VERSION="__ILM_VERSION__"
 ILM_FULL_VERSION="__ILM_FULL_VERSION__"
 ILM_COMPOSE_URL="__ILM_URL__"
-echo "ILM Setup Enabled: $SETUP_ILM, Version: $ILM_VERSION" >> "$LOG"
 
-# ============================================================================
-# CUSTOM .ENV FILE INJECTION (if provided by user + processed by LLM)
-# ============================================================================
+# ── Custom .env injection ─────────────────────────────────────────────────────
 __CUSTOM_ENV_INJECTION__
 
-# ============================================================================
-# OS DETECTION
-# ============================================================================
-echo "Detecting operating system..." >> "$LOG"
-
+# ── OS detection ─────────────────────────────────────────────────────────────
 OS_TYPE="unknown"
-
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     case "$ID" in
-        sled|sles|suse|opensuse*)
-            OS_TYPE="sles"
-            echo "Detected OS: SLES/SUSE ($PRETTY_NAME)" >> "$LOG"
-            ;;
-        ubuntu|debian)
-            OS_TYPE="ubuntu"
-            echo "Detected OS: Ubuntu/Debian ($PRETTY_NAME)" >> "$LOG"
-            ;;
-        rhel|centos|rocky|almalinux)
-            OS_TYPE="rhel"
-            echo "Detected OS: RHEL/CentOS family ($PRETTY_NAME)" >> "$LOG"
-            ;;
-        *)
-            echo "Detected OS: $PRETTY_NAME (ID=$ID)" >> "$LOG"
-            ;;
+        sled|sles|suse|opensuse*)    OS_TYPE="sles"   ;;
+        ubuntu|debian)               OS_TYPE="ubuntu" ;;
+        rhel|centos|rocky|almalinux) OS_TYPE="rhel"   ;;
     esac
 fi
-
 echo "OS_TYPE=$OS_TYPE" >> "$LOG"
 
-# ============================================================================
-# INTERFACE DETECTION (Universal)
-# ============================================================================
+# ── Network interface detection ───────────────────────────────────────────────
 primary_iface=$(ip -o link | awk '$2 != "lo:" && $2 !~ /^lo@/ {print $2; exit}' | sed 's/://' | sed 's/@.*//')
-if [ -z "$primary_iface" ]; then
-    primary_iface=eth0
-fi
+[ -z "$primary_iface" ] && primary_iface=eth0
 echo "Primary interface: $primary_iface" >> "$LOG"
 
-# ============================================================================
-# SLES/SUSE CONFIGURATION
-# ============================================================================
+# ── OS-specific network configuration ──────────────────────────────────────────────
 if [ "$OS_TYPE" = "sles" ]; then
-    echo "Applying SLES network configuration..." >> "$LOG"
-
-    mkdir -p /etc/cloud/cloud.cfg.d/
-    echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
-
-    if systemctl is-active --quiet NetworkManager; then
-        echo "NetworkManager detected (GNOME environment). Using nmcli..." >> "$LOG"
-        nmcli con mod "$primary_iface" ipv4.method manual ipv4.addresses __IP_WITH_CIDR__ ipv4.gateway __GATEWAY__ ipv4.dns "__DNS_ALL__"
-        nmcli con up "$primary_iface"
-        echo "SLES (NetworkManager) configured successfully: __IP_WITH_CIDR__" >> "$LOG"
-    else
-        echo "Wicked detected (Server environment). Using sysconfig..." >> "$LOG"
-        rm -f /etc/sysconfig/network/ifcfg-eth*
-        rm -f /etc/sysconfig/network/ifcfg-ens*
-
-        cat <<EOF > /etc/sysconfig/network/ifcfg-$primary_iface
-BOOTPROTO='static'
-STARTMODE='auto'
-IPADDR='__IP_WITH_CIDR__'
-EOF
-        echo "default __GATEWAY__ - -" > /etc/sysconfig/network/routes
-
-        if grep -q "^NETCONFIG_DNS_STATIC_SERVERS=" /etc/sysconfig/network/config; then
-            sed -i 's/^NETCONFIG_DNS_STATIC_SERVERS=.*/NETCONFIG_DNS_STATIC_SERVERS="__DNS_ALL__"/' /etc/sysconfig/network/config
-        else
-            echo 'NETCONFIG_DNS_STATIC_SERVERS="__DNS_ALL__"' >> /etc/sysconfig/network/config
-        fi
-        netconfig update -f
-        wicked ifreload all
-        echo "SLES (Wicked) configured successfully: __IP_WITH_CIDR__" >> "$LOG"
-    fi
-
-# ============================================================================
-# UBUNTU/DEBIAN CONFIGURATION (netplan)
-# ============================================================================
+${SLES_NETWORK_SCRIPT}
 elif [ "$OS_TYPE" = "ubuntu" ]; then
-    echo "Applying Ubuntu/Debian network configuration..." >> "$LOG"
-
-    export DEBIAN_FRONTEND=noninteractive
-
-    mkdir -p /etc/cloud/cloud.cfg.d/
-    echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
-
-    cat <<EOF > /etc/netplan/01-netcfg.yaml
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    $primary_iface:
-      dhcp4: no
-      addresses:
-        - __IP_WITH_CIDR__
-      routes:
-        - to: 0.0.0.0/0
-          via: __GATEWAY__
-      nameservers:
-        addresses:
-          - __DNS_YAML__
-EOF
-
-    netplan apply
-    echo "Ubuntu/Debian network configuration applied successfully: __IP_WITH_CIDR__" >> "$LOG"
-    
-    echo "Starting bulletproof installation process..." >> "$LOG"
-    echo "Starting deep clean of all proxy settings..." >> "$LOG"
-
-    # 1. Clear Environment Variables (Current Session)
-    unset http_proxy https_proxy ftp_proxy no_proxy
-    unset HTTP_PROXY HTTPS_PROXY FTP_PROXY NO_PROXY
-
-    # 2. Clear System-Wide Environment Files
-    [ -f /etc/environment ] && sed -i '/_proxy/I d' /etc/environment
-    [ -f /etc/profile ] && sed -i '/_proxy/I d' /etc/profile
-    [ -f /etc/bash.bashrc ] && sed -i '/_proxy/I d' /etc/bash.bashrc
-    [ -f ~/.bashrc ] && sed -i '/_proxy/I d' ~/.bashrc
-    [ -f ~/.profile ] && sed -i '/_proxy/I d' ~/.profile
-
-    # 2.5 Clear Profile.d
-    if [ -d /etc/profile.d ]; then
-        echo "Cleaning /etc/profile.d/..." >> "$LOG"
-        rm -f /etc/profile.d/*proxy*.sh
-        rm -f /etc/profile.d/*proxy*.csh
-        # Aggressive cleanup: Comment out proxy lines in ANY file
-        grep -l "proxy" /etc/profile.d/* 2>/dev/null | xargs -r sed -i '/proxy/I s/^/#/'
-    fi
-
-    # 3. Clear APT (Package Manager)
-    rm -f /etc/apt/apt.conf.d/*proxy*
-    [ -f /etc/apt/apt.conf ] && sed -i '/Proxy/I d' /etc/apt/apt.conf
-
-    # 4. Clear WGET (Crucial Fix)
-    [ -f /etc/wgetrc ] && sed -i '/_proxy/I d' /etc/wgetrc
-    [ -f ~/.wgetrc ] && sed -i '/_proxy/I d' ~/.wgetrc
-
-    # 5. Clear CURL/Docker/Snap/Git
-    [ -f ~/.curlrc ] && sed -i '/proxy/I d' ~/.curlrc
-    if [ -d /etc/systemd/system/docker.service.d ]; then
-        rm -f /etc/systemd/system/docker.service.d/*proxy*
-        if systemctl list-units --full -all | grep -Fq 'docker.service'; then
-            systemctl daemon-reload
-            systemctl restart docker
-        fi
-    fi
-    [ -f ~/.docker/config.json ] && sed -i '/proxy/I d' ~/.docker/config.json
-    
-    if command -v snap &> /dev/null; then
-        snap set system proxy.http=""
-        snap set system proxy.https=""
-    fi
-    if command -v git &> /dev/null; then
-        git config --global --unset http.proxy
-        git config --global --unset https.proxy
-    fi
-
-    echo "All known proxy settings have been removed." >> "$LOG"
-    
-    # 1. Update system
-    echo "Updating package lists and installing prerequisites..." >> "$LOG"
-    apt-get update -y >> "$LOG" 2>&1
-    apt-get install -y ca-certificates curl gnupg lsb-release apt-transport-https software-properties-common unzip >> "$LOG" 2>&1
-
-    # 2. Install OpenJDK 11
-    if ! command -v java &> /dev/null; then
-        echo "Installing OpenJDK 11..." >> "$LOG"
-        apt-get install -y openjdk-11-jdk >> "$LOG" 2>&1
-        echo "Java 11 installed successfully." >> "$LOG"
-    else
-        echo "Java is already installed. Skipping..." >> "$LOG"
-    fi
-
-    # 3. Install Docker
-    if ! command -v docker &> /dev/null; then
-        echo "Installing Docker Engine..." >> "$LOG"
-        install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
-        chmod a+r /etc/apt/keyrings/docker.gpg
-
-        echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-        $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-        apt-get update -y >> "$LOG" 2>&1
-        apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >> "$LOG" 2>&1
-
-        ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
-        echo "Docker installed successfully." >> "$LOG"
-    else
-        echo "Docker is already installed. Skipping..." >> "$LOG"
-    fi
-
-    echo "=====================================================================" >> "$LOG"
-    echo "Installation Complete!" >> "$LOG"
-
-    # ============================================================================
-    # ILM SETUP (CONDITIONAL)
-    # ============================================================================
-    if [ "$SETUP_ILM" = "true" ]; then
-        echo "Starting ILM setup (Version: $ILM_VERSION)..." >> "$LOG"
-        
-        echo "Setting hostname to 'lab'..." >> "$LOG"
-        hostnamectl set-hostname lab
-        
-        echo "Updating /etc/hosts..." >> "$LOG"
-        if ! grep -q "127.0.0.1 lab" /etc/hosts; then
-            echo "127.0.0.1 lab" >> /etc/hosts
-            echo "'lab' entry added to /etc/hosts." >> "$LOG"
-        else
-            echo "'lab' is already set in /etc/hosts." >> "$LOG"
-        fi
-        
-        DOWNLOAD_DIR="/root/Documents"
-        echo "Downloading ILM compose zip file from $ILM_COMPOSE_URL..." >> "$LOG"
-        mkdir -p $DOWNLOAD_DIR
-        
-        # Explicitly unset proxy for this command block
-        unset http_proxy https_proxy
-        
-        if wget --timeout=20 --tries=3 --no-proxy --no-check-certificate -O "$DOWNLOAD_DIR/compose.zip" "$ILM_COMPOSE_URL" >> "$LOG" 2>&1; then
-            echo "ILM compose zip file downloaded successfully." >> "$LOG"
-            
-            echo "Unzipping ILM compose zip file..." >> "$LOG"
-            unzip -o "$DOWNLOAD_DIR/compose.zip" -d "$DOWNLOAD_DIR" >> "$LOG" 2>&1
-            
-            WORK_DIR="$DOWNLOAD_DIR/ilm"
-            if [ ! -d "$WORK_DIR" ]; then
-                WORK_DIR="$DOWNLOAD_DIR/compose-$ILM_FULL_VERSION"
-            fi
-            
-            if [ -d "$WORK_DIR" ]; then
-                cd "$WORK_DIR"
-                
-                # Modify .env file
-                ENV_FILE=".env"
-                if [ -f "$ENV_FILE" ]; then
-                  if [ -f /root/uploaded.env ]; then
-                    echo "Replacing .env with uploaded content..." >> "$LOG"
-                    cp /root/uploaded.env "$ENV_FILE"
-                    echo ".env file replaced successfully." >> "$LOG"
-                  else
-                    echo "Modifying default .env file..." >> "$LOG"
-                    sed -i "s|TENANT_OSP_REDIRECT_URL=.*|TENANT_OSP_REDIRECT_URL=http://lab:9888/ilm/|g" $ENV_FILE
-                    sed -i "s|CALLBACK_SERVER=.*|CALLBACK_SERVER=http://lab:9990|g" $ENV_FILE
-                    sed -i "s|SECRETS_URL=.*|SECRETS_URL=http://lab:4566|g" $ENV_FILE
-                    echo ".env file modified successfully." >> "$LOG"
-                  fi
-                else
-                  echo "ERROR: .env file not found in $WORK_DIR" >> "$LOG"
-                fi
-                                
-                # --- IMPROVED DOCKER COMPOSE HANDLING ---
-                echo "Step 1/3: Pulling Docker images (with retries)..." >> "$LOG"
-                
-                # Use seq for loop to avoid syntax ambiguity
-                for i in $(seq 1 3); do
-                    if timeout 600 docker compose pull --ignore-pull-failures >> "$LOG" 2>&1; then
-                        echo "Images pulled successfully." >> "$LOG"
-                        break
-                    else
-                        echo "WARNING: Docker pull attempt $i failed or timed out. Retrying in 10s..." >> "$LOG"
-                        sleep 10
-                    fi
-                done
-
-                echo "Starting Containers..." >> "$LOG"
-                for i in $(seq 1 3); do
-                    if docker compose up -d >> "$LOG" 2>&1; then
-                        echo "Docker Start Command Sent." >> "$LOG"
-                        break
-                    else
-                        echo "Start retry $i..." >> "$LOG"
-                        sleep 15
-                    fi
-                done
-                echo "Step 3/3: Verifying startup status..." >> "$LOG"
-                sleep 10
-                if [ "$(docker ps -q | wc -l)" -gt 0 ]; then
-                     echo "SUCCESS: ILM Containers are running." >> "$LOG"
-                     docker ps --format "table {{.Names}}\t{{.Status}}" >> "$LOG"
-                else
-                     echo "WARNING: No running containers found. Check logs with 'docker compose logs'." >> "$LOG"
-                fi
-                
-                echo "ILM setup completed successfully." >> "$LOG"
-            else
-                echo "ERROR: ILM directory not found. Extracted contents:" >> "$LOG"
-                ls -la "$DOWNLOAD_DIR" >> "$LOG"
-            fi
-        else
-            echo "ERROR: Failed to download ILM compose zip file (Timeout or Connection Refused)." >> "$LOG"
-        fi
-    else
-        echo "ILM setup is disabled, skipping..." >> "$LOG"
-    fi
-
-
-# ============================================================================
-# RHEL/CENTOS CONFIGURATION (NetworkManager)
-# ============================================================================
+${UBUNTU_NETWORK_SCRIPT}
 elif [ "$OS_TYPE" = "rhel" ]; then
-    echo "Applying RHEL/CentOS network configuration..." >> "$LOG"
-
-    mkdir -p /etc/cloud/cloud.cfg.d/
-    echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
-
-    nmcli con mod "$primary_iface" ipv4.method manual ipv4.addresses __IP_WITH_CIDR__ ipv4.gateway __GATEWAY__ ipv4.dns "__DNS_ALL__"
-    nmcli con up "$primary_iface"
-
-    echo "RHEL/CentOS network configuration applied successfully: __IP_WITH_CIDR__" >> "$LOG"
-
-# ============================================================================
-# UNKNOWN OS
-# ============================================================================
+${RHEL_NETWORK_SCRIPT}
 else
-    echo "ERROR: Unknown or unsupported OS type: $OS_TYPE" >> "$LOG"
-    echo "Skipping network configuration" >> "$LOG"
+    echo "ERROR: Unsupported OS type: $OS_TYPE" >> "$LOG"
+fi
+${PROXY_CLEANUP_SCRIPT}
+# ── Ubuntu: package installation + ILM setup ───────────────────────────────────
+if [ "$OS_TYPE" = "ubuntu" ]; then
+${PACKAGE_INSTALL_SCRIPT}
+${ILM_SETUP_SCRIPT}
 fi
 
-# ============================================================================
-# FINALIZATION
-# ============================================================================
-echo "Custom network configuration completed" >> "$LOG"
-
-# 1. Register IP with central registry
-echo "Registering IP with central registry..." >> "$LOG"
-(
-    curl -s -X POST http://164.99.91.31:5100/api/res-ip \
-    -H "Content-Type: application/json" \
-    -d '{"ip": "__IP_ADDRESS__", "status": "used"}' >> "$LOG" 2>&1 || \
-    echo "IP registration request failed" >> "$LOG"
-) &
-
-# 2. Execute the final sysprep script if it exists
-if [ -f /root/linuxsysprep.sh ]; then
-    echo "Executing linuxsysprep.sh..." >> "$LOG"
-    exec /root/linuxsysprep.sh
-fi
-
-echo "VCD Customization Completed" >> "$LOG"
+# ── Finalization ──────────────────────────────────────────────────────────────
+echo "Network configuration completed." >> "$LOG"
+${FINALIZATION_SCRIPT}
 `;
 
-  // Replace .env injection placeholder early (before other replacements)
-  const envInjectionBlock = customEnvContent
-    ? `if [ "$SETUP_ILM" = "true" ]; then\n  echo "Writing custom .env file..." >> "$LOG"\n  cat > /root/uploaded.env <<'EOF_ENV'\n${customEnvContent.replace(/\\/g, '\\\\').replace(/`/g, '\`').replace(/\$/g, '\$')}\nEOF_ENV\n  echo "Custom .env file written." >> "$LOG"\nfi`
-    : `# No custom .env provided; will use default .env from compose zip`;
   script = script.replace(/__CUSTOM_ENV_INJECTION__/g, envInjectionBlock);
-  
   script = script
     .replace(/__IP_WITH_CIDR__/g, ipWithCidr)
     .replace(/__GATEWAY__/g, gateway)
@@ -1527,8 +1254,14 @@ export async function createVmFromTemplate(params: {
   const ctx = getVcdContext();
 
   const templateHref = await resolveTemplateVmHref(params.template_vm_id);
+  // Extract UUID from the last path segment, stripping either 'vm-' or 'vappTemplate-' prefix
   let childVmUuid = templateHref.split('/').pop() || '';
-  if (childVmUuid.startsWith('vm-')) childVmUuid = childVmUuid.slice(3);
+  for (const prefix of ['vappTemplate-', 'vm-']) {
+    if (childVmUuid.startsWith(prefix)) {
+      childVmUuid = childVmUuid.slice(prefix.length);
+      break;
+    }
+  }
 
   const storageProfileHref = `https://${ctx.host}/api/vdcStorageProfile/${params.storage_profile_id}`;
   const isManualIp = String(params.ip_allocation_mode || '').toUpperCase() === 'MANUAL';
@@ -1659,7 +1392,10 @@ export async function createVmFromTemplate(params: {
   const url = `https://${ctx.host}/api/vdc/${params.vdc_id}/action/instantiateVmFromTemplate`;
   const result = await httpsRequestWithAutoReauth(url, 'POST', headers, xmlPayload, 30000, ctx.rejectUnauthorized);
   if (result.status < 200 || result.status >= 300) {
-    throw new Error(`create_vm failed: HTTP ${result.status} - ${result.body.slice(0, 500)}`);
+    // Extract the VCD error message from the XML if present
+    const msgMatch = result.body.match(/message="([^"]+)"/);
+    const vcdMsg = msgMatch ? msgMatch[1] : result.body.slice(0, 800);
+    throw new Error(`create_vm failed: HTTP ${result.status} - ${vcdMsg}`);
   }
   return {
     status: 'success',

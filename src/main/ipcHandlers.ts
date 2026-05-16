@@ -1,7 +1,7 @@
-  import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, dialog } from 'electron';
 import { lspClient } from './lspClient';
 import { tokenManager } from './tokenManager';
-import { getModels, streamChatCompletion, chatWithTools, ChatMessage } from './copilotChatApi';
+import { getModels, streamChatCompletion, chatWithTools, cancelChatWithTools, ChatMessage, getToolManifest } from './copilotChatApi';
 import http from 'http';
 import https from 'https';
 import { vcdSignIn, vcdStatus, vcdSignOut } from './vcdAuth';
@@ -23,6 +23,9 @@ import { deleteTerminalSession, listSavedTerminalSessions, saveTerminalSession }
 import { checkForUpdates } from './autoUpdater';
 import { listVms } from './vcdApi';
 import { logApi } from './apiLogger';
+import { approvalSystem } from './tools';
+import { listDocuments, getDocument, deleteDocument } from './tools/categories/docs/storage';
+import { taskTracker } from './taskTracker';
 // DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
 // import {
 //   connectTerminalFileSession,
@@ -207,7 +210,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   // Chat: Send message with tool calling support
-  ipcMain.handle('copilot:sendChatMessageWithTools', async (_event, modelId: string, messages: ChatMessage[]) => {
+  ipcMain.handle('copilot:sendChatMessageWithTools', async (_event, modelId: string, messages: ChatMessage[], disabledToolNames?: string[]) => {
     try {
       console.log('[IPC] sendChatMessageWithTools called');
       await chatWithTools(
@@ -231,7 +234,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
           console.log('[IPC] onVmCopyDraft callback triggered, emitting chat:vm-copy-draft event');
           console.log('[IPC] Copy form data:', JSON.stringify(form, null, 2));
           mainWindow.webContents.send('chat:vm-copy-draft', form);
-        }
+        },
+        disabledToolNames
       );
       return { started: true };
     } catch (err) {
@@ -239,6 +243,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       mainWindow.webContents.send('chat:stream-error', errorMsg);
       return { started: false, error: errorMsg };
     }
+  });
+
+  // Tools: list all available tools for the Configure Tools panel
+  ipcMain.handle('tools:list', async () => {
+    return getToolManifest();
+  });
+
+  // Chat: Cancel an in-progress request
+  ipcMain.handle('copilot:cancelChat', () => {
+    cancelChatWithTools();
+    return { cancelled: true };
   });
 
   // Deploy VM directly from the reviewed form (no LLM involved)
@@ -546,4 +561,119 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   //     return { success: false, error: err instanceof Error ? err.message : String(err) };
   //   }
   // });
+
+  // ── Tool Approval Handlers ────────────────────────────────────────────────
+
+  // Handle approval response from renderer
+  ipcMain.handle('tool:approval-response', async (_event, response: {
+    requestId: string;
+    approved: boolean;
+    approvalType?: 'once' | 'session' | 'always';
+    denialReason?: string;
+  }) => {
+    try {
+      approvalSystem.handleApprovalResponse(response);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Get approval system status
+  ipcMain.handle('tool:approval-status', async () => {
+    return {
+      pendingCount: approvalSystem.pendingCount,
+    };
+  });
+
+  // ── Document Management Handlers ──────────────────────────────────────────
+
+  // Open native file picker and trigger document upload
+  ipcMain.handle('docs:openAndUpload', async () => {
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    if (!mainWindow) return { success: false, error: 'No window available' };
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Upload Document',
+      filters: [
+        { name: 'Documents', extensions: ['pdf', 'docx', 'doc', 'md', 'markdown', 'txt', 'log', 'json'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+      properties: ['openFile', 'multiSelections'],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+
+    // Trigger processing via tool registry for each file
+    const { toolRegistry } = await import('./tools');
+    const uploads = await Promise.all(
+      result.filePaths.map(filePath =>
+        toolRegistry.execute({ toolName: 'docs:upload', args: { filePath } })
+      )
+    );
+
+    return { success: true, uploads: uploads.map(u => u.result) };
+  });
+
+  // List uploaded documents
+  ipcMain.handle('docs:list', async () => {
+    try {
+      return { success: true, documents: listDocuments(50) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Get single document status
+  ipcMain.handle('docs:get', async (_event, docId: string) => {
+    try {
+      const doc = getDocument(docId);
+      return { success: !!doc, document: doc };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Delete a document
+  ipcMain.handle('docs:delete', async (_event, docId: string) => {
+    try {
+      deleteDocument(docId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── Task Tracker Handlers ─────────────────────────────────────────────────
+
+  // List recent tasks
+  ipcMain.handle('task:list', async () => {
+    try {
+      return { success: true, tasks: taskTracker.listTasks(30) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Get a single task by ID
+  ipcMain.handle('task:get', async (_event, taskId: string) => {
+    try {
+      const task = taskTracker.getTask(taskId);
+      return { success: !!task, task };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Cancel a running task
+  ipcMain.handle('task:cancel', async (_event, taskId: string) => {
+    try {
+      const cancelled = taskTracker.cancelTask(taskId);
+      return { success: cancelled, error: cancelled ? undefined : 'Task not found or not running' };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 }

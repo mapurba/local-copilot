@@ -1,3 +1,5 @@
+@import '@ux-aspects-universal/themes/jato/index.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -342,3 +344,39 @@ body {
   border-left: 4px solid #e5e7eb;
   background: #f1f5f9;
 }
+
+/* --- TaskStatusPanel light theme --- */
+
+/* Log / command output <pre> block */
+.theme-light .bg-gray-950 { background-color: #f1f5f9; }
+.theme-light .border-gray-800 { border-color: #cbd5e1; }
+
+/* Task card header */
+.theme-light .hover\:bg-gray-750:hover { background-color: #f1f5f9; }
+
+/* Status badges */
+.theme-light .bg-blue-900\/50  { background-color: #eff6ff; }
+.theme-light .border-blue-700  { border-color: #93c5fd; }
+.theme-light .text-blue-300    { color: #1d4ed8; }
+
+.theme-light .bg-green-900\/50 { background-color: #f0fdf4; }
+.theme-light .border-green-700 { border-color: #86efac; }
+.theme-light .text-green-300   { color: #15803d; }
+
+.theme-light .bg-red-900\/50   { background-color: #fef2f2; }
+.theme-light .border-red-700   { border-color: #fca5a5; }
+.theme-light .text-red-300     { color: #b91c1c; }
+
+/* Cancel button */
+.theme-light .border-red-800        { border-color: #fca5a5; }
+.theme-light .bg-red-950\/40        { background-color: #fef2f2; }
+.theme-light .text-red-400          { color: #dc2626; }
+.theme-light .hover\:bg-red-900\/60:hover { background-color: #fee2e2; }
+.theme-light .hover\:text-red-300:hover   { color: #b91c1c; }
+
+/* Task error block */
+.theme-light .bg-red-950\/50 { background-color: #fef2f2; }
+
+/* Step text */
+.theme-light .text-gray-600  { color: #4b5563; }
+.theme-light .text-red-500   { color: #dc2626; }

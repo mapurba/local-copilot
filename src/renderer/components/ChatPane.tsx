@@ -2,6 +2,9 @@
 import ConfirmDialog from './ConfirmDialog';
 import ModelSelector from './ModelSelector';
 import ResponseRenderer from './ResponseRenderer';
+import ConfigureToolsPanel from './ConfigureToolsPanel';
+import { Button, IconButton } from '@ux-aspects-universal/react/button';
+import { TextArea } from '@ux-aspects-universal/react/text-input';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -82,6 +85,15 @@ const ChatPane: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState('gpt-4');
   const [isStreaming, setIsStreaming] = useState(false);
   const [useTools, setUseTools] = useState(true);
+  const [disabledTools, setDisabledTools] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('copilot:disabledTools');
+      return saved ? new Set(JSON.parse(saved) as string[]) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const [showToolsConfig, setShowToolsConfig] = useState(false);
   const [pendingForm, setPendingForm] = useState<VmDraftForm | null>(null);
   const [pendingCopyForm, setPendingCopyForm] = useState<VmCopyDraftForm | null>(null);
   const [vapps, setVapps] = useState<VApp[]>([]);
@@ -157,7 +169,12 @@ const ChatPane: React.FC = () => {
       });
     });
 
-    cleanupRef.current = [unsubChunk, unsubEnd, unsubError, unsubDraft, unsubCopyDraft];
+    const unsubWatch = window.copilot.onWatchNotification((_event: unknown, data: { message: string }) => {
+      setIsStreaming(false);
+      setMessages((prev) => [...prev, { role: 'assistant', content: data.message }]);
+    });
+
+    cleanupRef.current = [unsubChunk, unsubEnd, unsubError, unsubDraft, unsubCopyDraft, unsubWatch];
     return () => cleanupRef.current.forEach((fn) => fn());
   }, []);
 
@@ -210,11 +227,12 @@ const ChatPane: React.FC = () => {
       .map((m) => ({ role: m.role, content: m.content }));
 
     if (useTools) {
-      await window.copilot.sendChatMessageWithTools(selectedModel, historyForApi);
+      const disabled = disabledTools.size > 0 ? [...disabledTools] : undefined;
+      await window.copilot.sendChatMessageWithTools(selectedModel, historyForApi, disabled);
     } else {
       await window.copilot.sendChatMessage(selectedModel, historyForApi);
     }
-  }, [input, isStreaming, messages, selectedModel, useTools]);
+  }, [input, isStreaming, messages, selectedModel, useTools, disabledTools]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -378,21 +396,8 @@ const ChatPane: React.FC = () => {
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-gray-900">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-800 border-b border-gray-700/60">
         <span className="text-sm font-semibold text-gray-200">Copilot Chat</span>
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm text-gray-300 hover:text-gray-100 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useTools}
-              onChange={(e) => setUseTools(e.target.checked)}
-              disabled={isStreaming}
-              className="w-4 h-4"
-            />
-            <span>Enable Tools</span>
-          </label>
-          <ModelSelector selectedModel={selectedModel} onModelChange={setSelectedModel} />
-        </div>
       </div>
 
       {/* Messages */}
@@ -487,13 +492,9 @@ const ChatPane: React.FC = () => {
                         placeholder="Auto (DHCP)"
                         className="flex-1 bg-gray-700 text-gray-100 text-xs rounded px-2.5 py-1.5 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-0"
                       />
-                      <button
-                        onClick={handleFetchFreeIp}
-                        disabled={fetchingIp}
-                        className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-medium px-2 py-1.5 rounded whitespace-nowrap"
-                      >
+                      <Button secondary size="small" isDisabled={fetchingIp} onClick={handleFetchFreeIp}>
                         {fetchingIp ? '...' : 'Fetch Free IP'}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -594,21 +595,14 @@ const ChatPane: React.FC = () => {
 
               {/* Actions */}
               <div className="px-5 py-3 bg-gray-750 border-t border-gray-700 flex gap-3 justify-end">
-                <button
-                  onClick={handleCancelReview}
-                  disabled={isDeploying}
-                  className="px-4 py-1.5 rounded text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors disabled:opacity-50"
-                >
+                <Button secondary isDisabled={isDeploying} onClick={handleCancelReview}>
                   Cancel
-                </button>
-                <button
-                  onClick={handleDeployVm}
-                  disabled={isDeploying}
-                  className="px-4 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60 flex items-center gap-2"
+                </Button>
+                <Button primary isDisabled={isDeploying} onClick={handleDeployVm}
+                  iconBefore={isDeploying ? <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : undefined}
                 >
-                  {isDeploying && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   {isDeploying ? 'Deploying...' : 'Deploy VM'}
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -690,21 +684,14 @@ const ChatPane: React.FC = () => {
               </div>
 
               <div className="px-5 py-3 bg-gray-750 border-t border-gray-700 flex gap-3 justify-end">
-                <button
-                  onClick={handleCancelCopyReview}
-                  disabled={isCopyingVm}
-                  className="px-4 py-1.5 rounded text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors disabled:opacity-50"
-                >
+                <Button secondary isDisabled={isCopyingVm} onClick={handleCancelCopyReview}>
                   Cancel
-                </button>
-                <button
-                  onClick={handleCopyVm}
-                  disabled={isCopyingVm}
-                  className="px-4 py-1.5 rounded text-xs font-medium bg-violet-600 text-white hover:bg-violet-700 transition-colors disabled:opacity-60 flex items-center gap-2"
+                </Button>
+                <Button primary isDisabled={isCopyingVm} onClick={handleCopyVm}
+                  iconBefore={isCopyingVm ? <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : undefined}
                 >
-                  {isCopyingVm && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   {isCopyingVm ? 'Copying...' : 'Create Copy'}
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -713,29 +700,108 @@ const ChatPane: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="px-4 py-3 bg-gray-800 border-t border-gray-700">
-        <div className="flex gap-2 items-end">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask Copilot... (Enter to send, Shift+Enter for newline)"
-            disabled={isStreaming}
-            rows={3}
-            className="flex-1 bg-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 border border-gray-600 placeholder-gray-500 disabled:opacity-50"
-          />
-          <button
-            onClick={sendMessage}
-            disabled={isStreaming || !input.trim()}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg px-4 py-2 text-sm font-semibold transition-colors h-[4.5rem] flex items-center justify-center"
+      {/* ── Input Area ─────────────────────────────────────────────────── */}
+      <div className="px-3 pb-3 pt-2">
+        {/* Textarea */}
+        <TextArea
+          value={input}
+          onValueChange={setInput}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask Copilot…"
+          rows={3}
+          style={{ width: '100%', resize: 'none' }}
+        />
+
+        {/* Toolbar row */}
+        <div className="flex items-center gap-1.5 px-1 pt-2">
+          {/* Model picker pill */}
+          <ModelSelector selectedModel={selectedModel} onModelChange={setSelectedModel} />
+
+          {/* Tools toggle pill */}
+          <Button
+            flat={!useTools}
+            primary={useTools}
+            size="small"
+            isDisabled={isStreaming}
+            onClick={() => setUseTools((t) => !t)}
+            title={useTools ? 'Tools enabled — click to disable' : 'Tools disabled — click to enable'}
+            iconBefore={
+              <svg style={{ width: 12, height: 12 }} viewBox="0 0 16 16" fill="currentColor">
+                <path d="M9.5 1.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5L6 5l2.5-1z"/>
+                <path d="M3 8l.7 1.8L5.5 10l-1.8.7L3 12.5l-.7-1.8L.5 10l1.8-.7z"/>
+              </svg>
+            }
           >
-            {isStreaming ? (
-              <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-            ) : 'Send'}
-          </button>
+            {useTools
+              ? disabledTools.size > 0
+                ? `Tools (${disabledTools.size} off)`
+                : 'Tools on'
+              : 'Tools off'}
+          </Button>
+
+          {/* Configure tools button */}
+          <IconButton
+            flat
+            size="small"
+            isDisabled={isStreaming}
+            onClick={() => setShowToolsConfig(true)}
+            aria-label="Configure tools"
+            title="Configure tools"
+            icon={
+              <svg style={{ width: 13, height: 13 }} viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5zm0-1a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/>
+                <path d="M13.96 8.49l-.82-.38a5.53 5.53 0 000-1.22l.82-.38a1 1 0 00.45-1.34l-.78-1.34a1 1 0 00-1.35-.37l-.82.38a5.47 5.47 0 00-1.06-.61V2.77a1 1 0 00-1-1H8.6a1 1 0 00-1 1v.46a5.47 5.47 0 00-1.06.61l-.82-.38a1 1 0 00-1.35.37L3.59 5.17a1 1 0 00.45 1.34l.82.38a5.53 5.53 0 000 1.22l-.82.38a1 1 0 00-.45 1.34l.78 1.34a1 1 0 001.35.37l.82-.38c.33.22.68.41 1.06.61v.46a1 1 0 001 1h1.56a1 1 0 001-1v-.46c.38-.2.73-.39 1.06-.61l.82.38a1 1 0 001.35-.37l.78-1.34a1 1 0 00-.45-1.34zM8 10.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/>
+              </svg>
+            }
+          />
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Hint text */}
+          {!isStreaming && (
+            <span className="text-xs hidden sm:block select-none" style={{ opacity: 0.45 }}>
+              Enter ↵ send&nbsp;&nbsp;Shift+Enter newline
+            </span>
+          )}
+
+          {/* Send / Stop button */}
+          {isStreaming ? (
+            <IconButton
+              icon={<svg style={{ width: 12, height: 12 }} viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1" /></svg>}
+              flat
+              onClick={() => window.copilot.cancelChat()}
+              aria-label="Stop response"
+              title="Stop response"
+            />
+          ) : (
+            <IconButton
+              icon={<svg style={{ width: 14, height: 14 }} viewBox="0 0 16 16" fill="currentColor"><path d="M8 2l6 6H9v6H7V8H2z" transform="rotate(-90 8 8)" /></svg>}
+              primary={!!input.trim()}
+              flat={!input.trim()}
+              isDisabled={!input.trim()}
+              onClick={sendMessage}
+              aria-label="Send message"
+            />
+          )}
         </div>
       </div>
+
+      {/* Configure Tools panel */}
+      <ConfigureToolsPanel
+        open={showToolsConfig}
+        disabledTools={disabledTools}
+        onClose={() => setShowToolsConfig(false)}
+        onSave={(newDisabled) => {
+          setDisabledTools(newDisabled);
+          try {
+            localStorage.setItem('copilot:disabledTools', JSON.stringify([...newDisabled]));
+          } catch {
+            // ignore
+          }
+          setShowToolsConfig(false);
+        }}
+      />
     </div>
   );
 };

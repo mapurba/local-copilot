@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 import VmListPane from './VmListPane';
+import DocUploadPanel from './DocUploadPanel';
+import TaskStatusPanel from './TaskStatusPanel';
+import { IconButton } from '@ux-aspects-universal/react/button';
+import { Button } from '@ux-aspects-universal/react/button';
 // DISABLED: FileBrowser import removed to disable SSH2/SFTP functionality
 // import FileBrowser from './FileBrowser';
 // DISABLED: SavedSessionsTab import removed since terminal sessions are disabled
@@ -62,7 +66,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   // onDeleteSession,
   // onRefreshSessions,
 }) => {
-  const [activeTab, setActiveTab] = useState<'vms' | 'sessions'>('vms');
+  const [activeTab, setActiveTab] = useState<'vms' | 'docs' | 'tasks' | 'sessions'>('vms');
 
   // DISABLED: explorer tab switching logic removed to disable SSH2/SFTP functionality
   // React.useEffect(() => {
@@ -76,6 +80,21 @@ const Sidebar: React.FC<SidebarProps> = ({
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
         <line x1="2" y1="17" x2="22" y2="17" />
+      </svg>
+    ) },
+    { id: 'docs' as const, label: 'Documents', icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+        <polyline points="10 9 9 9 8 9" />
+      </svg>
+    ) },
+    { id: 'tasks' as const, label: 'Tasks', icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
       </svg>
     ) },
     // DISABLED: Explorer tab removed to disable SSH2/SFTP functionality
@@ -101,18 +120,15 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* Activity Bar (Icon Strip on Left) */}
       <div className="w-14 bg-gray-800 border-r border-gray-700 flex flex-col items-center py-2 gap-2">
         {tabs.map((tab) => (
-          <button
+          <IconButton
             key={tab.id}
+            icon={tab.icon}
+            primary={activeTab === tab.id}
+            flat={activeTab !== tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
-              activeTab === tab.id
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-            }`}
             title={tab.label}
-          >
-            {tab.icon}
-          </button>
+            aria-label={tab.label}
+          />
         ))}
       </div>
 
@@ -124,13 +140,9 @@ const Sidebar: React.FC<SidebarProps> = ({
             {tabs.find(t => t.id === activeTab)?.label}
           </h2>
           {vcdConnected && onVcdSignOut && (
-            <button
-              onClick={onVcdSignOut}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
-              title="Disconnect from VCD"
-            >
+            <Button flat size="small" onClick={onVcdSignOut} title="Disconnect from VCD">
               Logout
-            </button>
+            </Button>
           )}
         </div>
 
@@ -157,15 +169,22 @@ const Sidebar: React.FC<SidebarProps> = ({
                     </svg>
                     <p>Connect to VCD to manage VMs</p>
                   </div>
-                  <button
-                    onClick={onVcdSignIn}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded transition-colors"
-                  >
+                  <Button primary size="small" onClick={onVcdSignIn}>
                     Connect to VCD
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
+          )}
+
+          {/* Tasks Tab */}
+          {activeTab === 'tasks' && (
+            <TaskStatusPanel />
+          )}
+
+          {/* Documents Tab */}
+          {activeTab === 'docs' && (
+            <DocUploadPanel />
           )}
 
           {/* Explorer Tab - DISABLED */}

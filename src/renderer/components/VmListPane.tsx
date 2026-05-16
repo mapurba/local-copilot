@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import ConfirmDialog from './ConfirmDialog';
+import { Button, IconButton } from '@ux-aspects-universal/react/button';
+import { Card, CardChipList, CardContent, CardFooter, CardHeader, CardSubtitle, CardTitle } from '@ux-aspects-universal/react/card';
+import { Chip } from '@ux-aspects-universal/react/chip';
+import { Dialog, DialogContent, DialogFooter, DialogHeader } from '@ux-aspects-universal/react/dialog';
+import { Form, FormField, FormFieldLabel } from '@ux-aspects-universal/react/form';
+import { TextInput } from '@ux-aspects-universal/react/text-input';
+import { Checkbox } from '@ux-aspects-universal/react/checkbox';
 
 interface VM {
   name: string;
@@ -353,37 +360,33 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-200">Virtual Machines</span>
-        <button
-          onClick={() => {
-            loadVms();
-            onRefresh?.();
-          }}
-          disabled={loading}
-          className="p-1.5 hover:bg-gray-700 rounded transition-colors"
-          title="Refresh VM list"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <polyline points="23 4 23 10 17 10" />
-            <polyline points="1 20 1 14 7 14" />
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-          </svg>
-        </button>
+        <IconButton
+          flat
+          onClick={() => { loadVms(); onRefresh?.(); }}
+          isDisabled={loading}
+          aria-label="Refresh VM list"
+          icon={
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+          }
+        />
       </div>
 
       {/* Filter Buttons */}
       <div className="flex gap-2 px-4 py-2 bg-gray-850 border-b border-gray-700">
         {(['all', 'on', 'off'] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              filter === f
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            {f === 'all' ? 'All' : f === 'on' ? 'Running' : 'Stopped'}
-          </button>
+          filter === f ? (
+            <Button key={f} primary size="small" onClick={() => setFilter(f)}>
+              {f === 'all' ? 'All' : f === 'on' ? 'Running' : 'Stopped'}
+            </Button>
+          ) : (
+            <Button key={f} secondary flat size="small" onClick={() => setFilter(f)}>
+              {f === 'all' ? 'All' : f === 'on' ? 'Running' : 'Stopped'}
+            </Button>
+          )
         ))}
       </div>
 
@@ -427,115 +430,66 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
         )}
 
         {!loading && vms.map((vm) => (
-          <div
-            key={vm.href}
-            className="vm-card border-b border-gray-700 px-4 py-3 hover:bg-gray-800/50 transition-colors group"
-          >
-            {/* VM Name and Status Badge */}
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div
-                  className={`vm-dot w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                    vm.powered_on ? 'bg-green-500' : 'bg-gray-500'
-                  }`}
-                />
-                <span className="vm-name text-sm font-medium text-gray-100 truncate">{vm.name}</span>
-              </div>
-              <span className={`vm-status text-xs font-semibold px-2.5 py-1 rounded whitespace-nowrap ml-2 flex-shrink-0 ${
-                vm.powered_on
-                  ? 'bg-green-700 text-white shadow-sm'
-                  : 'bg-red-700 text-white shadow-sm'
-              }`}>
-                {vm.status || (vm.powered_on ? 'POWERED ON' : 'POWERED OFF')}
-              </span>
-            </div>
+          <div key={vm.href} style={{ margin: '8px 12px' }}>
+            <Card>
+              <CardHeader
+                avatar={
+                  <span style={{
+                    width: 10, height: 10, borderRadius: '50%', flexShrink: 0, display: 'inline-block',
+                    background: vm.powered_on ? '#16a34a' : '#6b7280',
+                  }} />
+                }
+              >
+                <CardTitle>{vm.name}</CardTitle>
+                {vm.owner && <CardSubtitle>{vm.owner}</CardSubtitle>}
+              </CardHeader>
 
-            {/* VM Details */}
-            <div className="text-xs text-gray-400 space-y-1 ml-4 mb-2">
-              {vm.ip && (
-                <div className="flex gap-2">
-                  <span className="text-gray-500 min-w-fit">IP:</span>
-                  <span className="text-gray-300 font-mono truncate">{vm.ip}</span>
-                </div>
-              )}
-              {vm.owner && (
-                <div className="flex gap-2">
-                  <span className="text-gray-500 min-w-fit">Owner:</span>
-                  <span className="text-gray-300 truncate">{vm.owner}</span>
-                </div>
-              )}
-              {vm.osType && (
-                <div className="flex gap-2">
-                  <span className="text-gray-500 min-w-fit">OS:</span>
-                  <span className="text-gray-300 truncate">
-                    {vm.osType}
-                    {vm.osVersion ? ` (${vm.osVersion})` : ''}
-                  </span>
-                </div>
-              )}
-              {vm.cpus && vm.memory_mb && (
-                <div className="flex gap-2">
-                  <span className="text-gray-500 min-w-fit">Resources:</span>
-                  <span className="text-gray-300">{vm.cpus} CPU × {vm.memory_mb}MB RAM</span>
-                </div>
-              )}
-            </div>
+              <CardChipList>
+                <Chip size="small" style={vm.powered_on
+                  ? { background: '#16a34a', color: 'white', border: 'none' }
+                  : { background: '#dc2626', color: 'white', border: 'none' }}>
+                  {vm.status || (vm.powered_on ? 'POWERED_ON' : 'POWERED_OFF')}
+                </Chip>
+                {vm.osType && <Chip size="small">{vm.osType}{vm.osVersion ? ` (${vm.osVersion})` : ''}</Chip>}
+              </CardChipList>
 
-            {/* Action Buttons */}
-            <div className="vm-actions flex gap-2 ml-4">
-              {vm.powered_on ? (
-                <button
-                  onClick={() => handlePowerToggle(vm, 'stop')}
-                  disabled={pendingAction?.href === vm.href}
-                  className="vm-action vm-action-stop text-xs px-2 py-1 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 transition-colors disabled:opacity-50"
-                  title="Stop VM"
-                >
-                  {pendingAction?.href === vm.href && pendingAction.action === 'stop' ? 'Stopping...' : 'Stop'}
-                </button>
-              ) : (
-                <button
-                  onClick={() => handlePowerToggle(vm, 'start')}
-                  disabled={pendingAction?.href === vm.href}
-                  className="vm-action vm-action-start text-xs px-2 py-1 rounded bg-green-900/30 text-green-400 hover:bg-green-900/50 transition-colors disabled:opacity-50"
-                  title="Start VM"
-                >
-                  {pendingAction?.href === vm.href && pendingAction.action === 'start' ? 'Starting...' : 'Start'}
-                </button>
+              {(vm.ip || vm.cpus) && (
+                <CardContent size="small">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
+                    {vm.ip && <span><strong>IP:</strong> <code>{vm.ip}</code></span>}
+                    {vm.cpus && vm.memory_mb && <span>{vm.cpus} CPU × {vm.memory_mb} MB RAM</span>}
+                  </div>
+                </CardContent>
               )}
-              
-              <button
-                onClick={() => handleDeleteVm(vm)}
-                disabled={pendingAction?.href === vm.href}
-                className="vm-action vm-action-delete text-xs px-2 py-1 rounded bg-gray-800 text-gray-300 hover:bg-red-900/40 hover:text-red-300 transition-colors disabled:opacity-50"
-                title="Delete VM"
-              >
-                {pendingAction?.href === vm.href && pendingAction.action === 'delete' ? 'Deleting...' : 'Delete'}
-              </button>
-              <button
-                onClick={() => handleCreateSnapshot(vm)}
-                disabled={pendingAction?.href === vm.href}
-                className="vm-action text-xs px-2 py-1 rounded bg-cyan-900/30 text-cyan-300 hover:bg-cyan-900/50 transition-colors disabled:opacity-50"
-                title="Create snapshot"
-              >
-                {pendingAction?.href === vm.href && pendingAction.action === 'snapshot' ? 'Snapshot...' : 'Snapshot'}
-              </button>
-              <button
-                onClick={() => handleRevertSnapshot(vm)}
-                disabled={pendingAction?.href === vm.href}
-                className="vm-action text-xs px-2 py-1 rounded bg-amber-900/30 text-amber-300 hover:bg-amber-900/50 transition-colors disabled:opacity-50"
-                title="Revert snapshot"
-              >
-                {pendingAction?.href === vm.href && pendingAction.action === 'revert' ? 'Reverting...' : 'Revert'}
-              </button>
-              <button
-                onClick={() => handleCreateCopy(vm)}
-                disabled={pendingAction?.href === vm.href}
-                className="vm-action text-xs px-2 py-1 rounded bg-violet-900/30 text-violet-300 hover:bg-violet-900/50 transition-colors disabled:opacity-50"
-                title="Create copy of VM"
-              >
-                {pendingAction?.href === vm.href && pendingAction.action === 'copy' ? 'Copying...' : 'Copy'}
-              </button>
-            </div>
+
+              <CardFooter
+                leading={
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {vm.powered_on ? (
+                      <Button secondary flat size="small" isDisabled={pendingAction?.href === vm.href} onClick={() => handlePowerToggle(vm, 'stop')}>
+                        {pendingAction?.href === vm.href && pendingAction.action === 'stop' ? 'Stopping…' : 'Stop'}
+                      </Button>
+                    ) : (
+                      <Button primary flat size="small" isDisabled={pendingAction?.href === vm.href} onClick={() => handlePowerToggle(vm, 'start')}>
+                        {pendingAction?.href === vm.href && pendingAction.action === 'start' ? 'Starting…' : 'Start'}
+                      </Button>
+                    )}
+                    <Button secondary flat size="small" isDisabled={pendingAction?.href === vm.href} onClick={() => handleDeleteVm(vm)}>
+                      {pendingAction?.href === vm.href && pendingAction.action === 'delete' ? 'Deleting…' : 'Delete'}
+                    </Button>
+                    <Button secondary flat size="small" isDisabled={pendingAction?.href === vm.href} onClick={() => handleCreateSnapshot(vm)}>
+                      {pendingAction?.href === vm.href && pendingAction.action === 'snapshot' ? 'Snapshot…' : 'Snapshot'}
+                    </Button>
+                    <Button secondary flat size="small" isDisabled={pendingAction?.href === vm.href} onClick={() => handleRevertSnapshot(vm)}>
+                      {pendingAction?.href === vm.href && pendingAction.action === 'revert' ? 'Reverting…' : 'Revert'}
+                    </Button>
+                    <Button secondary flat size="small" isDisabled={pendingAction?.href === vm.href} onClick={() => handleCreateCopy(vm)}>
+                      {pendingAction?.href === vm.href && pendingAction.action === 'copy' ? 'Copying…' : 'Copy'}
+                    </Button>
+                  </div>
+                }
+              />
+            </Card>
           </div>
         ))}
       </div>
@@ -545,137 +499,113 @@ const VmListPane: React.FC<VmListPaneProps> = ({ onOpenTerminal, onRefresh }) =>
 
       {/* Terminal Input Dialog */}
       {terminalVm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 rounded">
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 w-96 shadow-lg">
-            <h3 className="text-lg font-semibold text-gray-200 mb-4">SSH Terminal: {terminalVm.name}</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-gray-400 block mb-1">Username (optional)</label>
-                <input
-                  type="text"
+        <Dialog onClose={() => setTerminalVm(null)} aria-label="SSH Terminal" style={{ width: '24rem' }}>
+          <DialogHeader>SSH Terminal: {terminalVm.name}</DialogHeader>
+          <DialogContent>
+            <Form orientation="vertical">
+              <FormField>
+                <FormFieldLabel>Username (optional)</FormFieldLabel>
+                <TextInput
                   value={terminalUser}
-                  onChange={(e) => setTerminalUser(e.target.value)}
+                  onValueChange={setTerminalUser}
                   placeholder="e.g., root, ubuntu"
-                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
                 />
-              </div>
-              <div>
-                <label className="text-sm text-gray-400 block mb-1">Password (optional)</label>
-                <input
+              </FormField>
+              <FormField>
+                <FormFieldLabel>Password (optional)</FormFieldLabel>
+                <TextInput
                   type="password"
                   value={terminalPassword}
-                  onChange={(e) => setTerminalPassword(e.target.value)}
+                  onValueChange={setTerminalPassword}
                   placeholder="SSH password"
-                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
                 />
-              </div>
-              <div>
-                <label className="text-sm text-gray-400 block mb-1">Custom Command (optional)</label>
-                <input
-                  type="text"
+              </FormField>
+              <FormField>
+                <FormFieldLabel>Custom Command (optional)</FormFieldLabel>
+                <TextInput
                   value={terminalCommand}
-                  onChange={(e) => setTerminalCommand(e.target.value)}
+                  onValueChange={setTerminalCommand}
                   placeholder={`e.g., ssh ${terminalVm.ip}`}
-                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
                 />
-              </div>
-              <div className="text-xs text-gray-500">
+              </FormField>
+              <p style={{ fontSize: 11, opacity: 0.6, margin: 0 }}>
                 {terminalCommand ? `Will run: ${terminalCommand}` : terminalUser ? `Will run: ssh ${terminalUser}@${terminalVm.ip}` : `Will run: ssh ${terminalVm.ip}`}
-              </div>
-              <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => setTerminalVm(null)}
-                  className="px-4 py-2 bg-gray-700 text-gray-300 rounded text-sm hover:bg-gray-600 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleTerminalSubmit}
-                  className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors"
-                >
-                  Open Terminal
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+              </p>
+            </Form>
+          </DialogContent>
+          <DialogFooter>
+            <Button secondary flat onClick={() => setTerminalVm(null)}>Cancel</Button>
+            <Button primary onClick={handleTerminalSubmit}>Open Terminal</Button>
+          </DialogFooter>
+        </Dialog>
       )}
 
       {/* Copy VM Form Dialog */}
       {copyFormVm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 rounded">
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 w-[480px] max-w-[95vw] shadow-lg">
-            <h3 className="text-lg font-semibold text-gray-200 mb-1">Create VM Copy</h3>
-            <p className="text-xs text-gray-400 mb-4">Source VM: {copyFormVm.name}</p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-gray-400 block mb-1">Target vApp</label>
+        <Dialog onClose={() => setCopyFormVm(null)} aria-label="Create VM Copy" style={{ width: '30rem', maxWidth: '95vw' }}>
+          <DialogHeader>Create VM Copy</DialogHeader>
+          <DialogContent>
+            <p style={{ fontSize: 12, opacity: 0.7, marginTop: 0 }}>Source VM: {copyFormVm.name}</p>
+            <Form orientation="vertical">
+              <FormField>
+                <FormFieldLabel>Target vApp</FormFieldLabel>
                 <select
                   value={copyTargetVappHref}
                   onChange={(e) => setCopyTargetVappHref(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-violet-500"
+                  style={{ width: '100%', padding: '6px 10px', borderRadius: 4, fontSize: 13, border: '1px solid var(--uxa-text-input__border-color, #ccc)', background: 'var(--uxa-text-input__background-color, #fff)', color: 'inherit' }}
                 >
                   <option value="" disabled>
-                    {vappsLoading ? 'Loading vApps...' : 'Select target vApp'}
+                    {vappsLoading ? 'Loading vApps…' : 'Select target vApp'}
                   </option>
                   {vapps.map((vapp) => (
                     <option key={vapp.href} value={vapp.href}>{vapp.name}</option>
                   ))}
                 </select>
-              </div>
-
-              <div>
-                <label className="text-sm text-gray-400 block mb-1">New VM Name</label>
-                <input
-                  type="text"
+              </FormField>
+              <FormField>
+                <FormFieldLabel>New VM Name</FormFieldLabel>
+                <TextInput
                   value={copyVmName}
-                  onChange={(e) => setCopyVmName(e.target.value)}
+                  onValueChange={setCopyVmName}
                   placeholder="Enter copied VM name"
-                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-violet-500"
                 />
-              </div>
-
-              <div>
-                <label className="text-sm text-gray-400 block mb-1">Description (optional)</label>
-                <textarea
+              </FormField>
+              <FormField>
+                <FormFieldLabel>Description (optional)</FormFieldLabel>
+                <TextInput
                   value={copyDescription}
-                  onChange={(e) => setCopyDescription(e.target.value)}
-                  rows={3}
+                  onValueChange={setCopyDescription}
                   placeholder="Describe this copy"
-                  className="w-full px-3 py-2 bg-gray-700 text-gray-200 border border-gray-600 rounded text-sm focus:outline-none focus:border-violet-500"
                 />
-              </div>
-
-              <label className="flex items-center gap-2 text-sm text-gray-300 select-none">
-                <input
-                  type="checkbox"
-                  checked={copyPowerOn}
-                  onChange={(e) => setCopyPowerOn(e.target.checked)}
-                  className="rounded border-gray-500 bg-gray-700 text-violet-500 focus:ring-violet-500"
-                />
-                Power on copied VM after creation
-              </label>
-
-              <div className="flex gap-2 justify-end pt-1">
-                <button
-                  onClick={() => setCopyFormVm(null)}
-                  disabled={pendingAction?.href === copyFormVm.href && pendingAction.action === 'copy'}
-                  className="px-4 py-2 bg-gray-700 text-gray-300 rounded text-sm hover:bg-gray-600 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={submitCreateCopy}
-                  disabled={pendingAction?.href === copyFormVm.href && pendingAction.action === 'copy'}
-                  className="px-4 py-2 bg-violet-600 text-white rounded text-sm hover:bg-violet-700 transition-colors disabled:opacity-50"
-                >
-                  {pendingAction?.href === copyFormVm.href && pendingAction.action === 'copy' ? 'Creating Copy...' : 'Create Copy'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+              </FormField>
+              <FormField>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <Checkbox
+                    isChecked={copyPowerOn}
+                    onCheckedChange={(checked) => setCopyPowerOn(checked)}
+                  />
+                  Power on copied VM after creation
+                </label>
+              </FormField>
+            </Form>
+          </DialogContent>
+          <DialogFooter>
+            <Button
+              secondary flat
+              isDisabled={pendingAction?.href === copyFormVm.href && pendingAction.action === 'copy'}
+              onClick={() => setCopyFormVm(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              primary
+              isDisabled={pendingAction?.href === copyFormVm.href && pendingAction.action === 'copy'}
+              onClick={submitCreateCopy}
+            >
+              {pendingAction?.href === copyFormVm.href && pendingAction.action === 'copy' ? 'Creating Copy…' : 'Create Copy'}
+            </Button>
+          </DialogFooter>
+        </Dialog>
       )}
     </div>
   );

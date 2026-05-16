@@ -3,6 +3,7 @@ import { checkForUpdates } from './autoUpdater';
 import path from 'path';
 import { registerIpcHandlers } from './ipcHandlers';
 import { lspClient } from './lspClient';
+import { initializeDefaultTools } from './tools';
 // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
 // import { registerTerminalHandlers } from './terminalManager';
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
@@ -37,6 +38,14 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   createWindow();
+  
+  // Initialize tool system
+  try {
+    await initializeDefaultTools();
+  } catch (error) {
+    console.error('[Main] Failed to initialize tools:', error);
+  }
+  
   registerIpcHandlers(mainWindow!);
   // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
   // registerTerminalHandlers(mainWindow!);

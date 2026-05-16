@@ -95,7 +95,7 @@ function buildUserId(username: string, org: string): string {
   return `${normalized}@${org.trim()}`;
 }
 
-async function vcdLoginRequest(input: VcdLoginInput): Promise<string> {
+async function vcdLoginRequest(input: VcdLoginInput): Promise<{ token: string; orgUuid?: string }> {
   const apiVersion = input.apiVersion || API_VERSION;
   const userId = buildUserId(input.username, input.org);
   const credentials = Buffer.from(`${userId}:${input.password}`, 'utf8').toString('base64');
@@ -148,7 +148,15 @@ async function vcdLoginRequest(input: VcdLoginInput): Promise<string> {
             res.headers['x-vcloud-authorization'] ||
             res.headers['X-VCloud-Authorization'];
           if (token && typeof token === 'string') {
-            resolve(token);
+            // Extract orgUuid from response body: org.id = "urn:vcloud:org:<uuid>"
+            let orgUuid: string | undefined;
+            try {
+              const parsed = JSON.parse(body) as { org?: { id?: string } };
+              const urnId = parsed?.org?.id || '';
+              const uuidMatch = urnId.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+              if (uuidMatch) orgUuid = uuidMatch[0];
+            } catch { /* body not JSON, ignore */ }
+            resolve({ token, orgUuid });
             return;
           }
           reject(new Error(`VCD login failed (HTTP ${res.statusCode}): ${body}`));
@@ -179,7 +187,7 @@ export async function vcdSignIn(input: VcdLoginInput): Promise<{ connected: bool
   const apiVersion = input.apiVersion || API_VERSION;
   const orgName = input.org || DEFAULT_ORG;
   const orgDefaults = getDefaultsForOrg(orgName);
-  const token = await vcdLoginRequest(input);
+  const { token, orgUuid: resolvedOrgUuid } = await vcdLoginRequest(input);
   const dnsServers = input.dnsServers
     ? input.dnsServers.split(',').map((s) => s.trim()).filter(Boolean)
     : DNS_SERVERS;
@@ -192,7 +200,7 @@ export async function vcdSignIn(input: VcdLoginInput): Promise<{ connected: bool
     token,
     apiVersion,
     vdcId: input.vdcId || orgDefaults.vdcId,
-    orgUuid: input.orgUuid || orgDefaults.orgUuid,
+    orgUuid: input.orgUuid || resolvedOrgUuid || orgDefaults.orgUuid,
     networkName: input.networkName || NETWORK_NAME,
     gateway: input.gateway || GATEWAY,
     dnsServers,
@@ -266,7 +274,9 @@ export async function getStoredCredentials(): Promise<VcdLoginInput | null> {
     password: session.password,
     apiVersion: session.apiVersion,
     vdcId: session.vdcId,
-    orgUuid: session.orgUuid,
+    // Intentionally omit orgUuid so vcdSignIn resolves it fresh from the
+    // login response — prevents a stale/wrong UUID from perpetuating itself
+    // through repeated auto-reauth cycles.
     networkName: session.networkName,
     gateway: session.gateway,
     dnsServers: session.dnsServers?.join(','),

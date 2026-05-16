@@ -7,12 +7,15 @@ export interface CopilotAPI {
   signOut: () => Promise<{ success: boolean }>;
   getModels: () => Promise<string[]>;
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
-  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
+  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>, disabledToolNames?: string[]) => Promise<{ started: boolean }>;
+  cancelChat: () => Promise<{ cancelled: boolean }>;
+  listTools: () => Promise<Array<{ name: string; category: string; description: string }>>
   onChatStream: (callback: (event: Electron.IpcRendererEvent, text: string, type?: string) => void) => () => void;
   onChatEnd: (callback: (event: Electron.IpcRendererEvent) => void) => () => void;
   onChatError: (callback: (event: Electron.IpcRendererEvent, message: string) => void) => () => void;
   onVmDraft: (callback: (event: Electron.IpcRendererEvent, form: Record<string, unknown>) => void) => () => void;
   onVmCopyDraft: (callback: (event: Electron.IpcRendererEvent, form: Record<string, unknown>) => void) => () => void;
+  onWatchNotification: (callback: (event: Electron.IpcRendererEvent, data: { message: string }) => void) => () => void;
   deployVm: (form: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   listVms: () => Promise<{ count?: number; vms?: Array<Record<string, unknown>>; error?: string }>;
   listVapps: () => Promise<{ count?: number; vapps?: Array<Record<string, unknown>>; error?: string }>;
@@ -59,8 +62,10 @@ contextBridge.exposeInMainWorld('copilot', {
   getModels: () => ipcRenderer.invoke('copilot:getModels'),
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) =>
     ipcRenderer.invoke('copilot:sendChatMessage', modelId, messages),
-  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>) =>
-    ipcRenderer.invoke('copilot:sendChatMessageWithTools', modelId, messages),
+  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>, disabledToolNames?: string[]) =>
+    ipcRenderer.invoke('copilot:sendChatMessageWithTools', modelId, messages, disabledToolNames),
+  cancelChat: () => ipcRenderer.invoke('copilot:cancelChat'),
+  listTools: () => ipcRenderer.invoke('tools:list'),
   onChatStream: (callback: (event: Electron.IpcRendererEvent, text: string, type?: string) => void) => {
     ipcRenderer.on('chat:stream-chunk', callback);
     return () => ipcRenderer.removeListener('chat:stream-chunk', callback);
@@ -83,6 +88,10 @@ contextBridge.exposeInMainWorld('copilot', {
     ipcRenderer.on('chat:vm-copy-draft', callback);
     return () => ipcRenderer.removeListener('chat:vm-copy-draft', callback);
   },
+  onWatchNotification: (callback: (event: Electron.IpcRendererEvent, data: { message: string }) => void) => {
+    ipcRenderer.on('chat:watch-notification', callback);
+    return () => ipcRenderer.removeListener('chat:watch-notification', callback);
+  },
   deployVm: (form: Record<string, unknown>) => ipcRenderer.invoke('vcd:deployVm', form),
   listVms: () => ipcRenderer.invoke('vcd:listVms'),
   listVapps: () => ipcRenderer.invoke('vcd:listVapps'),
@@ -102,6 +111,48 @@ contextBridge.exposeInMainWorld('copilot', {
     ipcRenderer.on('vcd:session-expired', callback);
     return () => ipcRenderer.removeListener('vcd:session-expired', callback);
   },
+
+  // ── Tool Approval ────────────────────────────────────────────────────────
+  sendToolApprovalResponse: (response: {
+    requestId: string;
+    approved: boolean;
+    approvalType?: 'once' | 'session' | 'always';
+    denialReason?: string;
+  }) => ipcRenderer.invoke('tool:approval-response', response),
+  
+  getToolApprovalStatus: () => ipcRenderer.invoke('tool:approval-status'),
+  
+  onToolApprovalRequest: (callback: (event: Electron.IpcRendererEvent, request: {
+    requestId: string;
+    toolName: string;
+    category: string;
+    riskLevel: string;
+    description: string;
+    args: unknown;
+    target: string;
+    impactAssessment?: string;
+    timestamp: number;
+  }) => void) => {
+    ipcRenderer.on('tool:approval-request', callback);
+    return () => ipcRenderer.removeListener('tool:approval-request', callback);
+  },
+
+  // ── Document Management ───────────────────────────────────────────────────
+  docsOpenAndUpload: () => ipcRenderer.invoke('docs:openAndUpload'),
+  docsList: () => ipcRenderer.invoke('docs:list'),
+  docsGet: (docId: string) => ipcRenderer.invoke('docs:get', docId),
+  docsDelete: (docId: string) => ipcRenderer.invoke('docs:delete', docId),
+
+  // ── Task Tracker ──────────────────────────────────────────────────────────
+  taskList: () => ipcRenderer.invoke('task:list'),
+  taskGet: (taskId: string) => ipcRenderer.invoke('task:get', taskId),
+  taskCancel: (taskId: string) => ipcRenderer.invoke('task:cancel', taskId),
+  onTaskUpdated: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('task:updated', handler);
+    return () => ipcRenderer.removeListener('task:updated', handler);
+  },
+
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) =>
   //   ipcRenderer.invoke('terminal:create', options),

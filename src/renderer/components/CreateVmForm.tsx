@@ -1,4 +1,8 @@
 import React, { useState } from 'react';
+import { Form, FormField, FormFieldLabel } from '@ux-aspects-universal/react/form';
+import { TextInput } from '@ux-aspects-universal/react/text-input';
+import { Button } from '@ux-aspects-universal/react/button';
+import { Checkbox } from '@ux-aspects-universal/react/checkbox';
 
 interface CreateVmFormProps {
   onSubmit?: (formData: Record<string, unknown>) => void;
@@ -18,11 +22,6 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
     custom_env_content: '',
   });
   const [loading, setLoading] = useState(false);
-
-  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, checked } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: checked }));
-  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -72,8 +71,7 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
       if (result.success && typeof result.ip === 'string') {
         setFormData((prev) => ({
           ...prev,
-          ip_address: result.ip,
-          ip_allocation_mode: 'MANUAL',
+          ip_address: result.ip ?? prev.ip_address,
         }));
       } else {
         console.error('[CreateVmForm] Failed to allocate IP:', result.error);
@@ -93,138 +91,112 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
       </div>
 
       {/* Form Fields */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
-                <div>
-                  <label className="flex items-center gap-2 text-xs font-medium text-gray-300 mb-1.5">
-                    <input
-                      type="checkbox"
-                      name="setup_ilm"
-                      checked={!!formData.setup_ilm}
-                      onChange={handleCheckboxChange}
-                      className="form-checkbox"
-                    />
-                    Setup ILM
-                  </label>
-                </div>
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+        <Form orientation="vertical">
+          <FormField>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 500 }}>
+              <Checkbox
+                isChecked={!!formData.setup_ilm}
+                onCheckedChange={(checked) => setFormData((prev) => ({ ...prev, setup_ilm: checked }))}
+              />
+              Setup ILM
+            </label>
+          </FormField>
 
-                {formData.setup_ilm && (
-                  <>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-300 mb-1.5">ILM Version</label>
-                      <input
-                        type="text"
-                        name="ilm_version"
-                        value={formData.ilm_version}
-                        onChange={handleChange}
-                        placeholder="e.g., 1.3.0 or latest"
-                        className="w-full bg-gray-700 text-gray-100 text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-300 mb-1.5">Custom .env File (optional)</label>
-                      <input
-                        type="file"
-                        accept=".env,text/plain"
-                        onChange={handleFileChange}
-                        className="w-full text-xs text-gray-400"
-                      />
-                      {formData.custom_env_content && (
-                        <div className="mt-1 text-xs text-green-400">.env file loaded ({formData.custom_env_content.length} chars)</div>
-                      )}
-                    </div>
-                  </>
+          {formData.setup_ilm && (
+            <>
+              <FormField>
+                <FormFieldLabel>ILM Version</FormFieldLabel>
+                <TextInput
+                  name="ilm_version"
+                  value={formData.ilm_version}
+                  onValueChange={(v) => setFormData((prev) => ({ ...prev, ilm_version: v }))}
+                  placeholder="e.g., 1.3.0 or latest"
+                />
+              </FormField>
+              <FormField>
+                <FormFieldLabel>Custom .env File (optional)</FormFieldLabel>
+                <input
+                  type="file"
+                  accept=".env,text/plain"
+                  onChange={handleFileChange}
+                  className="w-full text-xs text-gray-400"
+                />
+                {formData.custom_env_content && (
+                  <div className="mt-1 text-xs text-green-400">.env file loaded ({formData.custom_env_content.length} chars)</div>
                 )}
-        <div>
-          <label className="block text-xs font-medium text-gray-300 mb-1.5">VM Name *</label>
-          <input
-            type="text"
-            name="vm_name"
-            value={formData.vm_name}
-            onChange={handleChange}
-            placeholder="e.g., my-vm-01"
-            className="w-full bg-gray-700 text-gray-100 text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
-            required
-          />
-        </div>
+              </FormField>
+            </>
+          )}
 
-        <div>
-          <label className="block text-xs font-medium text-gray-300 mb-1.5">Template ID</label>
-          <input
-            type="text"
-            name="template_id"
-            value={formData.template_id}
-            onChange={handleChange}
-            placeholder="Leave blank for default"
-            className="w-full bg-gray-700 text-gray-100 text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-300 mb-1.5">Network Name</label>
-          <input
-            type="text"
-            name="network_name"
-            value={formData.network_name}
-            onChange={handleChange}
-            placeholder="Leave blank for default"
-            className="w-full bg-gray-700 text-gray-100 text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-300 mb-1.5">
-            IP Address <span className="text-gray-500">(MANUAL only)</span>
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              name="ip_address"
-              value={formData.ip_address}
-              onChange={handleChange}
-              placeholder="10.0.0.10"
-              className="flex-1 bg-gray-700 text-gray-100 text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
+          <FormField>
+            <FormFieldLabel isRequired>VM Name</FormFieldLabel>
+            <TextInput
+              name="vm_name"
+              value={formData.vm_name}
+              onValueChange={(v) => setFormData((prev) => ({ ...prev, vm_name: v }))}
+              placeholder="e.g., my-vm-01"
             />
-            <button
-              type="button"
-              onClick={handleFetchFreeIp}
-              className="px-3 py-2 bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs rounded transition-colors border border-gray-600"
-              title="Fetch free IP"
-            >
-              Fetch
-            </button>
-          </div>
-        </div>
+          </FormField>
 
-        <div>
-          <label className="block text-xs font-medium text-gray-300 mb-1.5">Power On After Create</label>
-          <select
-            name="power_on"
-            value={formData.power_on}
-            onChange={handleChange}
-            className="w-full bg-gray-700 text-gray-100 text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
-        </div>
+          <FormField>
+            <FormFieldLabel>Template ID</FormFieldLabel>
+            <TextInput
+              name="template_id"
+              value={formData.template_id}
+              onValueChange={(v) => setFormData((prev) => ({ ...prev, template_id: v }))}
+              placeholder="Leave blank for default"
+            />
+          </FormField>
+
+          <FormField>
+            <FormFieldLabel>Network Name</FormFieldLabel>
+            <TextInput
+              name="network_name"
+              value={formData.network_name}
+              onValueChange={(v) => setFormData((prev) => ({ ...prev, network_name: v }))}
+              placeholder="Leave blank for default"
+            />
+          </FormField>
+
+          <FormField>
+            <FormFieldLabel>IP Address <span className="text-gray-500">(MANUAL only)</span></FormFieldLabel>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <TextInput
+                name="ip_address"
+                value={formData.ip_address}
+                onValueChange={(v) => setFormData((prev) => ({ ...prev, ip_address: v }))}
+                placeholder="10.0.0.10"
+              />
+              <Button secondary size="small" type="button" onClick={handleFetchFreeIp} title="Fetch free IP">
+                Fetch
+              </Button>
+            </div>
+          </FormField>
+
+          <FormField>
+            <FormFieldLabel>Power On After Create</FormFieldLabel>
+            <select
+              name="power_on"
+              value={formData.power_on}
+              onChange={handleChange}
+              style={{ width: '100%' }}
+            >
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </FormField>
+        </Form>
       </div>
 
       {/* Submit Button */}
       <div className="px-4 py-3 bg-gray-800 border-t border-gray-700">
-        <button
-          type="submit"
-          disabled={loading || !formData.vm_name.trim()}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded transition-colors text-sm"
+        <Button primary isDisabled={loading || !formData.vm_name.trim()} type="submit"
+          style={{ width: '100%' }}
+          iconBefore={loading ? <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : undefined}
         >
-          {loading ? (
-            <span className="flex items-center justify-center gap-2">
-              <div className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
-              Deploying...
-            </span>
-          ) : (
-            'Deploy VM'
-          )}
-        </button>
+          {loading ? 'Deploying...' : 'Deploy VM'}
+        </Button>
       </div>
     </form>
   );

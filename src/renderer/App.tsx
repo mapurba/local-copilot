@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
+import { ThemeProvider, Theme } from '@ux-aspects-universal/react/theming';
+import { IconButton } from '@ux-aspects-universal/react/button';
 import UpdateToast from './components/UpdateToast';
 import { checkForAppUpdate } from './autoUpdate';
 import Sidebar from './components/Sidebar';
 import ChatPane from './components/ChatPane';
 import AuthModal from './components/AuthModal';
 import VcdAuthModal from './components/VcdAuthModal';
+import { ToolApprovalModal } from './components/ToolApprovalModal';
 import ResizablePanels from './components/ResizablePanels';
 
 declare global {
@@ -30,6 +33,19 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('theme');
     return saved === 'dark' ? 'dark' : 'light';
   });
+
+  // Tool approval state
+  const [approvalRequest, setApprovalRequest] = useState<{
+    requestId: string;
+    toolName: string;
+    category: string;
+    riskLevel: string;
+    description: string;
+    args: unknown;
+    target: string;
+    impactAssessment?: string;
+    timestamp: number;
+  } | null>(null);
 
   // Check GitHub Copilot authentication status
   const checkAuth = async () => {
@@ -85,13 +101,22 @@ const App: React.FC = () => {
     checkVcd();
 
     // Listen for VCD session expiry
-    const cleanup = window.copilot.onVcdSessionExpired(() => {
+    const cleanupVcd = window.copilot.onVcdSessionExpired(() => {
       console.log('[App] VCD session expired, showing login modal');
       setVcdStatus({ connected: false });
       setShowVcdModal(true);
     });
 
-    return cleanup;
+    // Listen for tool approval requests
+    const cleanupApproval = window.copilot.onToolApprovalRequest((_event, request) => {
+      console.log('[App] Tool approval request:', request);
+      setApprovalRequest(request);
+    });
+
+    return () => {
+      cleanupVcd();
+      cleanupApproval();
+    };
   }, []);
 
   // Handle authentication completion
@@ -118,6 +143,32 @@ const App: React.FC = () => {
     setVcdStatus({ connected: false });
   };
 
+  // Handle tool approval
+  const handleToolApprove = async (approvalType: 'once' | 'session' | 'always') => {
+    if (!approvalRequest) return;
+    
+    await window.copilot.sendToolApprovalResponse({
+      requestId: approvalRequest.requestId,
+      approved: true,
+      approvalType,
+    });
+    
+    setApprovalRequest(null);
+  };
+
+  // Handle tool denial
+  const handleToolDeny = async (reason?: string) => {
+    if (!approvalRequest) return;
+    
+    await window.copilot.sendToolApprovalResponse({
+      requestId: approvalRequest.requestId,
+      approved: false,
+      denialReason: reason,
+    });
+    
+    setApprovalRequest(null);
+  };
+
   // DISABLED: Unused handler stub - kept for future reference if needed
   // const _handleCopilotDisconnect = async () => {
   //   await window.copilot.signOut();
@@ -136,6 +187,7 @@ const App: React.FC = () => {
   };
 
   return (
+    <ThemeProvider theme={theme === 'dark' ? Theme.JatoDark : Theme.JatoLight}>
     <>
       <div className={`flex flex-col h-screen w-screen min-h-0 bg-gray-900 text-gray-100 overflow-hidden ${theme === 'light' ? 'theme-light' : 'theme-dark'}`}>
         <ResizablePanels
@@ -166,44 +218,46 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Action Buttons - Right side */}
-                <div className="flex items-center gap-2 px-2">
+                <div className="flex items-center gap-1 px-2">
                   {/* Check for Update Button */}
-                  <button
+                  <IconButton
+                    flat
                     onClick={checkForAppUpdate}
-                    className="p-2 text-gray-400 hover:text-green-400 hover:bg-gray-700 rounded transition-colors"
-                    title="Check for Update"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M23 4v6h-6" />
-                      <path d="M1 20v-6h6" />
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36M20.49 15a9 9 0 0 1-14.85 3.36" />
-                    </svg>
-                  </button>
+                    aria-label="Check for Update"
+                    icon={
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M23 4v6h-6" />
+                        <path d="M1 20v-6h6" />
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36M20.49 15a9 9 0 0 1-14.85 3.36" />
+                      </svg>
+                    }
+                  />
 
                   {/* Theme Toggle Button */}
-                  <button
+                  <IconButton
+                    flat
                     onClick={toggleTheme}
-                    className="p-2 text-gray-400 hover:text-gray-300 hover:bg-gray-700 rounded transition-colors"
-                    title={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}
-                  >
-                    {theme === 'light' ? (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="5" />
-                        <line x1="12" y1="1" x2="12" y2="3" />
-                        <line x1="12" y1="21" x2="12" y2="23" />
-                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                        <line x1="1" y1="12" x2="3" y2="12" />
-                        <line x1="21" y1="12" x2="23" y2="12" />
-                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-                      </svg>
-                    ) : (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                      </svg>
-                    )}
-                  </button>
+                    aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}
+                    icon={
+                      theme === 'light' ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="5" />
+                          <line x1="12" y1="1" x2="12" y2="3" />
+                          <line x1="12" y1="21" x2="12" y2="23" />
+                          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                          <line x1="1" y1="12" x2="3" y2="12" />
+                          <line x1="21" y1="12" x2="23" y2="12" />
+                          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                        </svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                        </svg>
+                      )
+                    }
+                  />
                 </div>
               </div>
 
@@ -239,7 +293,15 @@ const App: React.FC = () => {
       {showVcdModal && (
         <VcdAuthModal onComplete={handleVcdComplete} onClose={() => setShowVcdModal(false)} />
       )}
+
+      {/* Tool Approval Modal */}
+      <ToolApprovalModal
+        request={approvalRequest}
+        onApprove={handleToolApprove}
+        onDeny={handleToolDeny}
+      />
     </>
+    </ThemeProvider>
   );
 };
 

@@ -1,4 +1,6 @@
 import React from 'react';
+import { Dialog, DialogHeader, DialogContent, DialogFooter } from '@ux-aspects-universal/react/dialog';
+import { Button } from '@ux-aspects-universal/react/button';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -21,26 +23,16 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 }) => {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-6 w-full max-w-xs">
-        {title && <h3 className="text-lg font-semibold text-gray-200 mb-2">{title}</h3>}
-        <div className="text-gray-300 mb-4 text-sm">{message}</div>
-        <div className="flex gap-2 justify-end">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 bg-gray-700 text-gray-300 rounded text-sm hover:bg-gray-600 transition-colors"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            onClick={onConfirm}
-            className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors"
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+    <Dialog onClose={onCancel} aria-label={title}>
+      <DialogHeader>{title}</DialogHeader>
+      <DialogContent>
+        <p>{message}</p>
+      </DialogContent>
+      <DialogFooter>
+        <Button secondary onClick={onCancel}>{cancelLabel}</Button>
+        <Button primary onClick={onConfirm}>{confirmLabel}</Button>
+      </DialogFooter>
+    </Dialog>
   );
 };
 

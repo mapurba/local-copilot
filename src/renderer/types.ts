@@ -5,7 +5,8 @@ export interface CopilotAPI {
   signOut: () => Promise<{ success: boolean }>;
   getModels: () => Promise<string[]>;
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
-  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
+  sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>, disabledToolNames?: string[]) => Promise<{ started: boolean }>;
+  listTools: () => Promise<Array<{ name: string; category: string; description: string }>>;
   onChatStream: (callback: (event: unknown, text: string, type?: string) => void) => () => void;
   onChatEnd: (callback: (event: unknown) => void) => () => void;
   onChatError: (callback: (event: unknown, message: string) => void) => () => void;
@@ -27,6 +28,77 @@ export interface CopilotAPI {
   vcdStatus: () => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdSignOut: () => Promise<{ connected: boolean }>;
   onVcdSessionExpired: (callback: () => void) => () => void;
+  
+  // Tool Approval
+  sendToolApprovalResponse: (response: {
+    requestId: string;
+    approved: boolean;
+    approvalType?: 'once' | 'session' | 'always';
+    denialReason?: string;
+  }) => Promise<{ success: boolean; error?: string }>;
+  getToolApprovalStatus: () => Promise<{ pendingCount: number }>;
+  onToolApprovalRequest: (callback: (event: unknown, request: {
+    requestId: string;
+    toolName: string;
+    category: string;
+    riskLevel: string;
+    description: string;
+    args: unknown;
+    target: string;
+    impactAssessment?: string;
+    timestamp: number;
+  }) => void) => () => void;
+
+  // Document Management
+  docsOpenAndUpload: () => Promise<{
+    success: boolean;
+    canceled?: boolean;
+    error?: string;
+    uploads?: Array<{ success: boolean; docId?: string; filename?: string; status?: string; message?: string }>;
+  }>;
+  docsList: () => Promise<{
+    success: boolean;
+    documents?: Array<{
+      id: string; filename: string; title?: string; status: string;
+      fileType: string; sizeBytes: number; uploadedAt: number;
+      summary?: string; tags: string[];
+    }>;
+    error?: string;
+  }>;
+  docsGet: (docId: string) => Promise<{ success: boolean; document?: { id: string; filename: string; title?: string; status: string; summary?: string; tags: string[]; error?: string } }>;
+  docsDelete: (docId: string) => Promise<{ success: boolean; error?: string }>;
+
+  // Task Tracker
+  taskList: () => Promise<{
+    success: boolean;
+    tasks?: Array<{
+      id: string;
+      name: string;
+      description?: string;
+      sshSessionId?: string;
+      status: 'running' | 'completed' | 'failed' | 'cancelled';
+      steps: Array<{
+        id: string;
+        description: string;
+        command?: string;
+        status: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+        output?: string;
+        logId?: string;
+        startedAt?: number;
+        completedAt?: number;
+        exitCode?: number;
+      }>;
+      createdAt: number;
+      updatedAt: number;
+      completedAt?: number;
+      error?: string;
+    }>;
+    error?: string;
+  }>;
+  taskGet: (taskId: string) => Promise<{ success: boolean; task?: unknown; error?: string }>;
+  taskCancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+  onTaskUpdated: (callback: () => void) => () => void;
+
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) => Promise<{ success: boolean; terminalId?: string; error?: string }>;
   // terminalInput: (options: { terminalId: string; data: string }) => Promise<{ success: boolean; error?: string }>;
