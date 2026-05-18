@@ -1,0 +1,11 @@
+src/**
+tsconfig.json
+tsconfig.*.json
+eslint.config.*
+.eslintrc*
+.prettierrc*
+**/*.ts
+!dist/**
+**/.git
+node_modules/**
+*.map

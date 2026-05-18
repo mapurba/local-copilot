@@ -1,0 +1,244 @@
+{
+  "name": "vscode-vcd-agent",
+  "displayName": "VCD Agent",
+  "description": "VMware Cloud Director assistant as a Copilot Chat participant",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "vcd-agent.vcd",
+        "name": "vcd",
+        "fullName": "VCD Agent",
+        "description": "VMware Cloud Director assistant — manage VMs, SSH into hosts, track tasks",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "connect",
+            "description": "Connect to a VCD organization"
+          },
+          {
+            "name": "configure",
+            "description": "Enable / disable tools"
+          },
+          {
+            "name": "tasks",
+            "description": "Show running task status"
+          }
+        ]
+      }
+    ],
+    "languageModelTools": [
+      { "name": "vcd-agent_listVms",         "toolReferenceName": "listVms",         "displayName": "List VMs",              "modelDescription": "Lists all virtual machines in VMware Cloud Director (VCD). Use this when the user asks to list, show, get, or display their VMs, virtual machines, or instances in VCD.", "tags": ["vcd"] },
+      { "name": "vcd-agent_listVapps",        "toolReferenceName": "listVapps",       "displayName": "List vApps",            "modelDescription": "Lists all vApps in the VCD organization. Use when the user asks about vApps or virtual application containers in VCD.", "tags": ["vcd"] },
+      { "name": "vcd-agent_listTemplates",    "toolReferenceName": "listTemplates",   "displayName": "List Templates",        "modelDescription": "Lists all VM templates available in VMware Cloud Director. Use when the user asks to list or browse VM templates.", "tags": ["vcd"] },
+      { "name": "vcd-agent_getVmDetails",     "toolReferenceName": "getVmDetails",    "displayName": "Get VM Details",        "modelDescription": "Gets detailed information about a specific VM in VCD including CPU, memory, disks, network, and power state. Use when the user asks for details, info, or specs of a named VM.", "tags": ["vcd"] },
+      { "name": "vcd-agent_checkVmStatus",    "toolReferenceName": "checkVmStatus",   "displayName": "Check VM Status",       "modelDescription": "Checks the current power state (on/off/suspended) of a VM in VCD. Use when the user asks if a VM is running, powered on, or its status.", "tags": ["vcd"] },
+      { "name": "vcd-agent_listTasks",        "toolReferenceName": "listVcdTasks",    "displayName": "List VCD Tasks",        "modelDescription": "Lists recent VCD tasks (provisioning, power operations, etc.) and their status. Use when user asks about VCD tasks or recent operations.", "tags": ["vcd"] },
+      { "name": "vcd-agent_powerOnVm",        "toolReferenceName": "powerOnVm",       "displayName": "Power On VM",           "modelDescription": "Powers on a VM in VMware Cloud Director. Use when user asks to start, power on, or boot a VM. Requires user confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_powerOffVm",       "toolReferenceName": "powerOffVm",      "displayName": "Power Off VM",          "modelDescription": "Powers off a VM in VMware Cloud Director. Use when user asks to stop, shut down, or power off a VM. Requires user confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_deleteVm",         "toolReferenceName": "deleteVm",        "displayName": "Delete VM",             "modelDescription": "Permanently deletes a VM from VCD. Use when user asks to delete or remove a VM. Requires user confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_createSnapshot",   "toolReferenceName": "createSnapshot",  "displayName": "Create Snapshot",       "modelDescription": "Creates a snapshot of a VM in VCD. Use when user asks to snapshot, checkpoint, or save the state of a VM. Requires confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_revertSnapshot",   "toolReferenceName": "revertSnapshot",  "displayName": "Revert Snapshot",       "modelDescription": "Reverts a VM to a previous snapshot in VCD. Use when user asks to revert, restore, or rollback a VM. Requires confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_listSnapshots",    "toolReferenceName": "listSnapshots",   "displayName": "List Snapshots",        "modelDescription": "Lists all snapshots for a VM in VCD. Use when user asks to list or show snapshots of a VM.", "tags": ["vcd"] },
+      { "name": "vcd-agent_copyVm",           "toolReferenceName": "copyVm",          "displayName": "Copy VM",               "modelDescription": "Copies or clones a VM to a new name and vApp in VCD. Use when user asks to copy, clone, or duplicate a VM. Requires confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_resizeVm",         "toolReferenceName": "resizeVm",        "displayName": "Resize VM",             "modelDescription": "Changes CPU count or memory allocation of a VM in VCD. Use when user asks to resize, scale, or change CPU/RAM of a VM. Requires confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_allocateFreeIp",   "toolReferenceName": "allocateIp",      "displayName": "Allocate Free IP",      "modelDescription": "Allocates a free IP address from the VCD network pool. Use when user asks for a free IP or to allocate a network address. Requires confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_getContext",       "toolReferenceName": "getVcdContext",   "displayName": "Get VCD Context",       "modelDescription": "Gets the current active VCD context: organization, vDC, vApp, and network. Use when user asks what VCD org/vDC/vApp is active.", "tags": ["vcd"] },
+      { "name": "vcd-agent_setContext",       "toolReferenceName": "setVcdContext",   "displayName": "Set VCD Context",       "modelDescription": "Sets the active VCD organization, vDC, vApp, or network. Use when user wants to switch VCD org/vDC/vApp context. Requires confirmation.", "tags": ["vcd"] },
+      { "name": "vcd-agent_vmWatch",          "toolReferenceName": "watchVm",         "displayName": "Watch VM",              "modelDescription": "Starts monitoring a VM for power-state changes in VCD.", "tags": ["vcd"] },
+      { "name": "vcd-agent_vmWatchCancel",    "toolReferenceName": "unwatchVm",       "displayName": "Cancel VM Watch",       "modelDescription": "Stops monitoring a VM for power-state changes in VCD.", "tags": ["vcd"] },
+      { "name": "vcd-agent_sshConnect",       "toolReferenceName": "sshConnect",      "displayName": "SSH Connect",           "modelDescription": "Opens an SSH connection to a remote Linux/Unix host by IP or hostname. Use when user asks to SSH into, connect to, or open a terminal on a remote server.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshDisconnect",    "toolReferenceName": "sshDisconnect",   "displayName": "SSH Disconnect",        "modelDescription": "Closes an SSH session. Use when user asks to disconnect or close an SSH session.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshListSessions",  "toolReferenceName": "sshSessions",     "displayName": "SSH List Sessions",     "modelDescription": "Lists all currently open SSH sessions and their connection details.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshRunCommand",    "toolReferenceName": "sshRun",          "displayName": "SSH Run Command",       "modelDescription": "Runs a shell command on a remote host over SSH and returns the output. Use when user asks to run, execute, or check something on a remote server.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshRunSudo",       "toolReferenceName": "sshSudo",         "displayName": "SSH Run Sudo",          "modelDescription": "Runs a command with sudo privileges on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshRunScript",     "toolReferenceName": "sshScript",       "displayName": "SSH Run Script",        "modelDescription": "Uploads and executes a shell script on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshBackground",    "toolReferenceName": "sshBackground",   "displayName": "SSH Background",        "modelDescription": "Runs a command in the background (nohup) on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshKillProcess",   "toolReferenceName": "sshKill",         "displayName": "SSH Kill Process",      "modelDescription": "Kills a process by PID on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshListProcesses", "toolReferenceName": "sshPs",           "displayName": "SSH List Processes",    "modelDescription": "Lists running processes on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshReadFile",      "toolReferenceName": "sshCat",          "displayName": "SSH Read File",         "modelDescription": "Reads and returns the content of a file on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshWriteFile",     "toolReferenceName": "sshWrite",        "displayName": "SSH Write File",        "modelDescription": "Writes or overwrites a file on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshListDir",       "toolReferenceName": "sshLs",           "displayName": "SSH List Directory",    "modelDescription": "Lists files in a directory on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshUploadFile",    "toolReferenceName": "sshUpload",       "displayName": "SSH Upload File",       "modelDescription": "Uploads a local file to a remote host via SFTP.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshDownloadFile",  "toolReferenceName": "sshDownload",     "displayName": "SSH Download File",     "modelDescription": "Downloads a file from a remote host to local machine via SFTP.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshDeleteFile",    "toolReferenceName": "sshRm",           "displayName": "SSH Delete File",       "modelDescription": "Deletes a file on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshMkdir",         "toolReferenceName": "sshMkdir",        "displayName": "SSH Make Directory",    "modelDescription": "Creates a directory on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshFileInfo",      "toolReferenceName": "sshStat",         "displayName": "SSH File Info",         "modelDescription": "Gets metadata (size, permissions, modified date) of a file on a remote host.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshSystemInfo",    "toolReferenceName": "sshSysinfo",      "displayName": "SSH System Info",       "modelDescription": "Gets CPU, memory, OS, and uptime information from a remote Linux host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshDiskUsage",     "toolReferenceName": "sshDf",           "displayName": "SSH Disk Usage",        "modelDescription": "Gets disk usage statistics (df) from a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshNetworkStatus", "toolReferenceName": "sshIfconfig",     "displayName": "SSH Network Status",    "modelDescription": "Gets network interfaces and routing info from a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshCheckService",  "toolReferenceName": "sshServiceStatus","displayName": "SSH Check Service",     "modelDescription": "Checks if a systemd service is running on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshManageService", "toolReferenceName": "sshService",      "displayName": "SSH Manage Service",    "modelDescription": "Starts, stops, restarts, or reloads a systemd service on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshViewLogs",      "toolReferenceName": "sshLogs",         "displayName": "SSH View Logs",         "modelDescription": "Views systemd journal logs or tails a log file on a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_sshGetEnvVars",    "toolReferenceName": "sshEnv",          "displayName": "SSH Get Env Vars",      "modelDescription": "Gets environment variables from a remote host via SSH.", "tags": ["ssh"] },
+      { "name": "vcd-agent_docsUpload",       "toolReferenceName": "docsUpload",      "displayName": "Upload Document",       "modelDescription": "Uploads and indexes a PDF, DOCX, or TXT document so it can be searched and queried. Use when user asks to upload, add, or index a document.", "tags": ["docs"] },
+      { "name": "vcd-agent_docsStatus",       "toolReferenceName": "docsStatus",      "displayName": "Document Status",       "modelDescription": "Checks the processing/indexing status of an uploaded document.", "tags": ["docs"] },
+      { "name": "vcd-agent_docsList",         "toolReferenceName": "docsList",        "displayName": "List Documents",        "modelDescription": "Lists all uploaded and indexed documents. Use when user asks what documents are available.", "tags": ["docs"] },
+      { "name": "vcd-agent_docsSearch",       "toolReferenceName": "docsSearch",      "displayName": "Search Documents",      "modelDescription": "Searches indexed documents for text matching a query. Use when user asks to search or find content in their documents.", "tags": ["docs"] },
+      { "name": "vcd-agent_docsAsk",          "toolReferenceName": "docsAsk",         "displayName": "Ask Document",          "modelDescription": "Answers a question using content from uploaded documents. Use when user asks a question that could be answered by their uploaded documents.", "tags": ["docs"] },
+      { "name": "vcd-agent_docsGetContent",   "toolReferenceName": "docsContent",     "displayName": "Get Document Content",  "modelDescription": "Retrieves the full text of an uploaded document.", "tags": ["docs"] },
+      { "name": "vcd-agent_docsDelete",       "toolReferenceName": "docsDelete",      "displayName": "Delete Document",       "modelDescription": "Deletes an uploaded document and removes it from the search index.", "tags": ["docs"] },
+      { "name": "vcd-agent_localReadFile",    "toolReferenceName": "localRead",       "displayName": "Read Local File",       "modelDescription": "Reads the content of a file in the local workspace.", "tags": ["local"] },
+      { "name": "vcd-agent_localListDir",     "toolReferenceName": "localLs",         "displayName": "List Local Directory",  "modelDescription": "Lists files and folders in a local workspace directory.", "tags": ["local"] },
+      { "name": "vcd-agent_localCreateFile",  "toolReferenceName": "localCreate",     "displayName": "Create Local File",     "modelDescription": "Creates a new file with content in the local workspace.", "tags": ["local"] },
+      { "name": "vcd-agent_localWriteFile",   "toolReferenceName": "localWrite",      "displayName": "Write Local File",      "modelDescription": "Overwrites a file in the local workspace with new content.", "tags": ["local"] },
+      { "name": "vcd-agent_localDeleteFile",  "toolReferenceName": "localDelete",     "displayName": "Delete Local File",     "modelDescription": "Deletes a file from the local workspace.", "tags": ["local"] },
+      { "name": "vcd-agent_localRunCommand",  "toolReferenceName": "localRun",        "displayName": "Run Local Command",     "modelDescription": "Executes a shell command in the local workspace directory.", "tags": ["local"] },
+      { "name": "vcd-agent_taskStart",        "toolReferenceName": "taskStart",       "displayName": "Start Task",            "modelDescription": "Creates a new tracked task to monitor a multi-step operation.", "tags": ["tasks"] },
+      { "name": "vcd-agent_taskLogStep",      "toolReferenceName": "taskStep",        "displayName": "Log Task Step",         "modelDescription": "Records a completed step with its output under the current task.", "tags": ["tasks"] },
+      { "name": "vcd-agent_taskDone",         "toolReferenceName": "taskDone",        "displayName": "Complete Task",         "modelDescription": "Marks a task as completed with a summary.", "tags": ["tasks"] },
+      { "name": "vcd-agent_taskList",         "toolReferenceName": "taskList",        "displayName": "List Tasks",            "modelDescription": "Lists recent tracked tasks and their statuses.", "tags": ["tasks"] },
+      { "name": "vcd-agent_taskCancel",       "toolReferenceName": "taskCancel",      "displayName": "Cancel Task",           "modelDescription": "Cancels a running task.", "tags": ["tasks"] },
+      { "name": "vcd-agent_taskGetLog",       "toolReferenceName": "taskLog",         "displayName": "Get Task Log",          "modelDescription": "Retrieves the full output log for a task step.", "tags": ["tasks"] }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vcd-agent-sidebar",
+          "title": "VCD Agent",
+          "icon": "resources/icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "vcd-agent-panel",
+          "title": "VCD Agent",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vcd-agent-sidebar": [
+        {
+          "id": "vcdAgent.vms",
+          "name": "My VMs",
+          "type": "tree"
+        },
+        {
+          "id": "vcdAgent.docs",
+          "name": "Documents",
+          "type": "tree"
+        },
+        {
+          "id": "vcdAgent.tasks",
+          "name": "Tasks",
+          "type": "tree"
+        }
+      ],
+      "vcd-agent-panel": [
+        {
+          "id": "vcdAgent.vmForm",
+          "name": "Create VM",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "vcdAgent.connect",
+        "title": "VCD Agent: Connect to VCD",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "vcdAgent.disconnect",
+        "title": "VCD Agent: Disconnect",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "vcdAgent.refreshVms",
+        "title": "VCD Agent: Refresh VM list",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vcdAgent.configureTools",
+        "title": "VCD Agent: Configure Tools"
+      },
+      {
+        "command": "vcdAgent.openTaskLog",
+        "title": "VCD Agent: View Task Log",
+        "icon": "$(output)"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "vcdAgent.vms",
+        "contents": "Not connected to VCD.\n[$(plug) Connect to VCD](command:vcdAgent.connect)\n\n---\n**Tip — two ways to use VCD Agent in Copilot Chat:**\n\n① **Agent Mode** (recommended) — no prefix needed:\nSwitch the chat mode dropdown to **Agent** and ask naturally:\n> *list my running VMs*\n> *power off web-01*\n\n② **@vcd participant** — works in any mode:\n> `@vcd list my running VMs`"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "vcdAgent.connect",
+          "when": "view == vcdAgent.vms",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vcdAgent.refreshVms",
+          "when": "view == vcdAgent.vms",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vcdAgent.disconnect",
+          "when": "view == vcdAgent.vms",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VCD Agent",
+      "properties": {
+        "vcdAgent.disabledTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Tool names excluded from Copilot Chat interactions."
+        },
+        "vcdAgent.preferredModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Preferred Copilot model family (e.g. gpt-4o, claude-sonnet)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.0.0",
+    "@types/ssh2": "^1.15.5",
+    "@types/vscode": "^1.120.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vscode/vsce": "^3.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@types/sql.js": "^1.4.9",
+    "fast-xml-parser": "^5.4.2",
+    "mammoth": "^1.12.0",
+    "sql.js": "^1.12.0",
+    "ssh2": "^1.16.0"
+  }
+}
