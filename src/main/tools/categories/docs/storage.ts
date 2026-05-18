@@ -208,17 +208,73 @@ export function getChunks(documentId: string): ChunkRecord[] {
 
 export function searchChunksByText(query: string, limit = 10): Array<ChunkRecord & { documentFilename: string }> {
   const database = getDocumentDb();
-  const pattern = `%${query}%`;
-  const rows = database.prepare(`
+
+  // Tokenize: split on whitespace, dots, underscores, dashes, slashes
+  const STOP_WORDS = new Set([
+    'a','an','the','and','or','but','in','on','at','to','for','of','is','it',
+    'as','do','be','by','we','you','me','my','our','if','this','that','with',
+    'from','are','was','not','also','can','will','how','any','all','its',
+    'your','has','have','had','they','their','what','when','where','which',
+  ]);
+  const tokens = [...new Set(
+    query.toLowerCase()
+      .split(/[\s,.\-_/\\()\[\]]+/)
+      .filter(t => t.length >= 3 && !STOP_WORDS.has(t))
+  )].slice(0, 12);
+
+  // Try exact phrase first
+  const exactPattern = `%${query}%`;
+  const exactRows = database.prepare(`
     SELECT c.*, d.filename as document_filename
     FROM chunks c
     JOIN documents d ON c.document_id = d.id
-    WHERE (c.cleaned_content LIKE ? OR c.content LIKE ?)
-    AND d.status = 'ready'
+    WHERE (LOWER(c.cleaned_content) LIKE ? OR LOWER(c.content) LIKE ?)
+      AND d.status = 'ready'
     ORDER BY c.document_id, c.chunk_index
     LIMIT ?
-  `).all(pattern, pattern, limit) as Record<string, unknown>[];
-  return rows.map(r => ({ ...rowToChunk(r), documentFilename: r.document_filename as string }));
+  `).all(exactPattern.toLowerCase(), exactPattern.toLowerCase(), limit) as Record<string, unknown>[];
+
+  if (exactRows.length > 0) {
+    return exactRows.map(r => ({ ...rowToChunk(r), documentFilename: r.document_filename as string }));
+  }
+
+  // Fall back to per-token OR search
+  if (tokens.length === 0) {
+    // No meaningful tokens — return first N chunks from ready docs
+    const rows = database.prepare(`
+      SELECT c.*, d.filename as document_filename
+      FROM chunks c
+      JOIN documents d ON c.document_id = d.id
+      WHERE d.status = 'ready'
+      ORDER BY c.document_id, c.chunk_index
+      LIMIT ?
+    `).all(limit) as Record<string, unknown>[];
+    return rows.map(r => ({ ...rowToChunk(r), documentFilename: r.document_filename as string }));
+  }
+
+  const conditions = tokens.map(() => `(LOWER(c.cleaned_content) LIKE ? OR LOWER(c.content) LIKE ?)`).join(' OR ');
+  const bindParams: (string | number)[] = tokens.flatMap(t => [`%${t}%`, `%${t}%`]);
+  bindParams.push(limit * 4); // fetch extra for re-ranking
+
+  const tokenRows = database.prepare(`
+    SELECT c.*, d.filename as document_filename
+    FROM chunks c
+    JOIN documents d ON c.document_id = d.id
+    WHERE d.status = 'ready' AND (${conditions})
+    ORDER BY c.document_id, c.chunk_index
+    LIMIT ?
+  `).all(...bindParams) as Record<string, unknown>[];
+
+  // Re-rank by number of matching tokens (most relevant first)
+  tokenRows.sort((a, b) => {
+    const textA = ((a.cleaned_content ?? a.content) as string | undefined ?? '').toLowerCase();
+    const textB = ((b.cleaned_content ?? b.content) as string | undefined ?? '').toLowerCase();
+    return tokens.filter(t => textB.includes(t)).length - tokens.filter(t => textA.includes(t)).length;
+  });
+
+  return tokenRows
+    .slice(0, limit)
+    .map(r => ({ ...rowToChunk(r), documentFilename: r.document_filename as string }));
 }
 
 function rowToChunk(row: Record<string, unknown>): ChunkRecord {

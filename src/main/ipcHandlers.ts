@@ -24,7 +24,7 @@ import { checkForUpdates } from './autoUpdater';
 import { listVms } from './vcdApi';
 import { logApi } from './apiLogger';
 import { approvalSystem } from './tools';
-import { listDocuments, getDocument, deleteDocument } from './tools/categories/docs/storage';
+import { listDocuments, getDocument, deleteDocument, getChunks } from './tools/categories/docs/storage';
 import { taskTracker } from './taskTracker';
 // DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
 // import {
@@ -631,6 +631,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     try {
       const doc = getDocument(docId);
       return { success: !!doc, document: doc };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Get full document content (for attaching to chat)
+  ipcMain.handle('docs:getContent', async (_event, docId: string) => {
+    try {
+      const doc = getDocument(docId);
+      if (!doc) return { success: false, error: `Document not found: ${docId}` };
+      const chunks = getChunks(docId);
+      const fullContent = chunks.map((c: { cleanedContent?: string; content: string }) => c.cleanedContent ?? c.content).join('\n\n');
+      return { success: true, title: doc.title ?? doc.filename, content: fullContent };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }

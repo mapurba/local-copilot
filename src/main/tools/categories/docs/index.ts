@@ -204,13 +204,13 @@ export function registerDocTools() {
           chunkIndex: r.chunkIndex,
           sectionTitle: r.sectionTitle,
           pageNumber: r.pageNumber,
-          snippet: (r.cleanedContent ?? r.content).slice(0, 500),
+          content: (r.cleanedContent ?? r.content).slice(0, 2000),
         })),
       };
     },
     {
       category: 'docs',
-      description: 'Search across all processed documents for relevant content',
+      description: 'Search across all processed documents for relevant content. Returns matching text chunks.',
       target: 'local',
       riskLevel: 'safe',
       schema: z.object({
@@ -234,14 +234,26 @@ export function registerDocTools() {
         chunks = getChunks(args.docId);
         documentTitle = doc.title ?? doc.filename;
       } else {
-        // Search across all documents
+        // Search across all documents using improved tokenized search
         const searchResults = searchChunksByText(args.question, 8);
-        chunks = searchResults;
-        documentTitle = 'All Documents';
+        if (searchResults.length > 0) {
+          chunks = searchResults;
+          documentTitle = 'All Documents';
+        } else {
+          // Fallback: load all chunks from every ready document
+          const allDocs = listDocuments(20).filter(d => d.status === 'ready');
+          if (allDocs.length === 0) {
+            return { question: args.question, answer: 'No documents have been uploaded and processed yet. Please upload a document first.' };
+          }
+          documentTitle = allDocs.map(d => d.title ?? d.filename).join(', ');
+          for (const doc of allDocs) {
+            chunks.push(...getChunks(doc.id));
+          }
+        }
       }
 
       const contextChunks = chunks
-        .slice(0, 8)
+        .slice(0, 10)
         .map(c => c.cleanedContent ?? c.content);
 
       const answer = await queryDocumentContext(args.question, contextChunks, documentTitle);

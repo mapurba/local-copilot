@@ -100,6 +100,10 @@ const DocUploadPanel: React.FC = () => {
     }
   };
 
+  const handleAttachToChat = (docId: string, title: string) => {
+    window.dispatchEvent(new CustomEvent('attach-doc-to-chat', { detail: { docId, title } }));
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Upload Button */}
@@ -176,6 +180,18 @@ const DocUploadPanel: React.FC = () => {
                           <span key={tag} className="px-1 py-0.5 bg-gray-700 text-gray-400 rounded text-xs">{tag}</span>
                         ))}
                       </div>
+                    )}
+                    {doc.status === 'ready' && (
+                      <button
+                        onClick={() => handleAttachToChat(doc.id, doc.title ?? doc.filename)}
+                        className="mt-1.5 flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                        title="Attach this document to the next chat message"
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                        </svg>
+                        Attach to Chat
+                      </button>
                     )}
                   </div>
                   <button

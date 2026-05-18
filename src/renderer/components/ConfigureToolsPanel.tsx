@@ -13,13 +13,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader } from '@ux-aspects-u
 import { CollapseAllIcon, ExpandAllIcon } from '@ux-aspects-universal/react/icon/jato';
 import { TextInput } from '@ux-aspects-universal/react/text-input';
 import { useSelection } from '@ux-aspects-universal/react/selection';
-import {
-  Tree,
-  TreeNode,
-  TreeNodeModel,
-  TreeNodeProps,
-  useTreeControl,
-} from '@ux-aspects-universal/react/tree';
 
 interface ToolEntry {
   name: string;
@@ -57,69 +50,9 @@ interface PanelContextValue {
 
 const PanelContext = createContext<PanelContextValue | null>(null);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Custom tree node (module-level — stable component reference avoids remounts)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const ToolTreeNode: FC<TreeNodeProps<ToolData>> = (props) => {
-  const ctx = useContext(PanelContext);
-  const { model } = props;
-  const data = model.data;
-
-  if (!ctx || !data) return <TreeNode {...props} />;
-
-  if (data.type === 'category') {
-    const catTools = data.catTools ?? [];
-    const enabledInCat = catTools.filter((n) => !ctx.localDisabled.has(n)).length;
-    const allEnabled = enabledInCat === catTools.length;
-    const someEnabled = enabledInCat > 0 && enabledInCat < catTools.length;
-
-    return (
-      <TreeNode
-        {...props}
-        content={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span onClick={(e) => e.stopPropagation()}>
-              <Checkbox
-                isChecked={allEnabled}
-                isIndeterminate={someEnabled}
-                onCheckedChange={(checked) => ctx.toggleCategoryTools(catTools, !!checked)}
-              />
-            </span>
-            <span style={{ fontWeight: 600 }}>{model.title}</span>
-            <span style={{ fontSize: 11, opacity: 0.5 }}>({catTools.length})</span>
-          </div>
-        }
-      />
-    );
-  }
-
-  return (
-    <TreeNode
-      {...props}
-      content={
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <span onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, marginTop: 2 }}>
-            <Checkbox
-              isChecked={!ctx.localDisabled.has(data.toolName!)}
-              onCheckedChange={() => ctx.toggleTool(data.toolName!)}
-            />
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 500, wordBreak: 'break-all' }}>
-              {model.title}
-            </span>
-            {data.description && (
-              <p style={{ fontSize: 11, opacity: 0.6, margin: '2px 0 0', lineHeight: 1.3 }}>
-                {data.description}
-              </p>
-            )}
-          </div>
-        </div>
-      }
-    />
-  );
-};
+// We render a custom expandable list below (instead of the Tree control)
+// so that tool names and descriptions can wrap naturally without being
+// clipped by a fixed row height inside the Tree implementation.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel component
@@ -168,7 +101,7 @@ const ConfigureToolsPanel: FC<ConfigureToolsPanelProps> = ({
       : tools;
   }, [tools, search]);
 
-  const treeItems = useMemo<TreeNodeModel<ToolData>[]>(() => {
+  const treeItems = useMemo(() => {
     const byCategory: Record<string, ToolEntry[]> = {};
     for (const t of filteredTools) {
       if (!byCategory[t.category]) byCategory[t.category] = [];
@@ -184,14 +117,23 @@ const ConfigureToolsPanel: FC<ConfigureToolsPanelProps> = ({
     }));
   }, [filteredTools]);
 
-  const treeControl = useTreeControl<ToolData>({ items: treeItems });
-  // Tree crashes if selectionManager is undefined (no null guard in useIsSelected)
-  const selectionManager = useSelection<TreeNodeModel<ToolData>>({ mode: 'multiple' });
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
-  // Expand all categories after load or search
   useEffect(() => {
-    if (treeItems.length > 0 && !allCollapsed) treeControl.expandAll();
-  }, [treeItems]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (treeItems.length > 0) {
+      const all = new Set(treeItems.map((t: any) => t.title));
+      setExpandedCategories(allCollapsed ? new Set() : all);
+    }
+  }, [treeItems, allCollapsed]);
+
+  const toggleCategoryExpanded = useCallback((title: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
+  }, []);
 
   const toggleTool = useCallback((name: string) => {
     setLocalDisabled((prev) => {
@@ -224,17 +166,18 @@ const ConfigureToolsPanel: FC<ConfigureToolsPanelProps> = ({
 
   const handleCollapseToggle = () => {
     if (allCollapsed) {
-      treeControl.expandAll();
+      const all = new Set(treeItems.map((t: any) => t.title));
+      setExpandedCategories(all);
       setAllCollapsed(false);
     } else {
-      treeControl.collapseAll();
+      setExpandedCategories(new Set());
       setAllCollapsed(true);
     }
   };
 
   return (
     <PanelContext.Provider value={contextValue}>
-      <Dialog onClose={onClose} aria-label="Configure Tools" style={{ width: '36rem', maxWidth: '95vw' }}>
+      <Dialog onClose={onClose} aria-label="Configure Tools" style={{ width: '48rem', maxWidth: '98vw' }}>
         <DialogHeader>Configure Tools</DialogHeader>
 
         <DialogContent>
@@ -276,10 +219,14 @@ const ConfigureToolsPanel: FC<ConfigureToolsPanelProps> = ({
           {/* Tool tree */}
           <div
             style={{
-              maxHeight: 380,
+              maxHeight: '65vh',
               overflowY: 'auto',
               borderTop: '1px solid var(--uxap-border, #ddd)',
               paddingTop: 4,
+              paddingRight: 40,
+              boxSizing: 'border-box',
+              whiteSpace: 'normal',
+              wordBreak: 'break-word',
             }}
           >
             {loadError ? (
@@ -293,11 +240,85 @@ const ConfigureToolsPanel: FC<ConfigureToolsPanelProps> = ({
                 {tools.length > 0 ? 'No tools match your search.' : 'Loading…'}
               </p>
             ) : (
-              <Tree<ToolData>
-                treeControl={treeControl}
-                selectionManager={selectionManager}
-                node={ToolTreeNode}
-              />
+              <div style={{ paddingRight: 12 }}>
+                {treeItems.map((cat: any) => {
+                  const title = cat.title as string;
+                  const catTools: string[] = cat.data?.catTools ?? [];
+                  const enabledInCat = catTools.filter((n) => !localDisabled.has(n)).length;
+                  const allEnabled = enabledInCat === catTools.length;
+                  const someEnabled = enabledInCat > 0 && enabledInCat < catTools.length;
+                  const expanded = expandedCategories.has(title);
+
+                  return (
+                    <div key={title} style={{ borderBottom: '1px solid rgba(0,0,0,0.04)' }}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={expanded}
+                        onClick={() => toggleCategoryExpanded(title)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleCategoryExpanded(title);
+                          }
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer' }}
+                      >
+                        <span onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            isChecked={allEnabled}
+                            isIndeterminate={someEnabled}
+                            onCheckedChange={(checked) => toggleCategoryTools(catTools, !!checked)}
+                          />
+                        </span>
+                        <button
+                          aria-expanded={expanded}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCategoryExpanded(title);
+                          }}
+                          style={{ background: 'none', border: 'none', padding: 0, margin: 0, cursor: 'pointer', lineHeight: 1 }}
+                        >
+                          {expanded ? '▾' : '▸'}
+                        </button>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, flex: 1 }} title={title}>
+                          <span>{title}</span>
+                          <span style={{ fontSize: 11, opacity: 0.5 }}>{`(${catTools.length})`}</span>
+                        </div>
+                      </div>
+
+                      {expanded && (
+                        <div style={{ paddingLeft: 44, paddingRight: 8, paddingBottom: 8 }}>
+                          {cat.children?.map((child: any) => {
+                            const toolName = child.title as string;
+                            const description = child.data?.description as string | undefined;
+                            return (
+                              <div key={toolName} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '8px 4px' }}>
+                                <span onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, marginTop: 2, width: 28 }}>
+                                  <Checkbox
+                                    isChecked={!localDisabled.has(toolName)}
+                                    onCheckedChange={() => toggleTool(toolName)}
+                                  />
+                                </span>
+                                <div style={{ minWidth: 0, flex: 1, minHeight: 44 }}>
+                                  <span title={toolName} style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 500, whiteSpace: 'normal', wordBreak: 'break-word', display: 'block' }}>
+                                    {toolName}
+                                  </span>
+                                          {description && (
+                                            <p title={String(description)} style={{ fontSize: 11, opacity: 0.85, margin: '0px 0 0', lineHeight: 1.35, whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                                              {description}
+                                            </p>
+                                          )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </DialogContent>

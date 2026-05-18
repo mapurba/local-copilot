@@ -11,6 +11,20 @@ interface Message {
   content: string;
   streaming?: boolean;
   type?: 'text' | 'tool-call' | 'tool-result';
+  attachments?: Array<{ name: string }>;
+}
+
+interface DocPickerItem {
+  id: string;
+  filename: string;
+  title?: string;
+  status: string;
+}
+
+interface AttachedDoc {
+  id: string;
+  title: string;
+  content: string;
 }
 
 interface VmDraftForm {
@@ -94,6 +108,10 @@ const ChatPane: React.FC = () => {
     }
   });
   const [showToolsConfig, setShowToolsConfig] = useState(false);
+  const [attachedDocs, setAttachedDocs] = useState<AttachedDoc[]>([]);
+  const [showDocPicker, setShowDocPicker] = useState(false);
+  const [pickerDocs, setPickerDocs] = useState<DocPickerItem[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
   const [pendingForm, setPendingForm] = useState<VmDraftForm | null>(null);
   const [pendingCopyForm, setPendingCopyForm] = useState<VmCopyDraftForm | null>(null);
   const [vapps, setVapps] = useState<VApp[]>([]);
@@ -103,6 +121,7 @@ const ChatPane: React.FC = () => {
   const [fetchingIp, setFetchingIp] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void)[]>([]);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const unsubChunk = window.copilot.onChatStream((_event: unknown, chunk: string, type?: string) => {
@@ -182,6 +201,17 @@ const ChatPane: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, pendingForm, pendingCopyForm]);
 
+  useEffect(() => {
+    if (!showDocPicker) return;
+    const handleClick = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowDocPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showDocPicker]);
+
   const loadVapps = useCallback(async () => {
     setVappsLoading(true);
     try {
@@ -217,12 +247,27 @@ const ChatPane: React.FC = () => {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
 
-    const userMsg: Message = { role: 'user', content: trimmed };
+    const docsToSend = attachedDocs;
+    const userMsg: Message = {
+      role: 'user',
+      content: trimmed,
+      ...(docsToSend.length > 0 && { attachments: docsToSend.map((d) => ({ name: d.title })) }),
+    };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
+    setAttachedDocs([]);
     setIsStreaming(true);
 
-    const historyForApi = [...messages, userMsg]
+    let apiContent = trimmed;
+    if (docsToSend.length > 0) {
+      const contextBlocks = docsToSend
+        .map((d) => `[Document context: "${d.title}"]\n${d.content}`)
+        .join('\n\n---\n\n');
+      apiContent = `${contextBlocks}\n\n---\n\n${trimmed}`;
+    }
+
+    const apiUserMsg = { role: 'user' as const, content: apiContent };
+    const historyForApi = [...messages, apiUserMsg]
       .filter((m) => !m.streaming)
       .map((m) => ({ role: m.role, content: m.content }));
 
@@ -232,7 +277,7 @@ const ChatPane: React.FC = () => {
     } else {
       await window.copilot.sendChatMessage(selectedModel, historyForApi);
     }
-  }, [input, isStreaming, messages, selectedModel, useTools, disabledTools]);
+  }, [input, isStreaming, messages, selectedModel, useTools, disabledTools, attachedDocs]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -384,6 +429,53 @@ const ChatPane: React.FC = () => {
     setMessages((prev) => [...prev, { role: 'assistant', content: 'VM copy cancelled.' }]);
   };
 
+  const handleOpenDocPicker = async () => {
+    if (showDocPicker) {
+      setShowDocPicker(false);
+      return;
+    }
+    setShowDocPicker(true);
+    setPickerLoading(true);
+    try {
+      const result = await window.copilot.docsList();
+      const readyDocs = (result.documents ?? []).filter((d) => d.status === 'ready');
+      setPickerDocs(readyDocs);
+    } catch {
+      setPickerDocs([]);
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  const handleAttachDoc = useCallback(async (docId: string, title: string) => {
+    setShowDocPicker(false);
+    try {
+      const result = await window.copilot.docsGetContent(docId);
+      if (result.success && result.content) {
+        setAttachedDocs((prev) => {
+          if (prev.some((d) => d.id === docId)) return prev;
+          return [...prev, { id: docId, title: result.title ?? title, content: result.content! }];
+        });
+      }
+    } catch (err) {
+      console.error('[ChatPane] Failed to attach doc:', err);
+    }
+  }, []);
+
+  // Listen for attach-doc-to-chat events dispatched from DocUploadPanel
+  useEffect(() => {
+    const handleEvent = (e: Event) => {
+      const { docId, title } = (e as CustomEvent<{ docId: string; title: string }>).detail;
+      handleAttachDoc(docId, title);
+    };
+    window.addEventListener('attach-doc-to-chat', handleEvent);
+    return () => window.removeEventListener('attach-doc-to-chat', handleEvent);
+  }, [handleAttachDoc]);
+
+  const removeAttachedDoc = (docId: string) => {
+    setAttachedDocs((prev) => prev.filter((d) => d.id !== docId));
+  };
+
   const getMessageColor = (message: Message) => {
     if (message.role === 'user') return 'msg-user';
     switch (message.type) {
@@ -423,7 +515,21 @@ const ChatPane: React.FC = () => {
                   )}
                 </div>
               ) : (
-                <p className="whitespace-pre-wrap">{msg.content}</p>
+                <div>
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-1.5">
+                      {msg.attachments.map((a, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-900/40 border border-blue-700/50 text-blue-300 text-xs rounded-full">
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                          </svg>
+                          {a.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                </div>
               )}
             </div>
           </div>
@@ -702,6 +808,25 @@ const ChatPane: React.FC = () => {
 
       {/* ── Input Area ─────────────────────────────────────────────────── */}
       <div className="px-3 pb-3 pt-2">
+        {/* Attached doc chips */}
+        {attachedDocs.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-1 pb-2">
+            {attachedDocs.map((doc) => (
+              <span key={doc.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/50 border border-blue-700/60 text-blue-300 text-xs rounded-full max-w-[220px]">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+                <span className="truncate">{doc.title}</span>
+                <button onClick={() => removeAttachedDoc(doc.id)} className="flex-shrink-0 hover:text-white ml-0.5" title="Remove attachment">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Textarea */}
         <TextArea
           value={input}
@@ -713,9 +838,64 @@ const ChatPane: React.FC = () => {
         />
 
         {/* Toolbar row */}
-        <div className="flex items-center gap-1.5 px-1 pt-2">
+        <div className="flex items-center gap-1.5 px-1 pt-2 relative">
+          {/* Doc picker dropdown */}
+          {showDocPicker && (
+            <div ref={pickerRef} className="absolute bottom-full left-0 mb-1 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden z-20">
+              <div className="px-3 py-2 border-b border-gray-700">
+                <span className="text-xs font-semibold text-gray-400">Attach Document</span>
+              </div>
+              {pickerLoading ? (
+                <div className="px-3 py-3 text-xs text-gray-500 text-center">Loading…</div>
+              ) : pickerDocs.length === 0 ? (
+                <div className="px-3 py-3 text-xs text-gray-500 text-center">
+                  No ready documents.<br /><span className="opacity-60">Upload docs in the Documents tab.</span>
+                </div>
+              ) : (
+                <ul className="max-h-48 overflow-y-auto">
+                  {pickerDocs.map((doc) => {
+                    const isAttached = attachedDocs.some((d) => d.id === doc.id);
+                    return (
+                      <li key={doc.id}>
+                        <button
+                          disabled={isAttached}
+                          onClick={() => handleAttachDoc(doc.id, doc.title ?? doc.filename)}
+                          className="w-full text-left px-3 py-2.5 text-xs text-gray-300 hover:bg-gray-700 flex items-center gap-2 disabled:opacity-40 disabled:cursor-default"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="flex-shrink-0">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                          </svg>
+                          <span className="truncate flex-1">{doc.title ?? doc.filename}</span>
+                          {isAttached && <span className="text-green-400 flex-shrink-0">✓</span>}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
+
           {/* Model picker pill */}
           <ModelSelector selectedModel={selectedModel} onModelChange={setSelectedModel} />
+
+          {/* Attach document button */}
+          <Button
+            flat={!showDocPicker && attachedDocs.length === 0}
+            primary={showDocPicker || attachedDocs.length > 0}
+            size="small"
+            isDisabled={isStreaming}
+            onClick={handleOpenDocPicker}
+            title="Attach document to chat"
+            iconBefore={
+              <svg style={{ width: 12, height: 12 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            }
+          >
+            {attachedDocs.length > 0 ? `Doc (${attachedDocs.length})` : 'Attach Doc'}
+          </Button>
 
           {/* Tools toggle pill */}
           <Button

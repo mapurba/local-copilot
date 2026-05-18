@@ -141,6 +141,7 @@ contextBridge.exposeInMainWorld('copilot', {
   docsOpenAndUpload: () => ipcRenderer.invoke('docs:openAndUpload'),
   docsList: () => ipcRenderer.invoke('docs:list'),
   docsGet: (docId: string) => ipcRenderer.invoke('docs:get', docId),
+  docsGetContent: (docId: string) => ipcRenderer.invoke('docs:getContent', docId),
   docsDelete: (docId: string) => ipcRenderer.invoke('docs:delete', docId),
 
   // ── Task Tracker ──────────────────────────────────────────────────────────

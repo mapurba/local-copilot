@@ -1,7 +1,7 @@
 {
   "name": "vcd-agent",
   "private": true,
-  "version": "0.0.4",
+  "version": "0.0.6",
   "type": "commonjs",
   "main": "dist-electron/main/index.js",
   "scripts": {
