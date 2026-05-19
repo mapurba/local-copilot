@@ -15,6 +15,111 @@ This design describes the **runtime architecture of Local Copilot’s AI and aut
 
 ---
 
+## 1.1 High-Level Layered Architecture
+
+The diagram below shows the system as a set of **stacked layers**, each with a clear responsibility.  
+Read top-to-bottom: user intent flows down; results and notifications flow back up.
+
+```mermaid
+flowchart TB
+    %% ── Layer 0 : User ───────────────────────────────────────────────────────
+    subgraph L0["① User Layer"]
+        direction LR
+        USER([👤 User])
+        CHAT_UI[Chat Input / Output]
+        APPROVAL_UI[Approval Popup]
+        USER --> CHAT_UI
+        APPROVAL_UI --> USER
+    end
+
+    %% ── Layer 1 : GitHub Copilot Integration ─────────────────────────────────
+    subgraph L1["② GitHub Copilot Integration Layer"]
+        direction LR
+        LSP["LSP Client\n(copilot-language-server)"]
+        TM["Token Manager\n(OAuth → Copilot JWT)"]
+        COPAPI["GitHub Copilot\nAPI  api.githubcopilot.com"]
+        LSP --> TM --> COPAPI
+    end
+
+    %% ── Layer 2 : LLM Orchestration ──────────────────────────────────────────
+    subgraph L2["③ LLM Orchestration Layer"]
+        direction LR
+        SYSPT["System Prompt\n(behavior + tool rules)"]
+        LCLLM["LangChain ChatOpenAI\n(streaming, tool binding)"]
+        LOOP["Agentic Tool-Call Loop\n(max 10 iterations)"]
+        SYSPT --> LCLLM --> LOOP
+    end
+
+    %% ── Layer 3 : Guardrails ─────────────────────────────────────────────────
+    subgraph L3["④ Guardrails Layer"]
+        direction LR
+        SCHEMA["Zod Schema Validation\n(all tool inputs)"]
+        RISK["Risk Classification\nsafe | review | dangerous"]
+        DISABLE["Tool Availability\nControls (per category)"]
+        TRUNCATE["Output Truncation\n& Log Retention"]
+    end
+
+    %% ── Layer 4 : Approval Flow ──────────────────────────────────────────────
+    subgraph L4["⑤ Human Approval Layer"]
+        direction LR
+        APPRSYS["Approval System\n(once / session / always)"]
+        APPREVT["IPC Event\ntool:approval-request"]
+        APPRMOD["Approval Modal UI\n(severity badge, arg preview)"]
+        APPRRESP["IPC Response\ntool:approval-response"]
+        APPRSYS --> APPREVT --> APPRMOD --> APPRRESP --> APPRSYS
+    end
+
+    %% ── Layer 5 : Tool Framework ─────────────────────────────────────────────
+    subgraph L5["⑥ Tool Framework Layer"]
+        direction LR
+        REGISTRY["Tool Registry\n(register / discover / execute)"]
+        VCD_T["VCD Tools\n(16 tools)"]
+        SSH_T["SSH Tools\n(24 tools: connect, run, file, system)"]
+        DOCS_T["Docs Tools\n(7 tools: upload, search, ask)"]
+        TASK_T["Task Tracker Tools\n(start, log, done, list)"]
+        REGISTRY --- VCD_T
+        REGISTRY --- SSH_T
+        REGISTRY --- DOCS_T
+        REGISTRY --- TASK_T
+    end
+
+    %% ── Layer 6 : VMware API Integration ─────────────────────────────────────
+    subgraph L6["⑦ VMware Cloud Director API Layer"]
+        direction LR
+        VCDAUTH["VCD Auth\n(session login, auto-reauth)"]
+        VCDCTX["VCD Context Store\n(host, org, token, vDC)"]
+        VCDAPI["VCD REST API Client\n(HTTPS, XML/JSON)"]
+        VMW[("VMware Cloud\nDirector")]
+        VCDAUTH --> VCDCTX --> VCDAPI --> VMW
+    end
+
+    %% ── Inter-layer connections ───────────────────────────────────────────────
+    CHAT_UI      -->|prompt| L1
+    L1           -->|bearer token| L2
+    L2           -->|tool call| L3
+    L3           -->|pass / block| L4
+    L4           -->|approved / denied| L5
+    L5           -->|VCD operation| L6
+    L6           -.->|result| L5
+    L5           -.->|tool result| L2
+    L2           -.->|streamed answer| CHAT_UI
+    L4           -.->|approval request| APPROVAL_UI
+```
+
+### Layer Responsibilities at a Glance
+
+| # | Layer | What it does |
+|---|---|---|
+| ① | **User** | Sends natural-language requests; sees streamed answers; makes approval decisions |
+| ② | **Copilot Integration** | Authenticates with GitHub Copilot, manages token lifecycle |
+| ③ | **LLM Orchestration** | Plans steps, selects tools, runs iterative tool-call loop |
+| ④ | **Guardrails** | Validates inputs, classifies risk, controls which tools are active, caps output |
+| ⑤ | **Human Approval** | Intercepts non-safe actions, raises UI prompt, blocks execution until user decides |
+| ⑥ | **Tool Framework** | Executes the actual capabilities (VCD, SSH, Docs, Task tracking) |
+| ⑦ | **VMware API** | Talks to VMware Cloud Director REST API; handles auth expiry and retry |
+
+---
+
 ## 2. Architectural Overview
 
 ```mermaid
