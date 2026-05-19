@@ -29,6 +29,8 @@ export interface VcdCreateForm {
   setup_ilm?: boolean;
   ilm_version?: string;
   custom_env_content?: string;
+  setup_idm?: boolean;
+  idm_custom_env_content?: string;
 }
 
 let vcdContext: VcdContext | null = null;

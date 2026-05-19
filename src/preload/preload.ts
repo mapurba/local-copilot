@@ -52,6 +52,7 @@ export interface CopilotAPI {
   fileRename: (options: { terminalId: string; oldPath: string; newPath: string }) => Promise<{ success: boolean; oldPath?: string; newPath?: string; error?: string }>;
   fileMkdir: (options: { terminalId: string; path: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
   checkForUpdate: () => void;
+  openExternal: (url: string) => Promise<void>;
 }
 
 contextBridge.exposeInMainWorld('copilot', {
@@ -199,4 +200,5 @@ contextBridge.exposeInMainWorld('copilot', {
   // fileMkdir: (options: { terminalId: string; path: string }) =>
   //   ipcRenderer.invoke('file:mkdir', options),
   checkForUpdate: () => ipcRenderer.send('check-for-update'),
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
 } as unknown as CopilotAPI);

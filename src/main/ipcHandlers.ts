@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, dialog } from 'electron';
+import { BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { lspClient } from './lspClient';
 import { tokenManager } from './tokenManager';
 import { getModels, streamChatCompletion, chatWithTools, cancelChatWithTools, ChatMessage, getToolManifest } from './copilotChatApi';
@@ -272,6 +272,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     setup_ilm?: boolean;
     ilm_version?: string;
     custom_env_content?: string;
+    setup_idm?: boolean;
+    idm_custom_env_content?: string;
   }) => {
     try {
       const ctx = getVcdContext();
@@ -298,11 +300,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         setup_ilm: form.setup_ilm,
         ilm_version: form.ilm_version,
         custom_env_content: form.custom_env_content,
+        setup_idm: form.setup_idm,
+        idm_custom_env_content: form.idm_custom_env_content,
       });
       return { success: true, result };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+    await shell.openExternal(url);
   });
 
   ipcMain.handle('vcd:signIn', async (_event, input) => {

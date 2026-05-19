@@ -11,7 +11,17 @@ export const ILM_SETUP_SCRIPT = `
     if [ "$SETUP_ILM" = "true" ]; then
         echo "Starting ILM setup (Version: $ILM_VERSION)..." >> "$LOG"
 
-        hostnamectl set-hostname lab
+        # Detect docker compose command (v2 plugin vs v1 standalone)
+        if docker compose version >/dev/null 2>&1; then
+            ILM_DC="docker compose"
+        elif command -v docker-compose >/dev/null 2>&1; then
+            ILM_DC="docker-compose"
+        else
+            ILM_DC="docker compose"
+        fi
+        echo "Using compose command: $ILM_DC" >> "$LOG"
+
+        command -v hostnamectl >/dev/null 2>&1 && hostnamectl set-hostname lab
         grep -q "127.0.0.1 lab" /etc/hosts || echo "127.0.0.1 lab" >> /etc/hosts
 
         DOWNLOAD_DIR="/root/Documents"
@@ -19,8 +29,19 @@ export const ILM_SETUP_SCRIPT = `
         unset http_proxy https_proxy
 
         echo "Downloading ILM compose from $ILM_COMPOSE_URL..." >> "$LOG"
-        if wget --timeout=20 --tries=3 --no-proxy --no-check-certificate \\
-               -O "$DOWNLOAD_DIR/compose.zip" "$ILM_COMPOSE_URL" >> "$LOG" 2>&1; then
+        ILM_DOWNLOAD_OK=false
+        if command -v wget >/dev/null 2>&1; then
+            wget --timeout=20 --tries=3 --no-proxy --no-check-certificate \\
+                 -O "$DOWNLOAD_DIR/compose.zip" "$ILM_COMPOSE_URL" >> "$LOG" 2>&1 \\
+                 && ILM_DOWNLOAD_OK=true
+        fi
+        if [ "$ILM_DOWNLOAD_OK" = "false" ]; then
+            curl -fsSL --retry 3 --connect-timeout 20 --insecure \\
+                 -o "$DOWNLOAD_DIR/compose.zip" "$ILM_COMPOSE_URL" >> "$LOG" 2>&1 \\
+                 && ILM_DOWNLOAD_OK=true
+        fi
+
+        if [ "$ILM_DOWNLOAD_OK" = "true" ]; then
 
             unzip -o "$DOWNLOAD_DIR/compose.zip" -d "$DOWNLOAD_DIR" >> "$LOG" 2>&1
 
@@ -46,13 +67,13 @@ export const ILM_SETUP_SCRIPT = `
 
                 echo "Pulling Docker images (up to 3 attempts)..." >> "$LOG"
                 for i in $(seq 1 3); do
-                    timeout 600 docker compose pull --ignore-pull-failures >> "$LOG" 2>&1 && break
+                    timeout 600 $ILM_DC pull --ignore-pull-failures >> "$LOG" 2>&1 && break
                     echo "Pull attempt $i failed. Retrying in 10s..." >> "$LOG"; sleep 10
                 done
 
                 echo "Starting containers (up to 3 attempts)..." >> "$LOG"
                 for i in $(seq 1 3); do
-                    docker compose up -d >> "$LOG" 2>&1 && break
+                    $ILM_DC up -d >> "$LOG" 2>&1 && break
                     echo "Start retry $i..." >> "$LOG"; sleep 15
                 done
 
@@ -61,7 +82,7 @@ export const ILM_SETUP_SCRIPT = `
                     echo "SUCCESS: ILM containers are running." >> "$LOG"
                     docker ps --format "table {{.Names}}\t{{.Status}}" >> "$LOG"
                 else
-                    echo "WARNING: No containers running. Check: docker compose logs" >> "$LOG"
+                    echo "WARNING: No containers running. Check: $ILM_DC logs" >> "$LOG"
                 fi
 
                 echo "ILM setup complete." >> "$LOG"

@@ -42,6 +42,8 @@ interface VmDraftForm {
   setup_ilm?: boolean;
   ilm_version?: string;
   custom_env_content?: string;
+  setup_idm?: boolean;
+  idm_custom_env_content?: string;
 }
 
 interface VmCopyDraftForm {
@@ -59,27 +61,32 @@ interface VApp {
   owner?: string;
 }
 
-const CHAT_WELCOME_MESSAGE = [
-  'Welcome. I can help you manage VMs using natural language.',
-  '',
-  '**What you can ask me:**',
-  '- List VMs, vApps, templates, and recent tasks',
-  '- Start, stop, delete, snapshot, and revert VM snapshots',
-  '- Create or clone VMs with a review form before execution',
-  '- Set up ILM and upload a custom .env during VM creation',
-  '- Resize VM CPU and memory',
-  '- Check VM status and troubleshoot failed actions',
-  '',
-  '**Try prompts like:**',
-  '- "Show all running VMs"',
-  '- "Create a snapshot for vm-app-01"',
-  '- "Clone vm-db-01 to app-vapp"',
-  '- "Resize vm-web-02 to 4 CPU and 8192 MB RAM"',
-  '- "Show tasks from the last 30 minutes"',
-  '- "Create a new Ubuntu VM with name appurbatest and setup ILM 1.3.0"',
-  '- "Create a VM with setup ILM and I will upload a custom .env"',
-  '- "Create a new SLES 15 SP6 VM with name appurbatest"',
-].join('\n');
+function buildWelcomeMessage(vmName: string): string {
+  return [
+    'Welcome. I can help you manage VMs using natural language.',
+    '',
+    '**What you can ask me:**',
+    '- List VMs, vApps, templates, and recent tasks',
+    '- Start, stop, delete, snapshot, and revert VM snapshots',
+    '- Create or clone VMs with a review form before execution',
+    '- Set up ILM and upload a custom .env during VM creation',
+    '- Set up IDM and upload a custom .env during VM creation',
+    '- Resize VM CPU and memory',
+    '- Check VM status and troubleshoot failed actions',
+    '',
+    '**Try prompts like:**',
+    '- "Show all running VMs"',
+    `- "Create a snapshot for ${vmName}-app"`,
+    `- "Clone ${vmName}-db to app-vapp"`,
+    `- "Resize ${vmName}-web to 4 CPU and 8192 MB RAM"`,
+    '- "Show tasks from the last 30 minutes"',
+    `- "Create a new Ubuntu VM with name ${vmName}test and setup ILM 1.3.0"`,
+    `- "Create a VM with name ${vmName}test, setup ILM and I will upload a custom .env"`,
+    `- "Create a new Ubuntu VM with name ${vmName}test and setup IDM"`,
+    `- "Create a VM with name ${vmName}test, setup IDM and I will upload a custom .env"`,
+    `- "Create a new SLES 15 SP6 VM with name ${vmName}test"`,
+  ].join('\n');
+}
 
 const ChatPane: React.FC = () => {
   // Confirmation dialog state
@@ -93,7 +100,7 @@ const ChatPane: React.FC = () => {
     setConfirmOpen(true);
   };
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: CHAT_WELCOME_MESSAGE },
+    { role: 'assistant', content: buildWelcomeMessage('myvm') },
   ]);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gpt-4');
@@ -122,6 +129,19 @@ const ChatPane: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void)[]>([]);
   const pickerRef = useRef<HTMLDivElement>(null);
+
+  // Personalise the welcome message with the logged-in Copilot username
+  useEffect(() => {
+    window.copilot.status().then((s) => {
+      if (s.user) {
+        const vmName = s.user.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+        setMessages((prev) => [
+          { ...prev[0], content: buildWelcomeMessage(vmName || 'myvm') },
+          ...prev.slice(1),
+        ]);
+      }
+    }).catch(() => { /* keep default */ });
+  }, []);
 
   useEffect(() => {
     const unsubChunk = window.copilot.onChatStream((_event: unknown, chunk: string, type?: string) => {
@@ -170,6 +190,8 @@ const ChatPane: React.FC = () => {
         setup_ilm: form.setup_ilm !== undefined ? Boolean(form.setup_ilm) : false,
         ilm_version: form.ilm_version ? String(form.ilm_version) : undefined,
         custom_env_content: form.custom_env_content ? String(form.custom_env_content) : undefined,
+        setup_idm: form.setup_idm !== undefined ? Boolean(form.setup_idm) : false,
+        idm_custom_env_content: form.idm_custom_env_content ? String(form.idm_custom_env_content) : undefined,
       });
       console.log('[ChatPane] Pending form state updated');
     });
@@ -302,6 +324,18 @@ const ChatPane: React.FC = () => {
     reader.readAsText(file);
   };
 
+  const handleIdmEnvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !pendingForm) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result;
+      const content = typeof result === 'string' ? result : '';
+      updateForm('idm_custom_env_content', content);
+    };
+    reader.readAsText(file);
+  };
+
   const updateCopyForm = (key: keyof VmCopyDraftForm, value: string | boolean) => {
     setPendingCopyForm((prev) => prev ? { ...prev, [key]: value } : null);
   };
@@ -329,17 +363,28 @@ const ChatPane: React.FC = () => {
   const doDeployVm = async () => {
     if (!pendingForm) return;
     setIsDeploying(true);
+    const deployedForm = pendingForm;
     try {
-      const result = await window.copilot.deployVm(pendingForm as unknown as Record<string, unknown>);
+      const result = await window.copilot.deployVm(deployedForm as unknown as Record<string, unknown>);
       setPendingForm(null);
       if (result.success) {
         const envUpdate = (result.result as { env_update?: { changesSummary?: string; rationale?: string; usedFallback?: boolean } } | undefined)?.env_update;
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: `OK: VM **${pendingForm.vm_name}** creation started successfully!` },
-          { role: 'assistant', content: `VM IP : **${pendingForm.ip_address}** allocated.` },
+        const successMessages: Message[] = [
+          { role: 'assistant', content: `OK: VM **${deployedForm.vm_name}** creation started successfully!` },
+          { role: 'assistant', content: `VM IP : **${deployedForm.ip_address}** allocated.` },
           { role: 'assistant', content: `User Name : Root , Password : Password1!` },
-        ]);
+        ];
+        if (deployedForm.setup_ilm && deployedForm.ip_address) {
+          const ilmUrl = `http://${deployedForm.ip_address}:9888/ilm/#/`;
+          const pwNote = deployedForm.custom_env_content
+            ? '_(password depends on your uploaded .env file)_'
+            : '**novell** _(default — change if needed)_';
+          successMessages.push({
+            role: 'assistant',
+            content: `**ILM is being set up on your VM.**\n\nOnce ready, access it at:\n[${ilmUrl}](${ilmUrl})\n\n**Tenant:** thor  |  **Password:** ${pwNote}`,
+          });
+        }
+        setMessages((prev) => [...prev, ...successMessages]);
         if (envUpdate) {
           const fallbackNote = envUpdate.usedFallback ? '\n\nNote: Used fallback update (LLM unavailable).' : '';
           const summary = envUpdate.changesSummary ? `\n\nChanges:\n${envUpdate.changesSummary}` : '';
@@ -693,6 +738,32 @@ const ChatPane: React.FC = () => {
                       />
                       {pendingForm.custom_env_content && (
                         <div className="mt-1 text-xs text-green-400">.env file loaded ({pendingForm.custom_env_content.length} chars)</div>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {/* Setup IDM */}
+                {pendingForm.setup_idm && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="flex items-center gap-2 text-xs font-medium text-gray-400 cursor-pointer">
+                          <input type="checkbox" checked={pendingForm.setup_idm} onChange={(e) => updateForm('setup_idm', e.target.checked)} className="w-3.5 h-3.5" />
+                          SETUP IDM
+                        </label>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">CUSTOM .ENV FILE for IDM (optional)</label>
+                      <input
+                        type="file"
+                        accept=".env,text/plain"
+                        onChange={handleIdmEnvFileChange}
+                        className="w-full text-xs text-gray-400"
+                      />
+                      {pendingForm.idm_custom_env_content && (
+                        <div className="mt-1 text-xs text-green-400">IDM .env file loaded ({pendingForm.idm_custom_env_content.length} chars)</div>
                       )}
                     </div>
                   </>

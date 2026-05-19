@@ -405,6 +405,7 @@ const createVmDraftTool = lcTool(
       compute_policy_id: args.compute_policy_id,
       setup_ilm: args.setup_ilm,
       ilm_version: args.ilm_version,
+      setup_idm: args.setup_idm,
     });
     const result = await createVmDraft(form);
     return JSON.stringify(result);
@@ -426,6 +427,7 @@ const createVmDraftTool = lcTool(
       compute_policy_id: z.string().optional().describe('Compute policy ID'),
       setup_ilm: z.boolean().optional().describe('Install ILM stack'),
       ilm_version: z.string().optional().describe('ILM version (e.g., latest, 1.3.0)'),
+      setup_idm: z.boolean().optional().describe('Install IDM stack'),
     }),
   }
 );

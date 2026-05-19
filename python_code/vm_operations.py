@@ -660,19 +660,6 @@ EOF
     echo "All known proxy settings have been removed." >> "$LOG"
     
     # 1. Update system
-    echo "Updating package lists and installing prerequisites..." >> "$LOG"
-    apt-get update -y >> "$LOG" 2>&1
-    apt-get install -y ca-certificates curl gnupg lsb-release apt-transport-https software-properties-common unzip >> "$LOG" 2>&1
-
-    # 2. Install OpenJDK 11
-    if ! command -v java &> /dev/null; then
-        echo "Installing OpenJDK 11..." >> "$LOG"
-        apt-get install -y openjdk-11-jdk >> "$LOG" 2>&1
-        echo "Java 11 installed successfully." >> "$LOG"
-    else
-        echo "Java is already installed. Skipping..." >> "$LOG"
-    fi
-
     # 3. Install Docker
     if ! command -v docker &> /dev/null; then
         echo "Installing Docker Engine..." >> "$LOG"

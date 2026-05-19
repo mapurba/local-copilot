@@ -1,21 +1,16 @@
 /**
- * Shell script fragment – Java 11 + Docker Engine installation (Ubuntu/Debian).
+ * Shell script fragment – Docker Engine installation (Ubuntu/Debian only).
  *
  * Relies on $LOG being set in the calling script.
- * Both installs are idempotent — skipped when already present.
+ * Install is idempotent — skipped when Docker is already present.
  */
 export const PACKAGE_INSTALL_SCRIPT = `
-    # ── Prerequisites + Java + Docker (Ubuntu/Debian only) ───────────────────
+    # ── Prerequisites + Docker (Ubuntu/Debian only) ───────────────────────────
     export DEBIAN_FRONTEND=noninteractive
     echo "Installing prerequisites..." >> "$LOG"
     apt-get update -y >> "$LOG" 2>&1
     apt-get install -y ca-certificates curl gnupg lsb-release apt-transport-https \
         software-properties-common unzip >> "$LOG" 2>&1
-
-    if ! command -v java &>/dev/null; then
-        apt-get install -y openjdk-11-jdk >> "$LOG" 2>&1
-        echo "Java 11 installed." >> "$LOG"
-    fi
 
     if ! command -v docker &>/dev/null; then
         echo "Installing Docker Engine..." >> "$LOG"

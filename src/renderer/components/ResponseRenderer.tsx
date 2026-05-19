@@ -207,9 +207,13 @@ const ResponseRenderer: React.FC<ResponseRendererProps> = ({ content }) => {
             a: ({ children, href }) => (
               <a
                 href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-400 hover:text-blue-300 underline"
+                onClick={(e) => {
+                  if (href) {
+                    e.preventDefault();
+                    window.copilot.openExternal(href);
+                  }
+                }}
+                className="text-blue-400 hover:text-blue-300 underline cursor-pointer"
               >
                 {children}
               </a>

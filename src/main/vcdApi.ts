@@ -2,8 +2,10 @@
 import { XMLParser } from 'fast-xml-parser';
 import { PROXY_CLEANUP_SCRIPT } from './scripts/proxyCleanup';
 import { ILM_SETUP_SCRIPT } from './scripts/ilmSetup';
+import { IDM_SETUP_SCRIPT } from './scripts/idmSetup';
 import { SLES_NETWORK_SCRIPT, UBUNTU_NETWORK_SCRIPT, RHEL_NETWORK_SCRIPT } from './scripts/networkSetup';
 import { PACKAGE_INSTALL_SCRIPT } from './scripts/packageInstall';
+import { SLES_PACKAGE_INSTALL_SCRIPT } from './scripts/slesPackageInstall';
 import { FINALIZATION_SCRIPT } from './scripts/finalization';
 
 import https from 'https';
@@ -578,7 +580,9 @@ function getUnifiedCustomizationScript(
   dnsServers: string[],
   setupIlm = false,
   ilmVersion = 'latest',
-  customEnvContent?: string
+  customEnvContent?: string,
+  setupIdm = false,
+  idmCustomEnvContent?: string
 ): string {
   const ipWithCidr = ipAddress.includes('/') ? ipAddress : `${ipAddress}/21`;
   const dnsPrimary = dnsServers.length ? dnsServers[0] : '15.122.222.53';
@@ -587,12 +591,17 @@ function getUnifiedCustomizationScript(
   const ilmEnabled       = setupIlm ? 'true' : 'false';
   const ilmVersionMapped = ilmVersion === 'latest' ? '1.3.0' : ilmVersion;
   const ilmEntry = ILM_VERSION_MAP[ilmVersionMapped] || ILM_VERSION_MAP['1.3.0'];
+  const idmEnabled = setupIdm ? 'true' : 'false';
 
   // Single-quoted heredoc (<<'EOF_ENV') is fully literal — no bash interpolation,
   // so no escaping of $ or backticks is required.
   const envInjectionBlock = customEnvContent
     ? `if [ "$SETUP_ILM" = "true" ]; then\n  echo "Writing custom .env..." >> "$LOG"\n  cat > /root/uploaded.env <<'EOF_ENV'\n${customEnvContent}\nEOF_ENV\n  echo "Custom .env written." >> "$LOG"\nfi`
     : `# No custom .env provided; will use default .env from compose zip`;
+
+  const idmEnvInjectionBlock = idmCustomEnvContent
+    ? `if [ "$SETUP_IDM" = "true" ]; then\n  echo "Writing custom IDM .env..." >> "$LOG"\n  cat > /root/uploaded_idm.env <<'EOF_IDM_ENV'\n${idmCustomEnvContent}\nEOF_IDM_ENV\n  echo "Custom IDM .env written." >> "$LOG"\nfi`
+    : `# No custom IDM .env provided; will use default .env from idm_compose zip`;
 
   let script = `#!/bin/bash
 #scriptversion:20250302-unified-fixed-final
@@ -614,8 +623,14 @@ ILM_VERSION="__ILM_VERSION__"
 ILM_FULL_VERSION="__ILM_FULL_VERSION__"
 ILM_COMPOSE_URL="__ILM_URL__"
 
-# ── Custom .env injection ─────────────────────────────────────────────────────
+# ── IDM variables ────────────────────────────────────────────────────────────
+SETUP_IDM="__IDM_ENABLED__"
+
+# ── Custom .env injection (ILM) ───────────────────────────────────────────────
 __CUSTOM_ENV_INJECTION__
+
+# ── Custom .env injection (IDM) ───────────────────────────────────────────────
+__IDM_ENV_INJECTION__
 
 # ── OS detection ─────────────────────────────────────────────────────────────
 OS_TYPE="unknown"
@@ -645,18 +660,34 @@ else
     echo "ERROR: Unsupported OS type: $OS_TYPE" >> "$LOG"
 fi
 ${PROXY_CLEANUP_SCRIPT}
-# ── Ubuntu: package installation + ILM setup ───────────────────────────────────
+# ── SLES: Docker installation ────────────────────────────────────────────────
+if [ "$OS_TYPE" = "sles" ]; then
+${SLES_PACKAGE_INSTALL_SCRIPT}
+fi
+# ── Ubuntu: Docker installation ──────────────────────────────────────────────
 if [ "$OS_TYPE" = "ubuntu" ]; then
 ${PACKAGE_INSTALL_SCRIPT}
-${ILM_SETUP_SCRIPT}
 fi
 
-# ── Finalization ──────────────────────────────────────────────────────────────
-echo "Network configuration completed." >> "$LOG"
-${FINALIZATION_SCRIPT}
+# ── Finalization function – registered as trap so it always runs ──────────────
+_VCD_FINALIZED=false
+_vcd_finalize() {
+    [ "$_VCD_FINALIZED" = "true" ] && return 0
+    _VCD_FINALIZED=true
+    echo "Network configuration completed." >> "$LOG"
+${FINALIZATION_SCRIPT}}
+trap '_vcd_finalize' EXIT TERM
+
+# ── ILM + IDM setup (runs on any OS that has Docker) ─────────────────────────
+${ILM_SETUP_SCRIPT}
+${IDM_SETUP_SCRIPT}
+
+# ── Explicit finalization call at end of normal flow ─────────────────────────
+_vcd_finalize
 `;
 
   script = script.replace(/__CUSTOM_ENV_INJECTION__/g, envInjectionBlock);
+  script = script.replace(/__IDM_ENV_INJECTION__/g, idmEnvInjectionBlock);
   script = script
     .replace(/__IP_WITH_CIDR__/g, ipWithCidr)
     .replace(/__GATEWAY__/g, gateway)
@@ -667,6 +698,7 @@ ${FINALIZATION_SCRIPT}
     .replace(/__ILM_VERSION__/g, ilmVersionMapped)
     .replace(/__ILM_FULL_VERSION__/g, ilmEntry.full)
     .replace(/__ILM_URL__/g, ilmEntry.url)
+    .replace(/__IDM_ENABLED__/g, idmEnabled)
     .replace(/__DOLLAR_CURLY__/g, '${');
 
   return script;
@@ -1250,6 +1282,8 @@ export async function createVmFromTemplate(params: {
   ilm_version?: string;
   custom_script?: string;
   custom_env_content?: string;
+  setup_idm?: boolean;
+  idm_custom_env_content?: string;
 }): Promise<Record<string, unknown>> {
   const ctx = getVcdContext();
 
@@ -1323,7 +1357,9 @@ export async function createVmFromTemplate(params: {
       params.dns_servers,
       params.setup_ilm,
       params.ilm_version,
-      updatedEnvContent
+      updatedEnvContent,
+      params.setup_idm,
+      params.idm_custom_env_content
     );
   }
 
@@ -1465,6 +1501,8 @@ export async function createVmConfirmed(): Promise<Record<string, unknown>> {
     setup_ilm: form.setup_ilm,
     ilm_version: form.ilm_version,
     custom_env_content: form.custom_env_content,
+    setup_idm: form.setup_idm,
+    idm_custom_env_content: form.idm_custom_env_content,
   });
 
   setPendingForm(null);
@@ -1549,6 +1587,8 @@ export function buildCreateFormFromInput(form: Partial<VcdCreateForm>): VcdCreat
     setup_ilm: form.setup_ilm ?? false,
     ilm_version: form.ilm_version || 'latest',
     custom_env_content: form.custom_env_content,
+    setup_idm: form.setup_idm ?? false,
+    idm_custom_env_content: form.idm_custom_env_content,
   };
 }
 

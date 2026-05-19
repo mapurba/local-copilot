@@ -6,12 +6,14 @@ export interface CopilotAPI {
   getModels: () => Promise<string[]>;
   sendChatMessage: (modelId: string, messages: Array<{ role: string; content: string }>) => Promise<{ started: boolean }>;
   sendChatMessageWithTools: (modelId: string, messages: Array<{ role: string; content: string }>, disabledToolNames?: string[]) => Promise<{ started: boolean }>;
+  cancelChat: () => Promise<{ cancelled: boolean }>;
   listTools: () => Promise<Array<{ name: string; category: string; description: string }>>;
   onChatStream: (callback: (event: unknown, text: string, type?: string) => void) => () => void;
   onChatEnd: (callback: (event: unknown) => void) => () => void;
   onChatError: (callback: (event: unknown, message: string) => void) => () => void;
   onVmDraft: (callback: (event: unknown, form: Record<string, unknown>) => void) => () => void;
   onVmCopyDraft: (callback: (event: unknown, form: Record<string, unknown>) => void) => () => void;
+  onWatchNotification: (callback: (event: unknown, data: { message: string }) => void) => () => void;
   deployVm: (form: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   listVms: () => Promise<{ count?: number; vms?: Array<Record<string, unknown>>; error?: string }>;
   listVapps: () => Promise<{ count?: number; vapps?: Array<Record<string, unknown>>; error?: string }>;
@@ -99,6 +101,7 @@ export interface CopilotAPI {
   taskGet: (taskId: string) => Promise<{ success: boolean; task?: unknown; error?: string }>;
   taskCancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
   onTaskUpdated: (callback: () => void) => () => void;
+  openExternal: (url: string) => Promise<void>;
 
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) => Promise<{ success: boolean; terminalId?: string; error?: string }>;

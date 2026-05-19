@@ -25,6 +25,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onComplete, onClose }) => {
       setUserCode(result.userCode);
       setVerificationUri(result.verificationUri);
       setStep('confirming');
+      window.copilot.openExternal(result.verificationUri);
     } catch (_e) {
       setError('Failed to start sign-in. Make sure copilot-language-server is installed.');
       setStep('idle');
@@ -84,9 +85,8 @@ const AuthModal: React.FC<AuthModalProps> = ({ onComplete, onClose }) => {
             </p>
             <a
               href={verificationUri}
-              target="_blank"
-              rel="noreferrer"
-              className="block bg-gray-700 rounded-lg px-4 py-2 text-blue-400 hover:text-blue-300 text-sm break-all"
+              onClick={(e) => { e.preventDefault(); window.copilot.openExternal(verificationUri); }}
+              className="block bg-gray-700 rounded-lg px-4 py-2 text-blue-400 hover:text-blue-300 text-sm break-all cursor-pointer"
             >
               {verificationUri}
             </a>
