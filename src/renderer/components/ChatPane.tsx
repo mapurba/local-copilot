@@ -25,6 +25,9 @@ interface AttachedDoc {
   id: string;
   title: string;
   content: string;
+  summary?: string;      // LLM-generated summary — used for compact mode
+  alreadySent?: boolean; // true after the first full send; switches to compact mode
+  forceFullContent?: boolean; // user override: send full content even on follow-ups
 }
 
 interface VmDraftForm {
@@ -73,6 +76,9 @@ function buildWelcomeMessage(vmName: string): string {
     '- Set up IDM and upload a custom .env during VM creation',
     '- Resize VM CPU and memory',
     '- Check VM status and troubleshoot failed actions',
+    '- **Analyze product docs and generate a full deployment design with topology diagram**',
+    '- **Assign real IPs from the VCD pool to a deployment design**',
+    '- **Orchestrate a full automated multi-VM deployment end-to-end**',
     '',
     '**Try prompts like:**',
     '- "Show all running VMs"',
@@ -85,6 +91,16 @@ function buildWelcomeMessage(vmName: string): string {
     `- "Create a new SLES 15SP6 VM with name ${vmName}test and setup IDM"`,
     `- "Create a VM with name ${vmName}test, setup IDM and I will upload a custom .env"`,
     `- "Create a new SLES 15 SP6 VM with name ${vmName}test"`,
+    '',
+    '**Deployment Intelligence (new):**',
+    '- "I uploaded the IDM install guide — generate a distributed deployment design"',
+    '- "Analyze [doc name] and create a deployment plan for single-node mode"',
+    '- "Show me the Mermaid topology for the design"',
+    '- "Assign IPs from the VCD pool to design [designId]"',
+    '- "Show me the IP requirements for this deployment" *(triggers real IP allocation)*',
+    '- "Show me all existing deployment designs"',
+    '- "Deploy design [designId] — org: MyOrg, template: sles15sp6-base, user: root"',
+    '- "What is the status of deployment run [runId]?"',
   ].join('\n');
 }
 
@@ -277,15 +293,37 @@ const ChatPane: React.FC = () => {
     };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
-    setAttachedDocs([]);
+    // NOTE: attachedDocs intentionally NOT cleared here — docs remain attached
+    // for the entire conversation so follow-up questions can still reference them.
+    // The user can manually remove a doc via the X button on the attachment chip.
     setIsStreaming(true);
 
     let apiContent = trimmed;
     if (docsToSend.length > 0) {
       const contextBlocks = docsToSend
-        .map((d) => `[Document context: "${d.title}"]\n${d.content}`)
+        .map((d) => {
+          const useCompact = d.alreadySent && !d.forceFullContent;
+          if (useCompact) {
+            // Compact mode: send a short stub so the LLM knows the doc is still active
+            // without re-transmitting the full content (which was already sent earlier).
+            const compactBody = d.summary
+              ? `[COMPACT SUMMARY — full content was sent in an earlier message]\n${d.summary}`
+              : `[COMPACT — full content was sent in an earlier message. docId: ${d.id}]`;
+            return `[Document: "${d.title}" | docId: ${d.id} | mode: compact]\n${compactBody}`;
+          }
+          return `[Document: "${d.title}" | docId: ${d.id}]\n${d.content}`;
+        })
         .join('\n\n---\n\n');
       apiContent = `${contextBlocks}\n\n---\n\n${trimmed}`;
+    }
+
+    // Mark all attached docs as alreadySent so subsequent messages use compact mode
+    if (docsToSend.length > 0) {
+      setAttachedDocs((prev) =>
+        prev.map((d) =>
+          docsToSend.some((ds) => ds.id === d.id) ? { ...d, alreadySent: true } : d
+        )
+      );
     }
 
     const apiUserMsg = { role: 'user' as const, content: apiContent };
@@ -499,7 +537,13 @@ const ChatPane: React.FC = () => {
       if (result.success && result.content) {
         setAttachedDocs((prev) => {
           if (prev.some((d) => d.id === docId)) return prev;
-          return [...prev, { id: docId, title: result.title ?? title, content: result.content! }];
+          // Use docId from result if available (IPC now returns it explicitly)
+          return [...prev, {
+            id: result.docId ?? docId,
+            title: result.title ?? title,
+            content: result.content!,
+            summary: result.summary,
+          }];
         });
       }
     } catch (err) {
@@ -883,11 +927,26 @@ const ChatPane: React.FC = () => {
         {attachedDocs.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-1 pb-2">
             {attachedDocs.map((doc) => (
-              <span key={doc.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/50 border border-blue-700/60 text-blue-300 text-xs rounded-full max-w-[220px]">
+              <span key={doc.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/50 border border-blue-700/60 text-blue-300 text-xs rounded-full max-w-[260px]">
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
                   <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                 </svg>
                 <span className="truncate">{doc.title}</span>
+                {doc.alreadySent && (
+                  <button
+                    onClick={() =>
+                      setAttachedDocs((prev) =>
+                        prev.map((d) =>
+                          d.id === doc.id ? { ...d, forceFullContent: !d.forceFullContent } : d
+                        )
+                      )
+                    }
+                    title={doc.forceFullContent ? 'Sending full content — click to use compact mode' : 'Sending compact summary — click to resend full content'}
+                    className={`flex-shrink-0 text-[9px] font-semibold leading-none px-1 rounded ml-0.5 ${doc.forceFullContent ? 'bg-amber-600/60 text-amber-200 hover:bg-amber-500/70' : 'bg-blue-700/60 text-blue-300 hover:bg-blue-600/70'}`}
+                  >
+                    {doc.forceFullContent ? 'FULL' : 'CMP'}
+                  </button>
+                )}
                 <button onClick={() => removeAttachedDoc(doc.id)} className="flex-shrink-0 hover:text-white ml-0.5" title="Remove attachment">
                   <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />

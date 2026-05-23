@@ -16,7 +16,6 @@ import {
   RegisteredTool,
   ToolExecutionRequest,
   ToolExecutionResult,
-  ToolExecutionContext,
   ToolCategory,
   ToolListResponse,
   ToolRiskLevel,
@@ -273,6 +272,10 @@ export async function initializeDefaultTools(): Promise<void> {
     // Document tools (upload, parse, search, Q&A)
     const { registerDocTools } = await import('./categories/docs');
     registerDocTools();
+
+    // Deployment intelligence & orchestration tools
+    const { registerDeploymentTools } = await import('./categories/deployment');
+    registerDeploymentTools();
 
     toolRegistry.setInitialized(true);
     

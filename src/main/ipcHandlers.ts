@@ -24,7 +24,8 @@ import { checkForUpdates } from './autoUpdater';
 import { listVms } from './vcdApi';
 import { logApi } from './apiLogger';
 import { approvalSystem } from './tools';
-import { listDocuments, getDocument, deleteDocument, getChunks } from './tools/categories/docs/storage';
+import { listDocuments, getDocument, deleteDocument } from './tools/categories/docs/storage';
+import { readDocContent } from './tools/categories/docs/fileStore';
 import { taskTracker } from './taskTracker';
 // DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
 // import {
@@ -649,9 +650,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     try {
       const doc = getDocument(docId);
       if (!doc) return { success: false, error: `Document not found: ${docId}` };
-      const chunks = getChunks(docId);
-      const fullContent = chunks.map((c: { cleanedContent?: string; content: string }) => c.cleanedContent ?? c.content).join('\n\n');
-      return { success: true, title: doc.title ?? doc.filename, content: fullContent };
+      const content = readDocContent(docId) ?? '';
+      return { success: true, docId, title: doc.title ?? doc.filename, summary: doc.summary, content };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -693,6 +693,142 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     try {
       const cancelled = taskTracker.cancelTask(taskId);
       return { success: cancelled, error: cancelled ? undefined : 'Task not found or not running' };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── Deployment Intelligence Handlers ──────────────────────────────────────
+
+  ipcMain.handle('deployment:analyze', async (_event, docId: string, options?: { strategy?: string }) => {
+    try {
+      const { extractFromDocument } = await import('./deployment/deploymentExtractor');
+      const result = await extractFromDocument(docId, options as { strategy?: 'auto' | 'single-pass' | 'chunked' });
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:generate', async (_event, intel: unknown, modeName: string) => {
+    try {
+      const { buildDeploymentDesign } = await import('./deployment/vmPlacementEngine');
+      const { saveDesign } = await import('./deployment/deploymentStore');
+      const design = buildDeploymentDesign(intel as import('./deployment/types').DeploymentIntelligence, modeName);
+      const id = saveDesign(design);
+      return { success: true, designId: id, mermaid: design.mermaid, runbook: design.runbook };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:list', async () => {
+    try {
+      const { listDesigns } = await import('./deployment/deploymentStore');
+      return { success: true, designs: listDesigns() };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:get', async (_event, designId: string) => {
+    try {
+      const { getDesign } = await import('./deployment/deploymentStore');
+      return { success: true, design: getDesign(designId) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:update', async (_event, designId: string, designJson: string) => {
+    try {
+      const { getDesign, updateDesign } = await import('./deployment/deploymentStore');
+      const { buildDependencyGraph } = await import('./deployment/dependencyAnalyzer');
+      const { generateTopologyDiagram } = await import('./deployment/mermaidGenerator');
+      const { generateFullRunbook } = await import('./deployment/runbookGenerator');
+      const partial = JSON.parse(designJson) as Partial<import('./deployment/types').DeploymentDesign>;
+      const existing = getDesign(designId);
+      const merged = { ...existing, ...partial };
+      if (partial.vms || partial.intelligence) {
+        const allServices = merged.vms.flatMap((v) => v.services);
+        merged.dependencyGraph = buildDependencyGraph(allServices);
+        merged.mermaid = generateTopologyDiagram(merged);
+        merged.runbook = generateFullRunbook(merged);
+      }
+      updateDesign(designId, merged);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:assignIps', async (_event, designId: string) => {
+    try {
+      const { getDesign, updateDesign } = await import('./deployment/deploymentStore');
+      const { allocateIpsForDesign } = await import('./deployment/ipPoolManager');
+      const { generateTopologyDiagram } = await import('./deployment/mermaidGenerator');
+      const { generateFullRunbook } = await import('./deployment/runbookGenerator');
+      const design = getDesign(designId);
+      const ipAssignments = await allocateIpsForDesign(design);
+      for (const vm of design.vms) {
+        const ip = ipAssignments[vm.services[0]?.id];
+        if (ip) vm.ip = ip;
+      }
+      design.ipAssignments = ipAssignments;
+      design.mermaid = generateTopologyDiagram(design);
+      design.runbook = generateFullRunbook(design);
+      updateDesign(designId, design);
+      return { success: true, ipAssignments };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:start', async (_event, designId: string, params: unknown) => {
+    try {
+      const { start } = await import('./deployment/deploymentOrchestrator');
+      const runId = await start(designId, params as import('./deployment/deploymentOrchestrator').DeploymentParams);
+      return { success: true, runId };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:runStatus', async (_event, runId: string) => {
+    try {
+      const { getRun } = await import('./deployment/deploymentStore');
+      return { success: true, run: getRun(runId) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:cancel', async (_event, runId: string) => {
+    try {
+      const { cancel } = await import('./deployment/deploymentOrchestrator');
+      await cancel(runId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deployment:validateEndpoints', async (_event, designId: string) => {
+    try {
+      const { getDesign, getRunsForDesign } = await import('./deployment/deploymentStore');
+      const { validateAllServices } = await import('./deployment/healthValidationEngine');
+      const design = getDesign(designId);
+      const runs = getRunsForDesign(designId);
+      const latestRun = runs[0];
+      if (!latestRun) return { success: false, error: 'No deployment run found for this design.' };
+      const allResults: import('./deployment/types').ValidationResult[] = [];
+      for (const vm of design.vms) {
+        const sessionId = latestRun.vmSessions[vm.id];
+        if (!sessionId) continue;
+        const results = await validateAllServices(sessionId, vm, design);
+        allResults.push(...results);
+      }
+      return { success: true, results: allResults };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }

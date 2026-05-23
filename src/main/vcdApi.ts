@@ -1712,3 +1712,89 @@ export async function allocateFreeIp(): Promise<{ success: boolean; ip?: string;
     req.end();
   });
 }
+
+/**
+ * Get all free (unallocated) IPs from the IP registrar service.
+ * Calls GET http://164.99.91.31:5100/api/res-ip/free
+ * @returns Array of free IP strings, or error
+ */
+export async function getFreeIps(): Promise<{ success: boolean; ips?: string[]; count?: number; error?: string }> {
+  const FREE_URL = 'http://164.99.91.31:5100/api/res-ip/free';
+
+  return new Promise((resolve) => {
+    const parsed = new URL(FREE_URL);
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || 5100,
+      path: parsed.pathname,
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      timeout: 15000,
+    };
+
+    console.log('[IP Pool] Fetching free IPs from:', FREE_URL);
+    const startedAt = Date.now();
+    logApi({
+      source: 'vcdApi.getFreeIps',
+      stage: 'request',
+      method: 'GET',
+      url: FREE_URL,
+      headers: options.headers as Record<string, unknown>,
+    });
+
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk.toString(); });
+      res.on('end', () => {
+        logApi({
+          source: 'vcdApi.getFreeIps',
+          stage: 'response',
+          method: 'GET',
+          url: FREE_URL,
+          status: res.statusCode || 0,
+          durationMs: Date.now() - startedAt,
+          responseBody: data,
+        });
+
+        if (res.statusCode !== 200) {
+          resolve({ success: false, error: `Free IPs request failed with status ${res.statusCode}: ${data}` });
+          return;
+        }
+
+        try {
+          const body = JSON.parse(data) as unknown;
+          // Handle: array of strings, array of objects with ip/address field, or { ips: [...] }
+          let ips: string[] = [];
+          if (Array.isArray(body)) {
+            ips = body.map((item) => {
+              if (typeof item === 'string') return item;
+              if (typeof item === 'object' && item !== null) {
+                const o = item as Record<string, unknown>;
+                return String(o.ip ?? o.address ?? o.ipAddress ?? '');
+              }
+              return '';
+            }).filter(Boolean);
+          } else if (typeof body === 'object' && body !== null) {
+            const o = body as Record<string, unknown>;
+            const arr = o.ips ?? o.free_ips ?? o.freeIps ?? o.addresses ?? o.data;
+            if (Array.isArray(arr)) {
+              ips = (arr as unknown[]).map((item) =>
+                typeof item === 'string' ? item : String((item as Record<string, unknown>).ip ?? (item as Record<string, unknown>).address ?? '')
+              ).filter(Boolean);
+            }
+          }
+          resolve({ success: true, ips, count: ips.length });
+        } catch (e) {
+          resolve({ success: false, error: `Failed to parse free IPs response: ${e instanceof Error ? e.message : String(e)}` });
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      logApi({ source: 'vcdApi.getFreeIps', stage: 'error', method: 'GET', url: FREE_URL, durationMs: Date.now() - startedAt, error: err.message });
+      resolve({ success: false, error: `Cannot reach IP pool service: ${err.message}` });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ success: false, error: 'IP pool service timed out' }); });
+    req.end();
+  });
+}

@@ -31,7 +31,8 @@ export type ToolCategory =
   | 'agent'      // Agent delegation
   | 'browser'    // HTTP/web operations
   | 'todo'       // Task management
-  | 'docs';      // Document search/retrieval
+  | 'docs'       // Document search/retrieval
+  | 'deployment'; // Deployment intelligence & orchestration
 
 /**
  * Tool execution status

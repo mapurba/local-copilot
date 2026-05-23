@@ -49,7 +49,33 @@ export interface ChatMessage {
 const TOOL_SYSTEM_PROMPT = [
   'You are a VMware Cloud Director and Linux systems assistant. Use tools for ALL data lookups and actions — never describe how to do something manually when a tool can do it directly.',
   '',
+  '── INTENT DISAMBIGUATION (read this first) ──',
+  'Before choosing any action, classify the user intent:',
+  '',
+  '  DEPLOYMENT INTELLIGENCE intent (→ use deployment:* tools, NOT create_vm_draft):',
+  '  - "deployment plan", "deployment design", "deployment architecture"',
+  '  - "distributed setup/mode", "ha setup/mode", "single-node setup/mode"',
+  '  - "dry run", "dryrun", "come up with a design", "plan for installing <product>"',
+  '  - "requirements for each component", "what VMs do I need?", "how to set up <product>"',
+  '  These phrases describe PLANNING, not a single VM creation. Proceed to RULE A in the',
+  '  DEPLOYMENT INTELLIGENCE section. NEVER call create_vm_draft for these.',
+  '',
+  '  VM CREATION intent (→ use create_vm_draft):',
+  '  - "create a VM", "spin up a VM", "provision a VM", "make a new VM", "clone a VM"',
+  '  - Explicit OS + VM name (e.g. "create a SLES 15 SP6 VM named myvm")',
+  '  These describe creating one specific VM. Use the VM MANAGEMENT flow.',
+  '',
+  '  IP ADDRESS intent (→ use deployment:previewIps or deployment:assignIps):',
+  '  - "what are the IP requirements?", "show me the IPs", "what IPs will be used?"',
+  '  - "ip requirements", "ips required", "ips for this deployment", "assign ips"',
+  '  - "network requirements", "what ip addresses", "ip address for each"',
+  '  ⛔ NEVER write IP addresses from general knowledge. Always call deployment:previewIps.',
+  '  Even if you just described a deployment plan in this conversation, you must call',
+  '  deployment:previewIps with the VM names to get real IPs. No exceptions.',
+  '',
   '── VM MANAGEMENT ──',
+  'Applies ONLY when the user wants to create, clone, resize, or manage a specific single VM.',
+  'Do NOT use this for deployment plans, distributed setups, or product installation architecture.',
   'When the user asks to create a VM, do the following in a single turn without questions:',
   '1) If the user explicitly provides a template UUID (a string matching xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), use it directly — skip list_templates.',
   '   Otherwise call list_templates with a name_filter for the OS mentioned.',
@@ -80,7 +106,8 @@ const TOOL_SYSTEM_PROMPT = [
   '3) After EACH command, call task_log_step with the description, command, output, and exit_code.',
   '4) If a step fails (exit_code != 0), assess whether to retry, skip, or abort — then call task_done.',
   '5) When all steps are complete, call task_done.',
-  'If uploaded docs contain installation steps, read them with docs_ask or docs_search and follow those steps.',
+  'If the user says "install X on this VM" and you are mid-SSH session, the install steps may be in an uploaded document that is already visible earlier in this conversation — read it from context and proceed with ssh_runCommand calls.',
+  'EXCEPTION: If the user is asking for a DEPLOYMENT PLAN or DESIGN (not a running install), go to DEPLOYMENT INTELLIGENCE RULE A and call deployment:analyzeAndDesign.',
   'Long command output is automatically truncated. If you need to read the full output, use task_get_log with the logId shown in the truncated output.',
   '',
   '── BACKGROUND VM MONITORING ──',
@@ -93,8 +120,114 @@ const TOOL_SYSTEM_PROMPT = [
   'Default commands if the user only wants OS version: ["cat /etc/os-release"]',
   '',
   '── DOCUMENT Q&A ──',
-  'When the user asks about uploaded documents: use docs_list, docs_search, docs_ask, docs_getContent.',
-  'To upload a document: call docs_upload with the file path.',
+  'When the user asks about uploaded documents or asks factual questions about doc content:',
+  '  - The document content is ALREADY in this conversation as a [Document: "..."] block — read it from context and answer directly. No tool call is needed or available for reading docs.',
+  'EXCEPTION: If the question is about deployment planning, deployment design, IP requirements, or installation architecture → go to DEPLOYMENT INTELLIGENCE rules instead.',
+  '',
+  '── DEPLOYMENT INTELLIGENCE ──',
+  '⚠ THIS SECTION TAKES PRIORITY OVER DOCUMENT Q&A.',
+  'When user intent matches any RULE below, go directly to the tool — no document pre-reading needed.',
+  '',
+  '⛔ ABSOLUTE PROHIBITION: A docId (format: doc-XXXXXXXXXXXXXXX) is a LOCAL DOCUMENT IDENTIFIER.',
+  '   NEVER pass a docId as a vmName, vm_name, or any VCD parameter.',
+  '   NEVER call list_vms, revert_snapshot, create_snapshot, list_snapshots, resize_vm,',
+  '   check_vm_status, or ANY other VCD/VM tool with a docId or document filename.',
+  '   If you catch yourself about to do this — STOP and use deployment:analyzeAndDesign instead.',
+  '',
+  '## RULE A — Deployment plan / design / dry-run request',
+  'Triggers (match even with typos or partial phrasing):',
+  '  "deployment plan", "deployment design", "deployment architecture"',
+  '  "distributed setup/mode", "ha setup/mode", "single-node setup/mode"',
+  '  "dry run", "dryrun", "simulate deployment", "show me the plan", "what would be deployed"',
+  '  "plan for installing <product>", "requirements for each component"',
+  '  "come up with a design", "what VMs do I need?", "how to set up <product>"',
+  '',
+  '⛔ When RULE A triggers: call the deployment tool ONCE and respond. Do NOT loop.',
+  '   The rawContent parameter IS the document text already in the user message — no tool call needed.',
+  '   ONE tool call is enough. Do NOT call any tool again after the deployment tool returns.',
+  '',
+  'Decide which tool to call based on the user intent:',
+  '',
+  '  DRY RUN (user says "dry run", "simulate", "show me the plan", "what would be deployed"):',
+  '  → Call deployment:dryRun(docId, modeName, rawContent?)',
+  '    This returns: designId, mermaid diagram, per-VM resource table, IP assignments, install order.',
+  '    Render mermaid in ```mermaid block. Show resource table. Show IPs. Show install order.',
+  '',
+  '  FULL DESIGN (user says "generate design", "create deployment design", no dry-run keyword):',
+  '  → Call deployment:analyzeAndDesign(docId, modeName, rawContent?)',
+  '    Returns: { designId, mermaid, vms[], installOrder[], runbookSummary }',
+  '',
+  'For BOTH tools:',
+  '1) Find the docId AND rawContent FROM THE USER MESSAGE — no tool call needed:',
+  '   - Look in the message for a header like: [Document: "..." | docId: doc-XXXX]',
+  '   - Extract docId from the header. The text after the header IS the rawContent — pass it directly.',
+  '   - If no [Document] block is present, tell the user to attach a document first and stop.',
+  '   - Do NOT call any tool to look up or fetch document content.',
+  '2) Call the chosen tool ONCE with (docId, modeName, rawContent if available).',
+  '3) Render the mermaid field in a ```mermaid block — ALWAYS, immediately.',
+  '4) For dry run: show resource table | VM | Role | OS | vCPU | RAM (GB) | Disk (GB) | IP |',
+  '   For full design: show vms[] as table | VM | Role | OS | vCPU | RAM | Disk |',
+  '5) Show installOrder[] as a numbered list.',
+  'Do NOT dump raw JSON. Do NOT loop.',
+  '',
+  '## RULE A+B — User asks for BOTH design AND IPs in the same message',
+  'Triggers: user asks for design/plan AND IPs/addresses in the same request.',
+  '⛔ These are PLANNED VMs that do NOT exist in VCD yet. Do NOT call list_vms, list_vapps, or any VCD tool.',
+  '   The VMs will be created later. Right now you are only planning and allocating IPs from the pool.',
+  'Steps:',
+  '1) If a [Document: "..." | docId: doc-XXXX] block is in this conversation:',
+  '   → Call deployment:analyzeAndDesign(docId, "distributed", rawContent) ONCE.',
+  '   → Use the returned designId to call deployment:assignIps(designId) ONCE.',
+  '2) If NO document block is present but a designId was mentioned earlier in this conversation:',
+  '   → Call deployment:assignIps(designId) directly. Skip design generation.',
+  '3) If neither a document nor a prior designId exists:',
+  '   → Tell the user: "Please attach your installation document using the 📎 button, then ask again."',
+  '   → Do NOT call list_vms or any VCD tool.',
+  'Render: mermaid diagram + VM resource table + IP table in one combined response.',
+  'Do NOT loop. Maximum two tool calls (design + IPs), then respond.',,
+  '',
+  '## RULE B — IP requirements / IP assignment request',
+  'Triggers: "ip requirements", "show me the ips", "what ips", "assign ips", "assign real ips",',
+  '"what ip will", "ips for this deployment", "ips required", "network requirements", "real IPs".',
+  '',
+  '⛔ ABSOLUTE RULE: You MUST call a tool to get IPs. NEVER write an IP address yourself.',
+  '   Do NOT produce a table with example IPs like 10.0.x.x, 192.168.x.x, or any IP.',
+  '   Even if the deployment plan was just shown in this chat, do NOT invent IPs.',
+  '   The only valid IPs are those returned by deployment:previewIps or deployment:assignIps.',
+  '',
+  '⛔ CRITICAL: These are PLANNED VMs — they do NOT exist in VCD yet.',
+  '   Do NOT call list_vms, check_vm_status, or any VCD VM tool to look them up.',
+  '   IPs are allocated from a pool service (NOT from VCD). Calling VCD tools here is wrong.',
+  '',
+  'Which tool to use:',
+  '  a) If a designId was returned earlier in this conversation → call deployment:assignIps(designId).',
+  '     It allocates one real IP per VM from the pool service and saves them to the design.',
+  '  b) If NO designId exists (plan was discussed or just described):',
+  '     → Extract VM/service names from the current conversation (e.g. "idm-engine", "idm-apps"),',
+  '       then call deployment:previewIps(vmNames=[...]) with those names.',
+  '     Example: vmNames=["idm-engine","idm-apps","idm-db","idm-report","idm-sspr"]',
+  '     This returns real IPs from the IP pool service immediately.',
+  '',
+  'After the tool call, display the result as a markdown table:',
+  '   | VM | Assigned IP | Role | Notes |',
+  'Tell the user: "These IPs are real allocations from the VCD IP pool, not examples."',
+  'If no design exists yet and the user wants a full design too, run RULE A first then call deployment:assignIps.',
+  '',
+  '## RULE C — Full deployment / actual rollout',
+  'When the user explicitly says "deploy it", "start the deployment", "go ahead and install":',
+  '1) Ensure a designId and IP assignments are already done (RULE A + RULE B first if not).',
+  '2) Ask the user to confirm: org name, templateVmId, sshUsername, sshPassword/sshPrivateKey.',
+  '3) Call deployment:startDeployment (DANGEROUS — requires explicit user confirmation).',
+  '4) Return the runId. User can track progress with: deployment:getRunStatus.',
+  '5) After completion, display the summaryReport and final Mermaid state diagram.',
+  '',
+  '## RULE D — Existing designs',
+  'When the user refers to a previous design or asks "what designs do I have":',
+  '  call deployment:listDesigns and format results as a table.',
+  'When the user asks about a specific design: call deployment:getDesign with the designId.',
+  '',
+  'Never describe how to deploy manually when deployment tools can do it directly.',
+  'Never invent hostnames or IPs — always use what the tools return.',
   '',
   'IMPORTANT: For all tool results (especially list_vms, list_vapps, list_templates, list_tasks):',
   '- Do NOT show raw JSON responses.',
@@ -999,15 +1132,18 @@ export async function chatWithTools(
   try {
     console.log('[ChatAPI] chatWithTools starting - model:', modelId, 'messages:', messages.length);
     const token = await getValidToken();
-    const registryDocTools = buildRegistryTools('docs');
+    // Docs tools are intentionally NOT bound to LangChain — document content is already
+    // injected into the user message as a [Document: "..." | docId: ...] block, so the
+    // LLM reads it directly from context without any tool call.
+    const registryDeploymentTools = buildRegistryTools('deployment');
     const registrySshTools = buildRegistryTools('ssh');
-    let allTools = [...LC_TOOLS, ...TASK_TOOLS, ...registryDocTools, ...registrySshTools];
+    let allTools = [...LC_TOOLS, ...TASK_TOOLS, ...registryDeploymentTools, ...registrySshTools];
     if (disabledToolNames && disabledToolNames.length > 0) {
       const disabledSet = new Set(disabledToolNames);
       allTools = allTools.filter((t) => !disabledSet.has(t.name));
     }
     console.log('[ChatAPI] Token obtained, building LLM with', allTools.length, 'tools',
-      `(${LC_TOOLS.length} VCD + ${TASK_TOOLS.length} tasks + ${registryDocTools.length} docs + ${registrySshTools.length} ssh)`);
+      `(${LC_TOOLS.length} VCD + ${TASK_TOOLS.length} tasks + ${registryDeploymentTools.length} deployment + ${registrySshTools.length} ssh)`);
     const llm = buildCopilotLlm(token, modelId).bindTools(allTools);
 
     // Build dynamic addendum listing exactly what is/isn't available
@@ -1048,7 +1184,10 @@ export async function chatWithTools(
       ...toLcMessages(messages),
     ];
 
-    const maxIterations = 10;
+    const maxIterations = 6;
+    // Track how many times each tool has been called this session to detect loops.
+    const toolCallCounts: Record<string, number> = {};
+
     for (let i = 0; i < maxIterations; i++) {
       if (abortController.signal.aborted) break;
       // Stream the LLM response, accumulating content and tool calls
@@ -1105,7 +1244,21 @@ export async function chatWithTools(
         break;
       }
 
-      // Execute each tool and feed results back as ToolMessages
+      // ── Duplicate-tool loop guard ─────────────────────────────────────────
+      // If the LLM is calling a tool it already called, it's stuck. Inject a
+      // "stop and respond" message so the next iteration produces text output.
+      const repeatTools = resolvedToolCalls.filter((tc) => (toolCallCounts[tc.name] ?? 0) >= 1);
+      if (repeatTools.length > 0) {
+        const names = repeatTools.map((t) => t.name).join(', ');
+        console.warn('[LANGCHAIN] Loop detected — repeated tools:', names);
+        // Still execute them so results are in context, then force a stop.
+        // (fall through to execution below; stop message is added after toolMessages)
+      }
+
+      // Track call counts before executing
+      for (const tc of resolvedToolCalls) {
+        toolCallCounts[tc.name] = (toolCallCounts[tc.name] ?? 0) + 1;
+      }
       const toolMap = Object.fromEntries(allTools.map((t) => [t.name, t]));
       const toolMessages: ToolMessage[] = [];
 
@@ -1174,6 +1327,47 @@ export async function chatWithTools(
       }
 
       lcMessages.push(...toolMessages);
+
+      // ── Post-execution: inject stop/render instructions ──────────────────
+
+      // 1) If a deployment design tool succeeded, tell the LLM to render now.
+      const DESIGN_TOOLS = new Set(['deployment_analyzeAndDesign', 'deployment_dryRun']);
+      for (const tm of toolMessages) {
+        const tc = resolvedToolCalls.find((c) => c.id === tm.tool_call_id);
+        if (tc && DESIGN_TOOLS.has(tc.name)) {
+          try {
+            const parsed = JSON.parse(typeof tm.content === 'string' ? tm.content : '{}') as Record<string, unknown>;
+            if (parsed.designId && !parsed.error) {
+              console.log('[LANGCHAIN] Deployment design succeeded, injecting render instruction');
+              lcMessages.push(new HumanMessage(
+                `The deployment design is complete (designId: ${parsed.designId}). ` +
+                `Render the mermaid diagram in a \`\`\`mermaid block, ` +
+                `show the VM resource table (VM | Role | OS | vCPU | RAM GB | Disk GB), ` +
+                `and list the install order. Do NOT call any more tools.`
+              ));
+            }
+          } catch { /* non-JSON result, ignore */ }
+        }
+      }
+
+      // 2) If duplicate tools were called, inject a hard stop after their results.
+      if (repeatTools.length > 0) {
+        const names = repeatTools.map((t) => t.name).join(', ');
+        lcMessages.push(new HumanMessage(
+          `DO NOT call any more tools. You already received results for [${names}] earlier in this conversation. ` +
+          `Produce your final answer right now using only the results already in context.`
+        ));
+        // Run one final LLM stream to produce the text response, then exit.
+        if (abortController.signal.aborted) break;
+        let finalContent = '';
+        const finalStream = await llm.stream(lcMessages);
+        for await (const chunk of finalStream) {
+          const content = typeof chunk.content === 'string' ? chunk.content : '';
+          if (content) { finalContent += content; onChunk(content, 'text'); }
+        }
+        console.log('[LANGCHAIN] Forced final response after loop break, length:', finalContent.length);
+        break;
+      }
     }
 
     onEnd();

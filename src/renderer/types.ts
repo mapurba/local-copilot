@@ -68,7 +68,7 @@ export interface CopilotAPI {
     error?: string;
   }>;
   docsGet: (docId: string) => Promise<{ success: boolean; document?: { id: string; filename: string; title?: string; status: string; summary?: string; tags: string[]; error?: string } }>;
-  docsGetContent: (docId: string) => Promise<{ success: boolean; title?: string; content?: string; error?: string }>;
+  docsGetContent: (docId: string) => Promise<{ success: boolean; docId?: string; title?: string; summary?: string; content?: string; error?: string }>;
   docsDelete: (docId: string) => Promise<{ success: boolean; error?: string }>;
 
   // Task Tracker

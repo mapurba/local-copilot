@@ -26,7 +26,7 @@ const CHAT_API_HOST = 'api.githubcopilot.com';
 /**
  * Make a direct HTTPS chat completion request to GitHub Copilot
  */
-async function callLlm(systemPrompt: string, userContent: string, maxTokens = 4096): Promise<string> {
+export async function callLlm(systemPrompt: string, userContent: string, maxTokens = 4096): Promise<string> {
   const token = await tokenManager.getToken();
 
   const body = JSON.stringify({
