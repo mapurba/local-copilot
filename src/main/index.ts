@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import { checkForUpdates } from './autoUpdater';
 import path from 'path';
 import { registerIpcHandlers } from './ipcHandlers';
+import { registerDeploymentIpcHandlers } from './deploymentIpcHandlers';
 import { lspClient } from './lspClient';
 // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
 // import { registerTerminalHandlers } from './terminalManager';
@@ -38,6 +39,7 @@ function createWindow() {
 app.whenReady().then(async () => {
   createWindow();
   registerIpcHandlers(mainWindow!);
+  registerDeploymentIpcHandlers(mainWindow!);
   // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
   // registerTerminalHandlers(mainWindow!);
 

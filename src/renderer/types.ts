@@ -26,6 +26,16 @@ export interface CopilotAPI {
   vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdStatus: () => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdSignOut: () => Promise<{ connected: boolean }>;
+  // Deployment plan methods
+  saveDeploymentPlan: (plan: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+  loadDeploymentPlan: (planId: string) => Promise<{ success: boolean; plan?: Record<string, unknown>; error?: string }>;
+  listDeploymentPlans: () => Promise<{ success: boolean; plans: Array<{ id: string; name: string; createdAt: string; status: string }>; error?: string }>;
+  deleteDeploymentPlan: (planId: string) => Promise<{ success: boolean; error?: string }>;
+  updateDeploymentServiceStatus: (input: { planId: string; serviceId: string; status: string; statusMessage?: string; deploymentLog?: string }) => Promise<{ success: boolean; plan?: Record<string, unknown>; error?: string }>;
+  fetchFreeIps: (count?: number) => Promise<{ success: boolean; count?: number; ips?: Array<{ ip: string; hostname: string; available_since: string }>; error?: string }>;
+  emitDeploymentPlan: (plan: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+  onDeploymentPlanReady: (callback: (event: unknown, plan: Record<string, unknown>) => void) => () => void;
+  onDeploymentPlanUpdated: (callback: (event: unknown, plan: Record<string, unknown>) => void) => () => void;
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) => Promise<{ success: boolean; terminalId?: string; error?: string }>;
   // terminalInput: (options: { terminalId: string; data: string }) => Promise<{ success: boolean; error?: string }>;

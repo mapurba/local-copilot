@@ -143,4 +143,20 @@ contextBridge.exposeInMainWorld('copilot', {
   // fileMkdir: (options: { terminalId: string; path: string }) =>
   //   ipcRenderer.invoke('file:mkdir', options),
   checkForUpdate: () => ipcRenderer.send('check-for-update'),
+  // Deployment plan methods
+  saveDeploymentPlan: (plan: Record<string, unknown>) => ipcRenderer.invoke('deployment:savePlan', plan),
+  loadDeploymentPlan: (planId: string) => ipcRenderer.invoke('deployment:loadPlan', planId),
+  listDeploymentPlans: () => ipcRenderer.invoke('deployment:listPlans'),
+  deleteDeploymentPlan: (planId: string) => ipcRenderer.invoke('deployment:deletePlan', planId),
+  updateDeploymentServiceStatus: (input: Record<string, unknown>) => ipcRenderer.invoke('deployment:updateServiceStatus', input),
+  fetchFreeIps: (count?: number) => ipcRenderer.invoke('deployment:fetchFreeIps', count),
+  emitDeploymentPlan: (plan: Record<string, unknown>) => ipcRenderer.invoke('deployment:emitPlan', plan),
+  onDeploymentPlanReady: (callback: (event: Electron.IpcRendererEvent, plan: Record<string, unknown>) => void) => {
+    ipcRenderer.on('deployment:planReady', callback);
+    return () => ipcRenderer.removeListener('deployment:planReady', callback);
+  },
+  onDeploymentPlanUpdated: (callback: (event: Electron.IpcRendererEvent, plan: Record<string, unknown>) => void) => {
+    ipcRenderer.on('deployment:planUpdated', callback);
+    return () => ipcRenderer.removeListener('deployment:planUpdated', callback);
+  },
 } as unknown as CopilotAPI);

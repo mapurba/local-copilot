@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import UpdateToast from './components/UpdateToast';
 import { checkForAppUpdate } from './autoUpdate';
 import Sidebar from './components/Sidebar';
 import ChatPane from './components/ChatPane';
+import DeploymentPlanPane from './components/DeploymentPlanPane';
 import AuthModal from './components/AuthModal';
 import VcdAuthModal from './components/VcdAuthModal';
 import ResizablePanels from './components/ResizablePanels';
+import type { DeploymentPlan } from './deploymentTypes';
 
 declare global {
   interface Window {
@@ -26,6 +28,10 @@ const App: React.FC = () => {
   const [authStatusChanged, setAuthStatusChanged] = useState(0);
   const [vcdStatus, setVcdStatus] = useState<{ connected: boolean; user?: string; org?: string; host?: string }>({ connected: false });
   const [showVcdModal, setShowVcdModal] = useState(false);
+
+  // Tab and deployment state
+  const [activeTab, setActiveTab] = useState<'chat' | 'deploy'>('chat');
+  const [deploymentPlan, setDeploymentPlan] = useState<DeploymentPlan | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     return saved === 'dark' ? 'dark' : 'light';
@@ -54,6 +60,75 @@ const App: React.FC = () => {
       setVcdStatus({ connected: false });
     }
   };
+
+  // Listen for deployment plan ready events from backend
+  useEffect(() => {
+    const handlePlanReady = (_event: unknown, plan: Record<string, unknown>) => {
+      setDeploymentPlan(plan as unknown as DeploymentPlan);
+      setActiveTab('deploy');
+    };
+    if (window.copilot.onDeploymentPlanReady) {
+      const cleanup = window.copilot.onDeploymentPlanReady(handlePlanReady);
+      return cleanup;
+    }
+  }, []);
+
+  // Listen for deployment plan updates
+  useEffect(() => {
+    const handlePlanUpdate = (_event: unknown, plan: Record<string, unknown>) => {
+      setDeploymentPlan(plan as unknown as DeploymentPlan);
+    };
+    if (window.copilot.onDeploymentPlanUpdated) {
+      const cleanup = window.copilot.onDeploymentPlanUpdated(handlePlanUpdate);
+      return cleanup;
+    }
+  }, []);
+
+  // Listen for custom event from ChatPane to open deployment plan
+  useEffect(() => {
+    const handler = (e: CustomEvent<DeploymentPlan>) => {
+      setDeploymentPlan(e.detail);
+      setActiveTab('deploy');
+    };
+    window.addEventListener('open-deployment-plan', handler as EventListener);
+    return () => window.removeEventListener('open-deployment-plan', handler as EventListener);
+  }, []);
+
+  // Deployment plan handlers
+  const handlePlanUpdate = useCallback(async (plan: DeploymentPlan) => {
+    setDeploymentPlan(plan);
+    await window.copilot.saveDeploymentPlan(plan as unknown as Record<string, unknown>);
+  }, []);
+
+  const handleDeployAll = useCallback(async () => {
+    if (!deploymentPlan) return;
+    // Deploy services in dependency order (leaf nodes first)
+    const services = deploymentPlan.services;
+    const deployed = new Set<string>();
+    const queue = [...services].sort((a, b) => a.dependsOn.length - b.dependsOn.length);
+    for (const service of queue) {
+      if (service.status === 'complete') {
+        deployed.add(service.id);
+        continue;
+      }
+      await window.copilot.updateDeploymentServiceStatus({
+        planId: deploymentPlan.id,
+        serviceId: service.id,
+        status: 'provisioning',
+        statusMessage: 'Starting deployment...',
+      });
+    }
+  }, [deploymentPlan]);
+
+  const handleDeployService = useCallback(async (serviceId: string) => {
+    if (!deploymentPlan) return;
+    await window.copilot.updateDeploymentServiceStatus({
+      planId: deploymentPlan.id,
+      serviceId,
+      status: 'provisioning',
+      statusMessage: 'Starting individual service deployment...',
+    });
+  }, [deploymentPlan]);
 
   // Update progress listener effect
   useEffect(() => {
@@ -160,13 +235,28 @@ const App: React.FC = () => {
                 <div className="flex items-center flex-1">
                   {/* Chat Tab */}
                   <button
-                    className="flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 border-blue-500 text-blue-400 transition-colors"
+                    onClick={() => setActiveTab('chat')}
+                    className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-colors ${activeTab === 'chat' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-300'}`}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                     </svg>
                     Chat
                   </button>
+                  {/* Design/Deploy Tab */}
+                  {deploymentPlan && (
+                    <button
+                      onClick={() => setActiveTab('deploy')}
+                      className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-colors ${activeTab === 'deploy' ? 'border-green-500 text-green-400' : 'border-transparent text-gray-400 hover:text-gray-300'}`}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                        <line x1="8" y1="21" x2="16" y2="21" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                      </svg>
+                      Design / Deploy
+                    </button>
+                  )}
                 </div>
 
                 {/* Action Buttons - Right side */}
@@ -222,9 +312,17 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Chat Pane */}
+              {/* Content Area */}
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                <ChatPane key={authStatusChanged} />
+                {activeTab === 'chat' && <ChatPane key={authStatusChanged} />}
+                {activeTab === 'deploy' && deploymentPlan && (
+                  <DeploymentPlanPane
+                    plan={deploymentPlan}
+                    onPlanUpdate={handlePlanUpdate}
+                    onDeployAll={handleDeployAll}
+                    onDeployService={handleDeployService}
+                  />
+                )}
               </div>
             </div>
           }

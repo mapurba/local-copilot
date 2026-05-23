@@ -65,6 +65,13 @@ const TOOL_SYSTEM_PROMPT = [
   'For VM copy/clone requests in chat, call list_vapps, select a target vApp, then call create_vm_copy_draft with target_vapp_href so the UI can show an editable review form.',
   'Do not call create_vm_copy directly in chat unless the user explicitly asks to skip review.',
   '',
+  'DEPLOYMENT PLAN ANALYSIS:',
+  'When the user provides product documentation or asks to analyze deployment requirements:',
+  '1) Call analyze_deployment_docs with the documentation content.',
+  '2) The tool will return a deployment plan with services, dependencies, and a Mermaid diagram.',
+  '3) Present the deployment plan summary to the user.',
+  '4) The deployment plan UI will open automatically in the Design/Deploy tab.',
+  '',
   'IMPORTANT: For all tool results (especially list_vms, list_vapps, list_templates, list_tasks):',
   '- Do NOT show raw JSON responses.',
   '- Format list results as markdown tables with columns for key properties.',
@@ -446,6 +453,136 @@ const listRecentTasksTool = lcTool(
   }
 );
 
+// ── Deployment Analysis Tool ──────────────────────────────────────────────────
+
+import http from 'http';
+import { saveDeploymentPlan } from './deploymentStore';
+import { BrowserWindow as BW } from 'electron';
+
+const IP_POOL_API = 'http://164.99.91.31:5100/api/res-ip/free';
+
+async function fetchFreeIps(count: number): Promise<string[]> {
+  return new Promise((resolve) => {
+    http.get(IP_POOL_API, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data) as { free_ips?: Array<{ ip: string }> };
+          const ips = (parsed.free_ips || []).slice(0, count).map(entry => entry.ip);
+          resolve(ips);
+        } catch {
+          resolve([]);
+        }
+      });
+    }).on('error', () => {
+      resolve([]);
+    });
+  });
+}
+
+const analyzeDeploymentDocsTool = lcTool(
+  async (args) => {
+    const { documentation, product_name, deployment_mode } = args;
+
+    // Fetch IPs from pool for the services
+    const serviceCount = Math.max(3, Math.min(10, Math.ceil(documentation.length / 500)));
+    const freeIps = await fetchFreeIps(serviceCount);
+
+    // Generate a unique plan ID
+    const planId = `plan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const now = new Date().toISOString();
+
+    // Build deployment plan structure (the LLM will have already analyzed the content)
+    const plan = {
+      id: planId,
+      name: product_name || 'Deployment Plan',
+      description: `Deployment plan generated from product documentation analysis`,
+      createdAt: now,
+      updatedAt: now,
+      mermaidDiagram: args.mermaid_diagram || generateDefaultMermaid(product_name || 'Product'),
+      services: (args.services || []).map((svc: Record<string, unknown>, idx: number) => ({
+        id: svc.id || `svc-${idx + 1}`,
+        name: svc.name || `Service ${idx + 1}`,
+        description: svc.description || '',
+        vmName: svc.vm_name || `vm-${product_name?.toLowerCase().replace(/\s+/g, '-') || 'svc'}-${idx + 1}`,
+        ip: freeIps[idx] || undefined,
+        port: svc.port || undefined,
+        os: svc.os || 'SLES 15 SP6',
+        prerequisites: Array.isArray(svc.prerequisites) ? svc.prerequisites : [],
+        runbook: svc.runbook || '#!/bin/bash\n# No runbook defined yet',
+        healthCheckCommand: svc.health_check_command || undefined,
+        healthCheckUrl: svc.health_check_url || undefined,
+        dependsOn: Array.isArray(svc.depends_on) ? svc.depends_on : [],
+        status: 'pending',
+      })),
+      deploymentMode: deployment_mode || 'distributed',
+      sourceDocumentation: documentation.substring(0, 5000),
+      markdownSummary: args.markdown_summary || `# ${product_name || 'Product'} Deployment Plan\n\nGenerated from documentation analysis.`,
+      status: 'draft',
+      ipPoolSource: IP_POOL_API,
+    };
+
+    // Save the plan
+    try {
+      saveDeploymentPlan(plan as any);
+    } catch (e) {
+      console.error('[DeploymentTool] Failed to save plan:', e);
+    }
+
+    // Emit to renderer to open Design/Deploy tab
+    const windows = BW.getAllWindows();
+    if (windows.length > 0) {
+      windows[0].webContents.send('deployment:planReady', plan);
+    }
+
+    return JSON.stringify({
+      type: 'deployment_plan',
+      plan_id: plan.id,
+      name: plan.name,
+      services_count: plan.services.length,
+      assigned_ips: plan.services.map((s: { name: string; ip?: string }) => ({ service: s.name, ip: s.ip })),
+      message: `Deployment plan "${plan.name}" created with ${plan.services.length} services. The Design/Deploy tab is now open for review.`,
+    });
+  },
+  {
+    name: 'analyze_deployment_docs',
+    description: 'Analyze product documentation to create a deployment plan with service topology, IP allocation, dependency tree, and Mermaid diagram. Use when user provides product documentation or asks to plan a deployment.',
+    schema: z.object({
+      documentation: z.string().describe('The full product documentation text to analyze'),
+      product_name: z.string().optional().describe('Name of the product being deployed'),
+      deployment_mode: z.enum(['single-vm', 'distributed', 'custom']).optional().describe('Deployment mode (single-vm, distributed, or custom)'),
+      mermaid_diagram: z.string().optional().describe('Generated Mermaid flowchart diagram showing service topology'),
+      markdown_summary: z.string().optional().describe('Generated markdown document summarizing the deployment plan with steps'),
+      services: z.array(z.object({
+        id: z.string().optional().describe('Unique service identifier'),
+        name: z.string().describe('Service name'),
+        description: z.string().optional().describe('Service description'),
+        vm_name: z.string().optional().describe('VM name for this service'),
+        port: z.number().optional().describe('Primary port for the service'),
+        os: z.string().optional().describe('Required OS type and version'),
+        prerequisites: z.array(z.string()).optional().describe('Required libraries and packages'),
+        runbook: z.string().optional().describe('Shell script to install and configure the service'),
+        health_check_command: z.string().optional().describe('Command to verify service health'),
+        health_check_url: z.string().optional().describe('URL endpoint to check service health'),
+        depends_on: z.array(z.string()).optional().describe('IDs of services this depends on'),
+      })).optional().describe('List of services to deploy'),
+    }),
+  }
+);
+
+function generateDefaultMermaid(productName: string): string {
+  return `graph TD
+    A[${productName} - Load Balancer] --> B[${productName} - App Server 1]
+    A --> C[${productName} - App Server 2]
+    B --> D[${productName} - Database]
+    C --> D
+    style A fill:#1e40af,stroke:#3b82f6,color:#e5e7eb
+    style B fill:#374151,stroke:#6b7280,color:#e5e7eb
+    style C fill:#374151,stroke:#6b7280,color:#e5e7eb
+    style D fill:#7c2d12,stroke:#f97316,color:#e5e7eb`;
+}
+
 // Ordered list of all LangChain tools
 const LC_TOOLS = [
   setVcdContextTool,
@@ -467,6 +604,7 @@ const LC_TOOLS = [
   // createVmConfirmedTool,
   listTasksTool,
   listRecentTasksTool,
+  analyzeDeploymentDocsTool,
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────
