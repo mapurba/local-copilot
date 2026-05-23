@@ -4,6 +4,8 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
+import MermaidRenderer from './mermaid-editor/MermaidRenderer';
+import { useMermaidEditor } from './mermaid-editor/MermaidEditorContext';
 
 // ─── JSON summary + accordion ───────────────────────────────────────────────
 type SummaryStatus = 'success' | 'error' | 'denied' | 'info' | 'warning';
@@ -123,6 +125,7 @@ interface ResponseRendererProps {
 }
 
 const ResponseRenderer: React.FC<ResponseRendererProps> = ({ content }) => {
+  const mermaidEditor = useMermaidEditor();
   // Try to parse as JSON
   const parseAnswer = (): unknown => {
     try {
@@ -152,6 +155,36 @@ const ResponseRenderer: React.FC<ResponseRendererProps> = ({ content }) => {
               // never accidentally rendered as inline code snippets.
               if (language === 'json') {
                 return <JsonAccordion raw={raw} />;
+              }
+
+              // Mermaid blocks — render as interactive SVG diagram
+              if (language === 'mermaid') {
+                return (
+                  <div className="my-3 rounded-lg border border-gray-700 overflow-hidden">
+                    <MermaidRenderer source={raw} className="p-4 bg-gray-800" />
+                    <div className="flex items-center gap-1 px-3 py-1.5 border-t border-gray-700 bg-gray-800/50">
+                      <button
+                        onClick={() => mermaidEditor.openInEditor(raw)}
+                        className="inline-flex items-center gap-1.5 px-2 py-1 text-[11px] rounded hover:bg-gray-700 text-blue-400 transition-colors bg-transparent border-none cursor-pointer"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                          <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                        Edit Diagram
+                      </button>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(raw)}
+                        className="inline-flex items-center gap-1.5 px-2 py-1 text-[11px] rounded hover:bg-gray-700 text-gray-400 transition-colors bg-transparent border-none cursor-pointer"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                        </svg>
+                        Copy Mermaid
+                      </button>
+                    </div>
+                  </div>
+                );
               }
 
               // Inline code (no language class detected)
