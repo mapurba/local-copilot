@@ -50,6 +50,50 @@ function buildDependencyInjectionBlock(
   return lines.length > 0 ? codeBlock('bash', lines.join('\n')) : null;
 }
 
+function buildNodePropertiesBlock(vm: VmPlan, design: DeploymentDesign): string {
+  const entries = new Map<string, string>();
+
+  // Basic VM metadata
+  entries.set('VM_ID', vm.id);
+  entries.set('VM_ROLE', vm.role || '');
+  entries.set('VM_NAME', vm.vmName ?? vm.id);
+  entries.set('SERVICES', vm.services.map((s) => s.name || s.id).join(','));
+  entries.set('VM_IP', vm.ip ?? '');
+  if (vm.templateId) entries.set('TEMPLATE_ID', vm.templateId);
+  const product = design.intelligence?.products?.[0];
+  if (product?.name) entries.set('PRODUCT_NAME', product.name);
+  if (design.id) entries.set('DESIGN_ID', design.id);
+
+  // Inject dependency-derived values (IP addresses and public ports)
+  for (const svc of vm.services) {
+    for (const depId of svc.requiresConfigFrom) {
+      const depVm = design.vms.find((v) => v.services.some((s) => s.id === depId));
+      const depIp = depVm?.ip ?? design.ipAssignments?.[depId] ?? '(unknown)';
+      const depService = depVm?.services.find((s) => s.id === depId);
+      if (depService) {
+        for (const ck of depService.configKeys) {
+          entries.set(ck.key, depIp);
+        }
+        for (const port of depService.ports.filter((p) => p.isPublic)) {
+          const key = `${depId.toUpperCase().replace(/-/g, '_')}_PORT`;
+          entries.set(key, String(port.port));
+        }
+      }
+    }
+  }
+
+  // Ensure service-local configKeys exist (default to VM IP if unset)
+  for (const svc of vm.services) {
+    for (const ck of svc.configKeys) {
+      if (!entries.has(ck.key)) entries.set(ck.key, vm.ip ?? '');
+    }
+  }
+
+  const lines: string[] = [];
+  for (const [k, v] of entries) lines.push(`${k}=${v}`);
+  return lines.join('\n');
+}
+
 function buildHealthCheckProcedure(service: ServiceSpec, ip: string): string {
   const hc = service.healthCheck;
   switch (hc.type) {
@@ -159,6 +203,17 @@ export function generateFullRunbook(design: DeploymentDesign): string {
     lines.push(`**OS:** ${vm.osRequirement.type} ${vm.osRequirement.minVersion ?? ''}`);
     lines.push('');
 
+    // Node-specific properties file (written on the VM before installs)
+    try {
+      const nodeProps = buildNodePropertiesBlock(vm, design);
+      lines.push('#### Node-specific properties');
+      lines.push('Writes a node-specific properties file consumed by installers:');
+      lines.push(codeBlock('bash', `cat > /tmp/node_specific_silent.properties <<'EOF_NODE_PROPS'\n${nodeProps}\nEOF_NODE_PROPS\nchmod 600 /tmp/node_specific_silent.properties`));
+      lines.push('');
+    } catch (err) {
+      // Non-fatal: if properties generation fails, continue without block
+    }
+
     for (const svc of vm.services) {
       lines.push(serviceSection(svc, vm, design));
     }
@@ -184,8 +239,20 @@ export function generateServiceRunbook(serviceId: string, design: DeploymentDesi
     `**IP:** ${vm.ip ?? '(to be assigned)'}  `,
     `**Role:** ${svc.role}`,
     '',
-    serviceSection(svc, vm, design),
   ];
+
+  // Prepend node-specific properties (so extracted shell script contains file-write)
+  try {
+    const nodeProps = buildNodePropertiesBlock(vm, design);
+    lines.push('#### Node-specific properties');
+    lines.push('Writes a node-specific properties file consumed by installers:');
+    lines.push(codeBlock('bash', `cat > /tmp/node_specific_silent.properties <<'EOF_NODE_PROPS'\n${nodeProps}\nEOF_NODE_PROPS\nchmod 600 /tmp/node_specific_silent.properties`));
+    lines.push('');
+  } catch (err) {
+    // ignore
+  }
+
+  lines.push(serviceSection(svc, vm, design));
   return lines.join('\n');
 }
 

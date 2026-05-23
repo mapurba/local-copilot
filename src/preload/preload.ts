@@ -27,6 +27,10 @@ export interface CopilotAPI {
   revertSnapshot: (input: { vmNameOrHref: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   createVmCopy: (input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   listSnapshots: () => Promise<{ success: boolean; count?: number; snapshots?: Array<Record<string, unknown>>; error?: string }>;
+  listTemplates: (nameFilter?: string) => Promise<{ success: boolean; count?: number; total?: number; templates?: Array<Record<string, unknown>>; error?: string }>;
+  getTemplate: (templateId: string) => Promise<{ success: boolean; xml?: string; error?: string }>;
+  updateTemplate: (input: { templateId: string; xml: string }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+  getVcdContext: () => Promise<{ success: boolean; context?: Record<string, unknown>; error?: string }>;
   proxyRequest: (options: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; headers: Record<string, unknown>; body: string }>;
   vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
   vcdStatus: () => Promise<{ connected: boolean; user?: string; org?: string; host?: string }>;
@@ -52,6 +56,11 @@ export interface CopilotAPI {
   fileRename: (options: { terminalId: string; oldPath: string; newPath: string }) => Promise<{ success: boolean; oldPath?: string; newPath?: string; error?: string }>;
   fileMkdir: (options: { terminalId: string; path: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
   checkForUpdate: () => void;
+  onDeploymentPlanReady: (callback: (event: Electron.IpcRendererEvent, plan: Record<string, unknown>) => void) => () => void;
+  saveDeploymentDraft: (plan: Record<string, unknown>) => Promise<{ success: boolean; id?: string; savedAt?: string; error?: string }>;
+  loadDeploymentDraft: (id: string) => Promise<{ success: boolean; plan?: Record<string, unknown>; error?: string }>;
+  listDeploymentDrafts: () => Promise<{ success: boolean; drafts: Array<{ id: string; name: string; status: string; createdAt: string; updatedAt: string }>; error?: string }>;
+  deleteDeploymentDraft: (id: string) => Promise<{ success: boolean; error?: string }>;
   openExternal: (url: string) => Promise<void>;
 }
 
@@ -104,6 +113,10 @@ contextBridge.exposeInMainWorld('copilot', {
   revertSnapshot: (input: { vmNameOrHref: string }) => ipcRenderer.invoke('vcd:revertSnapshot', input),
   createVmCopy: (input: { vmNameOrHref: string; newVmName: string; targetVappHref: string; powerOn?: boolean; description?: string }) => ipcRenderer.invoke('vcd:createVmCopy', input),
   listSnapshots: () => ipcRenderer.invoke('vcd:listSnapshots'),
+  listTemplates: (nameFilter?: string) => ipcRenderer.invoke('vcd:listTemplates', nameFilter),
+  getTemplate: (templateId: string) => ipcRenderer.invoke('vcd:getTemplate', templateId),
+  updateTemplate: (input: { templateId: string; xml: string }) => ipcRenderer.invoke('vcd:updateTemplate', input),
+  getVcdContext: () => ipcRenderer.invoke('vcd:getContext'),
   vcdSignIn: (input: { host?: string; org: string; username: string; password: string; apiVersion?: string; vdcId?: string; orgUuid?: string; networkName?: string; gateway?: string; dnsServers?: string; storageProfileId?: string; computePolicyId?: string; rejectUnauthorized?: boolean }) =>
     ipcRenderer.invoke('vcd:signIn', input),
   vcdStatus: () => ipcRenderer.invoke('vcd:status'),
@@ -145,6 +158,14 @@ contextBridge.exposeInMainWorld('copilot', {
   docsGetContent: (docId: string) => ipcRenderer.invoke('docs:getContent', docId),
   docsDelete: (docId: string) => ipcRenderer.invoke('docs:delete', docId),
 
+  // Chat history (conversations)
+  chatHistoryNew: (name?: string) => ipcRenderer.invoke('chat:createConversation', name),
+  chatHistoryList: () => ipcRenderer.invoke('chat:listConversations'),
+  chatHistoryGet: (id: string) => ipcRenderer.invoke('chat:getConversation', id),
+  chatHistoryAppend: (id: string, message: { role: string; content: string; ts: string; type?: string }) => ipcRenderer.invoke('chat:appendMessage', id, message),
+  chatHistoryClear: (id: string) => ipcRenderer.invoke('chat:clearConversation', id),
+  chatHistoryDelete: (id: string) => ipcRenderer.invoke('chat:deleteConversation', id),
+
   // ── Task Tracker ──────────────────────────────────────────────────────────
   taskList: () => ipcRenderer.invoke('task:list'),
   taskGet: (taskId: string) => ipcRenderer.invoke('task:get', taskId),
@@ -154,6 +175,16 @@ contextBridge.exposeInMainWorld('copilot', {
     ipcRenderer.on('task:updated', handler);
     return () => ipcRenderer.removeListener('task:updated', handler);
   },
+
+  onDeploymentPlanReady: (callback: (event: Electron.IpcRendererEvent, plan: Record<string, unknown>) => void) => {
+    ipcRenderer.on('deployment:planReady', callback);
+    return () => ipcRenderer.removeListener('deployment:planReady', callback);
+  },
+
+  saveDeploymentDraft: (plan: Record<string, unknown>) => ipcRenderer.invoke('deploymentDraft:save', plan),
+  loadDeploymentDraft: (id: string) => ipcRenderer.invoke('deploymentDraft:load', id),
+  listDeploymentDrafts: () => ipcRenderer.invoke('deploymentDraft:list'),
+  deleteDeploymentDraft: (id: string) => ipcRenderer.invoke('deploymentDraft:delete', id),
 
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) =>

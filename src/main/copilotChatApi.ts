@@ -27,6 +27,8 @@ import { formatToolResult } from './toolResultFormatter';
 import { toolRegistry, approvalSystem } from './tools';
 import { taskTracker } from './taskTracker';
 import { vmWatcher } from './vmWatcher';
+import { getDesign } from './deployment/deploymentStore';
+import { generateServiceRunbook } from './deployment/runbookGenerator';
 
 // Dynamic requires — avoids TypeScript resolving @langchain/* type declarations at build time
 const { ChatOpenAI } = require('@langchain/openai');
@@ -1025,6 +1027,78 @@ function toLcMessages(messages: ChatMessage[]): BaseMessage[] {
   });
 }
 
+function extractShellScriptFromRunbook(markdown: string): string {
+  if (!markdown) return '';
+  const blocks: string[] = [];
+  const regex = /```bash\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(markdown)) !== null) {
+    const block = (match[1] || '').trim();
+    if (block) blocks.push(block);
+  }
+  return blocks.join('\n\n').trim();
+}
+
+function buildDeploymentPlanPayload(designId: string, modeName?: string): Record<string, unknown> {
+  const design = getDesign(designId);
+  const createdAt = new Date(design.createdAt || Date.now()).toISOString();
+  const updatedAt = new Date(design.updatedAt || Date.now()).toISOString();
+
+  const services = design.vms.flatMap((vm) => {
+    const osLabel = [vm.osRequirement?.type, vm.osRequirement?.minVersion].filter(Boolean).join(' ');
+    return vm.services.map((svc) => {
+      const runbookMarkdown = generateServiceRunbook(svc.id, design);
+      const extractedScript = extractShellScriptFromRunbook(runbookMarkdown);
+      const fallbackScript = svc.installSteps
+        .map((step) => step.command)
+        .filter((cmd): cmd is string => Boolean(cmd))
+        .join('\n');
+      const healthCheckCommand = svc.healthCheck?.type === 'http'
+        ? `curl -f ${svc.healthCheck.target}`
+        : svc.healthCheck?.type === 'port'
+          ? `nc -z -w${svc.healthCheck.timeoutSeconds} ${vm.ip || design.ipAssignments?.[svc.id] || '127.0.0.1'} ${svc.healthCheck.target}`
+          : svc.healthCheck?.type === 'systemctl'
+            ? `systemctl is-active ${svc.healthCheck.target}`
+            : svc.healthCheck?.type === 'process'
+              ? `pgrep -x ${svc.healthCheck.target}`
+              : undefined;
+
+      return {
+        id: svc.id,
+        name: svc.name,
+        description: `${svc.role} service deployed on ${vm.role}`,
+        vmName: vm.vmName || vm.id,
+        ip: vm.ip || design.ipAssignments?.[svc.id],
+        port: svc.ports?.[0]?.port,
+        vm_template_id: vm.templateId || '',
+        os: osLabel || undefined,
+        prerequisites: svc.installSteps
+          .filter((step) => step.isPrerequisite)
+          .map((step) => step.description),
+        runbook: extractedScript || fallbackScript || '#!/bin/bash\n# No runbook defined yet',
+        healthCheckCommand,
+        dependsOn: svc.requiresConfigFrom || [],
+        status: 'pending',
+      };
+    });
+  });
+
+  return {
+    id: `plan-${design.id}`,
+    designId: design.id,
+    name: `${design.intelligence.products?.[0]?.name || 'Deployment'} Plan`,
+    description: 'Deployment plan generated from uploaded documentation.',
+    createdAt,
+    updatedAt,
+    mermaidDiagram: design.mermaid || 'graph TD\n  A[No diagram available]',
+    services,
+    deploymentMode: modeName || design.intelligence.deploymentModes?.[0]?.name || 'distributed',
+    sourceDocumentation: design.documentId,
+    markdownSummary: design.runbook || '# Deployment Runbook\n\nNo runbook available.',
+    status: 'draft',
+  };
+}
+
 // Build a ChatOpenAI instance pointed at the Copilot API
 function buildCopilotLlm(token: string, modelId: string): ChatOpenAI {
   console.log('[ChatAPI] Building LLM with model:', modelId);
@@ -1117,6 +1191,7 @@ export async function chatWithTools(
   onError: (err: Error) => void,
   onVmDraft?: (form: Record<string, unknown>) => void,
   onVmCopyDraft?: (form: Record<string, unknown>) => void,
+  onDeploymentPlanReady?: (plan: Record<string, unknown>) => void,
   disabledToolNames?: string[]
 ): Promise<void> {
   // Set up cancellation for this request
@@ -1322,6 +1397,18 @@ export async function chatWithTools(
             }
           } catch (err) {
             console.error('[VM COPY DRAFT] Parse error:', err);
+          }
+        }
+
+        if ((tc.name === 'deployment_analyzeAndDesign' || tc.name === 'deployment_dryRun') && onDeploymentPlanReady) {
+          try {
+            const parsed = JSON.parse(result) as { designId?: string; mode?: string; modeName?: string; error?: string };
+            if (parsed.designId && !parsed.error) {
+              const payload = buildDeploymentPlanPayload(parsed.designId, parsed.mode || parsed.modeName);
+              onDeploymentPlanReady(payload);
+            }
+          } catch (err) {
+            console.warn('[DeploymentPlan] Failed to parse deployment tool result for UI payload:', err);
           }
         }
       }

@@ -295,7 +295,7 @@ export function registerDeploymentTools(): void {
     async (args: {
       designId: string;
       org: string;
-      templateVmId: string;
+      templateVmId?: string;
       sshUsername: string;
       sshPassword?: string;
       sshPrivateKey?: string;
@@ -318,7 +318,7 @@ export function registerDeploymentTools(): void {
       schema: z.object({
         designId: z.string().describe('Deployment design ID'),
         org: z.string().describe('VCD organisation name (e.g. ban2_identity_ilm)'),
-        templateVmId: z.string().describe('Template VM ID from VCD catalog'),
+        templateVmId: z.string().optional().describe('Template VM ID from VCD catalog. Optional if per-VM TEMPLATE_ID is present in the runbook.'),
         sshUsername: z.string().describe('SSH username for provisioned VMs'),
         sshPassword: z.string().optional().describe('SSH password'),
         sshPrivateKey: z.string().optional().describe('SSH private key (alternative to password)'),

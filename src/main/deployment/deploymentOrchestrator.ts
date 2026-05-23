@@ -35,8 +35,8 @@ import { getDefaultsForOrg, NETWORK_NAME, GATEWAY, DNS_SERVERS, IP_ALLOCATION_MO
 export interface DeploymentParams {
   /** VCD organisation name (e.g. 'ban2_identity_ilm') */
   org: string;
-  /** Template VM ID used for all VMs in this design */
-  templateVmId: string;
+  /** Template VM ID used for all VMs in this design (fallback). If a VM has a templateId discovered in the runbook, that will be used instead. */
+  templateVmId?: string;
   /** SSH username to log into provisioned VMs */
   sshUsername: string;
   /** SSH password (required unless privateKey provided) */
@@ -272,9 +272,13 @@ export async function start(
           if (!ip) throw new Error(`No IP assigned for VM '${vmName}'`);
 
           const provStep = taskTracker.beginStep(task.id, `Provision ${vmName}`);
+          const chosenTemplate = (vm.templateId && String(vm.templateId).trim()) ? vm.templateId : params.templateVmId;
+          if (!chosenTemplate) throw new Error(`No template specified for VM '${vmName}'. Provide template via start params or include TEMPLATE_ID in the runbook.`);
+
           await createVmFromTemplate({
             vdc_id: vcdDefaults.vdcId,
-            template_vm_id: params.templateVmId,
+            // Prefer per-VM template discovered during planning, fallback to the global template from params
+            template_vm_id: chosenTemplate,
             vm_name: vmName,
             network_name: NETWORK_NAME,
             ip_address: ip,
@@ -285,6 +289,7 @@ export async function start(
             network_adapter_type: NETWORK_ADAPTER_TYPE,
             storage_profile_id: vcdDefaults.storageProfileId,
             compute_policy_id: vcdDefaults.computePolicyId,
+            // No node-specific properties passed here — runbook generation will include required commands.
           });
 
           if (provStep) taskTracker.completeStep(task.id, provStep.id, `${vmName} provisioned`, 0);

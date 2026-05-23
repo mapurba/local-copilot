@@ -118,6 +118,8 @@ const ChatPane: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: buildWelcomeMessage('myvm') },
   ]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gpt-4');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -157,6 +159,42 @@ const ChatPane: React.FC = () => {
         ]);
       }
     }).catch(() => { /* keep default */ });
+
+    // Load or create a conversation for chat persistence
+    (async () => {
+      setConversationLoading(true);
+      try {
+        const listRes = await window.copilot.chatHistoryList();
+        if (listRes && listRes.success && Array.isArray(listRes.conversations) && listRes.conversations.length > 0) {
+          const conv = listRes.conversations[0];
+          setConversationId(conv.id);
+          const getRes = await window.copilot.chatHistoryGet(conv.id);
+          if (getRes && getRes.success && getRes.conversation && Array.isArray(getRes.conversation.messages)) {
+            // Convert stored messages shape to local Message type if needed
+            const stored = getRes.conversation.messages as any[];
+            const mapped: Message[] = stored.map((m) => ({ role: m.role, content: m.content, type: m.type }));
+            setMessages(mapped.length ? mapped : [{ role: 'assistant', content: buildWelcomeMessage('myvm') }]);
+          }
+          setConversationLoading(false);
+          return;
+        }
+
+        // No existing conversation — create one
+        const newRes = await window.copilot.chatHistoryNew('Local Copilot');
+        if (newRes && newRes.success && newRes.conversation) {
+          const conv = newRes.conversation;
+          setConversationId(conv.id);
+          // Persist initial assistant welcome message
+          const welcome = buildWelcomeMessage('myvm');
+          await window.copilot.chatHistoryAppend(conv.id, { role: 'assistant', content: welcome, ts: new Date().toISOString() });
+          setMessages([{ role: 'assistant', content: welcome }]);
+        }
+      } catch (e) {
+        console.error('[ChatPane] Failed to initialize conversation:', e);
+      } finally {
+        setConversationLoading(false);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -178,6 +216,17 @@ const ChatPane: React.FC = () => {
         if (last && last.streaming) return [...prev.slice(0, -1), { ...last, streaming: false }];
         return prev;
       });
+      // Persist final assistant message to conversation store
+      try {
+        if (conversationId) {
+          const last = messages[messages.length - 1];
+          if (last && last.role === 'assistant') {
+            void window.copilot.chatHistoryAppend(conversationId, { role: 'assistant', content: last.content, ts: new Date().toISOString() });
+          }
+        }
+      } catch (err) {
+        // ignore persistence errors
+      }
     });
 
     const unsubError = window.copilot.onChatError((_event: unknown, message: string) => {
@@ -292,6 +341,14 @@ const ChatPane: React.FC = () => {
       ...(docsToSend.length > 0 && { attachments: docsToSend.map((d) => ({ name: d.title })) }),
     };
     setMessages((prev) => [...prev, userMsg]);
+    // Persist user message
+    try {
+      if (conversationId) {
+        await window.copilot.chatHistoryAppend(conversationId, { role: 'user', content: trimmed, ts: new Date().toISOString() });
+      }
+    } catch (err) {
+      // ignore persistence errors
+    }
     setInput('');
     // NOTE: attachedDocs intentionally NOT cleared here — docs remain attached
     // for the entire conversation so follow-up questions can still reference them.
@@ -338,6 +395,37 @@ const ChatPane: React.FC = () => {
       await window.copilot.sendChatMessage(selectedModel, historyForApi);
     }
   }, [input, isStreaming, messages, selectedModel, useTools, disabledTools, attachedDocs]);
+
+  // Start a new conversation (clear UI and create new persisted conversation)
+  const startNewConversation = async () => {
+    try {
+      const res = await window.copilot.chatHistoryNew('Local Copilot');
+      if (!res || !res.success || !res.conversation) {
+        alert('Failed to create new conversation');
+        return;
+      }
+      setConversationId(res.conversation.id);
+      const welcome = buildWelcomeMessage('myvm');
+      await window.copilot.chatHistoryAppend(res.conversation.id, { role: 'assistant', content: welcome, ts: new Date().toISOString() });
+      setMessages([{ role: 'assistant', content: welcome }]);
+    } catch (err) {
+      console.error('[ChatPane] startNewConversation error', err);
+    }
+  };
+
+  const clearCurrentConversation = async () => {
+    if (!conversationId) return;
+    try {
+      const res = await window.copilot.chatHistoryClear(conversationId);
+      if (res && res.success) {
+        const welcome = buildWelcomeMessage('myvm');
+        await window.copilot.chatHistoryAppend(conversationId, { role: 'assistant', content: welcome, ts: new Date().toISOString() });
+        setMessages([{ role: 'assistant', content: welcome }]);
+      }
+    } catch (err) {
+      console.error('[ChatPane] Failed to clear conversation', err);
+    }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -401,22 +489,110 @@ const ChatPane: React.FC = () => {
   const doDeployVm = async () => {
     if (!pendingForm) return;
     setIsDeploying(true);
-    const deployedForm = pendingForm;
+    const f = pendingForm;
+
+    // Build an explicit payload to ensure required keys are present
+    const payload: Record<string, unknown> = {
+      vm_name: f.vm_name || '',
+      template_id: f.template_id || '',
+      template_name: f.template_name || '',
+      network_name: f.network_name || '',
+      ip_address: f.ip_address || '',
+      ip_allocation_mode: (f.ip_allocation_mode || (f.ip_address ? 'MANUAL' : 'DHCP')) as string,
+      gateway: f.gateway || '',
+      dns_servers: f.dns_servers || '',
+      power_on: f.power_on ?? true,
+      storage_profile_id: f.storage_profile_id || '',
+      compute_policy_id: f.compute_policy_id || '',
+      setup_ilm: f.setup_ilm ?? false,
+      ilm_version: f.ilm_version || 'latest',
+      custom_script: f.custom_script || undefined,
+      custom_env_content: f.custom_env_content || undefined,
+      setup_idm: f.setup_idm ?? false,
+      idm_custom_env_content: f.idm_custom_env_content || undefined,
+    };
+
     try {
-      const result = await window.copilot.deployVm(deployedForm as unknown as Record<string, unknown>);
+      // Basic validation
+      if (!String(payload.vm_name).trim() || !String(payload.template_id).trim()) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: VM name and template ID are required.' }]);
+        setIsDeploying(false);
+        return;
+      }
+
+      // If storage/compute or network defaults are missing, try to fetch vCD context and pre-fill
+      try {
+        // @ts-ignore
+        if (typeof window.copilot.getVcdContext === 'function') {
+          // @ts-ignore
+          const ctxRes = await window.copilot.getVcdContext();
+          if (ctxRes && ctxRes.success && ctxRes.context) {
+            const c = ctxRes.context as Record<string, any>;
+            if (!payload.storage_profile_id && c.storageProfileId) {
+              payload.storage_profile_id = c.storageProfileId;
+              updateForm('storage_profile_id', c.storageProfileId);
+            }
+            if (!payload.compute_policy_id && c.computePolicyId) {
+              payload.compute_policy_id = c.computePolicyId;
+              updateForm('compute_policy_id', c.computePolicyId);
+            }
+            if (!payload.network_name && c.networkName) {
+              payload.network_name = c.networkName;
+              updateForm('network_name', c.networkName);
+            }
+            if ((!payload.gateway || !String(payload.gateway).trim()) && c.gateway) {
+              payload.gateway = c.gateway;
+              updateForm('gateway', c.gateway);
+            }
+            if ((!payload.dns_servers || !String(payload.dns_servers).trim()) && c.dnsServers) {
+              const dnsVal = Array.isArray(c.dnsServers) ? c.dnsServers.join(',') : String(c.dnsServers);
+              payload.dns_servers = dnsVal;
+              updateForm('dns_servers', dnsVal);
+            }
+          }
+        }
+      } catch (e) {
+        // ignore and rely on backend defaults
+      }
+
+      // If MANUAL requested but no IP present, allocate one now
+      if (String(payload.ip_allocation_mode).toUpperCase() === 'MANUAL' && !String(payload.ip_address).trim()) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: 'No IP provided — allocating a free IP...' }]);
+        try {
+          const ipRes = await window.copilot.allocateFreeIp();
+          if (!ipRes.success || !ipRes.ip) {
+            setMessages((prev) => [...prev, { role: 'assistant', content: `Error: IP allocation failed: ${ipRes.error || 'unknown'}` }]);
+            setIsDeploying(false);
+            return;
+          }
+          payload.ip_address = ipRes.ip;
+          // reflect allocation in UI draft fields
+          updateForm('ip_address', ipRes.ip);
+          updateForm('ip_allocation_mode', 'MANUAL');
+          setMessages((prev) => [...prev, { role: 'assistant', content: `Allocated IP ${ipRes.ip}` }]);
+        } catch (e: any) {
+          setMessages((prev) => [...prev, { role: 'assistant', content: `Error: IP allocation failed: ${e?.message || String(e)}` }]);
+          setIsDeploying(false);
+          return;
+        }
+      }
+
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Submitting create VM request for ${payload.vm_name} (template ${payload.template_id})...` }]);
+
+      const result = await window.copilot.deployVm(payload);
       setPendingForm(null);
+
       if (result.success) {
         const envUpdate = (result.result as { env_update?: { changesSummary?: string; rationale?: string; usedFallback?: boolean } } | undefined)?.env_update;
         const successMessages: Message[] = [
-          { role: 'assistant', content: `OK: VM **${deployedForm.vm_name}** creation started successfully!` },
-          { role: 'assistant', content: `VM IP : **${deployedForm.ip_address}** allocated.` },
+          { role: 'assistant', content: `OK: VM **${payload.vm_name}** creation started successfully!` },
+          { role: 'assistant', content: `VM IP : **${payload.ip_address || ''}** allocated.` },
           { role: 'assistant', content: `User Name : Root , Password : Password1!` },
         ];
-        if (deployedForm.setup_ilm && deployedForm.ip_address) {
-          const ilmUrl = `http://${deployedForm.ip_address}:9888/ilm/#/`;
-          const pwNote = deployedForm.custom_env_content
-            ? '_(password depends on your uploaded .env file)_'
-            : '**novell** _(default — change if needed)_';
+        if ((payload.setup_ilm as boolean) && payload.ip_address) {
+          const ipAddr = String(payload.ip_address);
+          const ilmUrl = `http://${ipAddr}:9888/ilm/#/`;
+          const pwNote = payload.custom_env_content ? '_(password depends on your uploaded .env file)_' : '**novell** _(default — change if needed)_';
           successMessages.push({
             role: 'assistant',
             content: `**ILM is being set up on your VM.**\n\nOnce ready, access it at:\n[${ilmUrl}](${ilmUrl})\n\n**Tenant:** thor  |  **Password:** ${pwNote}`,
@@ -579,6 +755,10 @@ const ChatPane: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-gray-800 border-b border-gray-700/60">
         <span className="text-sm font-semibold text-gray-200">Copilot Chat</span>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={startNewConversation} disabled={conversationLoading}>New Chat</Button>
+          <Button size="sm" onClick={clearCurrentConversation} disabled={!conversationId}>Clear Chat</Button>
+        </div>
       </div>
 
       {/* Messages */}

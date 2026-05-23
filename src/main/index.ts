@@ -21,6 +21,13 @@ function createWindow() {
     },
   });
 
+  // Register IPC handlers early so renderer code can safely invoke them
+  try {
+    registerIpcHandlers(mainWindow);
+  } catch (err) {
+    console.error('[Main] Failed to register IPC handlers in createWindow:', err);
+  }
+
   // Use app.isPackaged to reliably detect production builds
   if (!app.isPackaged) {
     mainWindow.loadURL('http://localhost:5173');
@@ -46,7 +53,8 @@ app.whenReady().then(async () => {
     console.error('[Main] Failed to initialize tools:', error);
   }
   
-  registerIpcHandlers(mainWindow!);
+  // IPC handlers were registered inside createWindow() to ensure they are available
+  // before the renderer loads. No-op here to avoid double-registration.
   // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
   // registerTerminalHandlers(mainWindow!);
 

@@ -257,6 +257,8 @@ function escapeXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
+
+
 function extractXmlSection(xml: string, tagName: string): string {
   const regex = new RegExp(`<(?:\\w+:)?${tagName}\\b[\\s\\S]*?<\\/(?:\\w+:)?${tagName}>`, 'i');
   const match = xml.match(regex);
@@ -516,6 +518,54 @@ export async function listTemplates(nameFilter = ''): Promise<Record<string, unk
   });
 
   return { count: templates.length, total: data?.total ?? templates.length, templates };
+}
+
+/**
+ * Fetch raw vAppTemplate XML for a given template UUID.
+ * Tries the vappTemplate path first, falls back to the vm- path if necessary.
+ */
+export async function getTemplateXml(templateUuid: string): Promise<string> {
+  const ctx = getVcdContext();
+  const headers = addTenantHeaders(
+    baseHeaders(ctx.apiVersion, ctx.token, `application/*+xml;version=${ctx.apiVersion}`),
+    ctx.orgName,
+    ctx.orgUuid
+  );
+
+  const vappUrl = `https://${ctx.host}/api/vAppTemplate/vappTemplate-${templateUuid}`;
+  const vappResult = await httpsRequestWithAutoReauth(vappUrl, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
+  if (vappResult.status >= 200 && vappResult.status < 300) {
+    return vappResult.body || '';
+  }
+
+  // Fallback: try vm- URL
+  const vmUrl = `https://${ctx.host}/api/vAppTemplate/vm-${templateUuid}`;
+  const vmResult = await httpsRequestWithAutoReauth(vmUrl, 'GET', headers, undefined, 15000, ctx.rejectUnauthorized);
+  if (vmResult.status >= 200 && vmResult.status < 300) {
+    return vmResult.body || '';
+  }
+
+  throw new Error(`get_template_xml failed: vappTemplate HTTP ${vappResult.status}, vm HTTP ${vmResult.status}`);
+}
+
+/**
+ * Update a vAppTemplate XML body for the given template UUID.
+ * Note: updating templates in-place may be restricted by the VCD server.
+ */
+export async function updateTemplateXml(templateUuid: string, xmlBody: string): Promise<Record<string, unknown>> {
+  const ctx = getVcdContext();
+  const url = `https://${ctx.host}/api/vAppTemplate/vappTemplate-${templateUuid}`;
+  const headers = addTenantHeaders(
+    baseHeaders(ctx.apiVersion, ctx.token, `application/vnd.vmware.vcloud.vAppTemplate+xml;version=${ctx.apiVersion}`),
+    ctx.orgName,
+    ctx.orgUuid
+  );
+
+  const result = await httpsRequestWithAutoReauth(url, 'PUT', headers, xmlBody, 30000, ctx.rejectUnauthorized);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`update_template failed: HTTP ${result.status} - ${result.body?.slice?.(0, 800) || ''}`);
+  }
+  return { status: result.status, body: result.body };
 }
 
 async function resolveTemplateVmHref(vappTemplateUuid: string): Promise<string> {
@@ -1349,18 +1399,25 @@ export async function createVmFromTemplate(params: {
     }
   }
 
-  let customizationScript = params.custom_script;
-  if (!customizationScript) {
-    customizationScript = getUnifiedCustomizationScript(
-      params.ip_address,
-      params.gateway,
-      params.dns_servers,
-      params.setup_ilm,
-      params.ilm_version,
-      updatedEnvContent,
-      params.setup_idm,
-      params.idm_custom_env_content
-    );
+  // Always build the unified customization script (it injects env updates,
+  // network setup, ILM/IDM helpers, etc.), then append any service-specific
+  // custom script provided by the caller (for installation steps).
+  const unifiedCustomizationScript = getUnifiedCustomizationScript(
+    params.ip_address,
+    params.gateway,
+    params.dns_servers,
+    params.setup_ilm,
+    params.ilm_version,
+    updatedEnvContent,
+    params.setup_idm,
+    params.idm_custom_env_content
+  );
+
+  let customizationScript = unifiedCustomizationScript || '';
+  if (params.custom_script && String(params.custom_script).trim()) {
+    // Append the service install script after the unified setup script,
+    // separated by a blank line for readability.
+    customizationScript = (customizationScript ? `${customizationScript}\n\n` : '') + params.custom_script;
   }
 
   const computerName = sanitizeComputerName(params.vm_name);
@@ -1387,7 +1444,7 @@ export async function createVmFromTemplate(params: {
                     <IsConnected>true</IsConnected>
                     <IpAddressAllocationMode>DHCP</IpAddressAllocationMode>
                     <NetworkAdapterType>VMXNET3</NetworkAdapterType>
-                </NetworkConnection>
+                  </NetworkConnection>
             </NetworkConnectionSection>
             <GuestCustomizationSection>
                 <ovf:Info>Specifies Guest OS Customization Settings</ovf:Info>

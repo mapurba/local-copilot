@@ -5,7 +5,7 @@
   "type": "commonjs",
   "main": "dist-electron/main/index.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "concurrently \"cross-env PORT=5173 vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.electron.json && vite build",
     "build:electron": "electron-builder",
     "preview": "vite preview",
@@ -47,6 +47,7 @@
     "clsx": "^2.1.1",
     "fast-xml-parser": "^5.4.2",
     "mammoth": "^1.12.0",
+    "mermaid": "^11.15.0",
     "monaco-editor": "^0.55.1",
     "pdf-parse": "^2.4.5",
     "react": "^19.2.0",

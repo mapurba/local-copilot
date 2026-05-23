@@ -101,6 +101,11 @@ export interface CopilotAPI {
   taskGet: (taskId: string) => Promise<{ success: boolean; task?: unknown; error?: string }>;
   taskCancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
   onTaskUpdated: (callback: () => void) => () => void;
+  onDeploymentPlanReady: (callback: (event: unknown, plan: Record<string, unknown>) => void) => () => void;
+  saveDeploymentDraft: (plan: Record<string, unknown>) => Promise<{ success: boolean; id?: string; savedAt?: string; error?: string }>;
+  loadDeploymentDraft: (id: string) => Promise<{ success: boolean; plan?: Record<string, unknown>; error?: string }>;
+  listDeploymentDrafts: () => Promise<{ success: boolean; drafts: Array<{ id: string; name: string; status: string; createdAt: string; updatedAt: string }>; error?: string }>;
+  deleteDeploymentDraft: (id: string) => Promise<{ success: boolean; error?: string }>;
   openExternal: (url: string) => Promise<void>;
 
   // DISABLED: Terminal methods removed to prevent antivirus quarantine

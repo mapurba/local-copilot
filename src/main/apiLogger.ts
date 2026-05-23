@@ -30,7 +30,7 @@ function redactHeaders(headers?: HeadersLike): HeadersLike | undefined {
   return output;
 }
 
-function truncateText(input: unknown, max = 1500): string {
+function truncateText(input: unknown, max = 150000): string {
   const text = typeof input === 'string' ? input : JSON.stringify(input ?? '');
   if (text.length <= max) return text;
   return `${text.slice(0, max)}...<truncated>`;

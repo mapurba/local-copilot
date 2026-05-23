@@ -101,6 +101,8 @@ export interface VmPlan {
   resourceHints: ResourceSpec;
   vmName?: string;             // assigned during IP/infra planning
   ip?: string;                 // assigned during IP planning
+  // Optional template UUID discovered from runbook/docs (e.g. TEMPLATE_ID: xxxxxxxx-xxxx...)
+  templateId?: string;
 }
 
 export interface DependencyEdge {

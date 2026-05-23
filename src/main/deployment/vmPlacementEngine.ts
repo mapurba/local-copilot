@@ -21,7 +21,7 @@ import {
 } from './types';
 import { buildDependencyGraph } from './dependencyAnalyzer';
 import { generateTopologyDiagram } from './mermaidGenerator';
-import { generateFullRunbook } from './runbookGenerator';
+import { generateFullRunbook, generateServiceRunbook } from './runbookGenerator';
 
 export class OsConflictError extends Error {
   constructor(vmRole: string, conflictingServices: string[]) {
@@ -187,6 +187,39 @@ export function buildDeploymentDesign(
   // Generate diagram and runbook now that IPs are known
   design.mermaid = generateTopologyDiagram(design);
   design.runbook = generateFullRunbook(design);
+
+  // Attempt to discover a TEMPLATE UUID from each service's runbook and
+  // attach it to the VmPlan so orchestration can prefer per-VM templates.
+  try {
+    for (const vm of design.vms) {
+      let foundTemplate: string | null = null;
+
+      for (const svc of vm.services) {
+        try {
+          const svcRb = generateServiceRunbook(svc.id, design);
+          const tplRegexes = [/(?:TEMPLATE_ID|template_id|template-id|template)\s*[:=]\s*([0-9a-fA-F-]{36})/i, /template:\s*([0-9a-fA-F-]{36})/i];
+          for (const r of tplRegexes) {
+            const m = r.exec(svcRb);
+            if (m) {
+              foundTemplate = m[1].trim();
+              break;
+            }
+          }
+          if (!foundTemplate) {
+            const uuids = Array.from(new Set((svcRb.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g) || [])));
+            if (uuids.length === 1) foundTemplate = uuids[0];
+          }
+        } catch (e) {
+          // ignore per-service extraction failures
+        }
+        if (foundTemplate) break;
+      }
+
+      if (foundTemplate) vm.templateId = foundTemplate;
+    }
+  } catch (e) {
+    console.warn('[vmPlacementEngine] Failed to extract templateId:', e);
+  }
 
   return design;
 }

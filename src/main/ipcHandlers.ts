@@ -11,6 +11,9 @@ import {
   powerOffVm,
   deleteVm,
   getVmDetails,
+  getTemplateXml,
+  updateTemplateXml,
+  listTemplates,
   allocateFreeIp,
   createSnapshot,
   revertSnapshot,
@@ -27,6 +30,20 @@ import { approvalSystem } from './tools';
 import { listDocuments, getDocument, deleteDocument } from './tools/categories/docs/storage';
 import { readDocContent } from './tools/categories/docs/fileStore';
 import { taskTracker } from './taskTracker';
+import {
+  saveDeploymentDraft,
+  loadDeploymentDraft,
+  listDeploymentDrafts,
+  deleteDeploymentDraft,
+} from './deploymentPlanDraftStore';
+import {
+  createConversation,
+  listConversations,
+  getConversation,
+  appendMessage,
+  clearConversation,
+  deleteConversation,
+} from './chatHistory';
 // DISABLED: SSH2/SFTP functionality disabled to prevent antivirus quarantine
 // import {
 //   connectTerminalFileSession,
@@ -82,9 +99,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         return { vapps: [], error: err instanceof Error ? err.message : String(err) };
       }
     });
-  // Initialize LSP on startup
-  lspClient.start();
-  lspClient.initialize().catch((e) => console.error('[IPC] LSP init error:', e));
+  // Initialize LSP on startup (non-fatal) - don't let LSP failures prevent IPC handlers
+  try {
+    lspClient.start();
+    lspClient.initialize().catch((e) => console.error('[IPC] LSP init error:', e));
+  } catch (e) {
+    console.error('[IPC] LSP start failed (non-fatal):', e);
+  }
 
   // Auth: Check status
   ipcMain.handle('copilot:status', async () => {
@@ -236,6 +257,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
           console.log('[IPC] Copy form data:', JSON.stringify(form, null, 2));
           mainWindow.webContents.send('chat:vm-copy-draft', form);
         },
+        (plan) => {
+          console.log('[IPC] onDeploymentPlanReady callback triggered, emitting deployment:planReady event');
+          mainWindow.webContents.send('deployment:planReady', plan);
+        },
         disabledToolNames
       );
       return { started: true };
@@ -257,6 +282,101 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     return { cancelled: true };
   });
 
+  // Deployment draft file lifecycle
+  ipcMain.handle('deploymentDraft:save', async (_event, plan: Record<string, unknown>) => {
+    try {
+      const result = saveDeploymentDraft(plan as { id: string; [key: string]: unknown });
+      return { success: true, ...result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deploymentDraft:load', async (_event, id: string) => {
+    try {
+      const plan = loadDeploymentDraft(id);
+      if (!plan) return { success: false, error: `Draft not found: ${id}` };
+      return { success: true, plan };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deploymentDraft:list', async () => {
+    try {
+      const drafts = listDeploymentDrafts();
+      return { success: true, drafts };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err), drafts: [] };
+    }
+  });
+
+  ipcMain.handle('deploymentDraft:delete', async (_event, id: string) => {
+    try {
+      const deleted = deleteDeploymentDraft(id);
+      return { success: deleted };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Chat history handlers
+  ipcMain.handle('chat:createConversation', async (_event, name?: string) => {
+    try {
+      const conv = await createConversation(name);
+      return { success: true, conversation: conv };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('chat:listConversations', async () => {
+    try {
+      const list = await listConversations();
+      return { success: true, conversations: list };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('chat:getConversation', async (_event, id: string) => {
+    try {
+      const conv = await getConversation(id);
+      if (!conv) return { success: false, error: 'Not found' };
+      return { success: true, conversation: conv };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('chat:appendMessage', async (_event, id: string, message: any) => {
+    try {
+      const conv = await appendMessage(id, message);
+      return { success: true, conversation: conv };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('chat:clearConversation', async (_event, id: string) => {
+    try {
+      const conv = await clearConversation(id);
+      if (!conv) return { success: false, error: 'Not found' };
+      return { success: true, conversation: conv };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('chat:deleteConversation', async (_event, id: string) => {
+    try {
+      const ok = await deleteConversation(id);
+      return { success: ok };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   // Deploy VM directly from the reviewed form (no LLM involved)
   ipcMain.handle('vcd:deployVm', async (_event, form: {
     vm_name: string;
@@ -272,6 +392,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     compute_policy_id?: string;
     setup_ilm?: boolean;
     ilm_version?: string;
+    custom_script?: string;
     custom_env_content?: string;
     setup_idm?: boolean;
     idm_custom_env_content?: string;
@@ -279,6 +400,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     try {
       const ctx = getVcdContext();
       if (!ctx.vdcId) throw new Error('Missing VDC ID in context.');
+      // If caller requested MANUAL IP allocation but did not provide an IP, try to allocate one.
+      try {
+        if (form.ip_allocation_mode && String(form.ip_allocation_mode).toUpperCase() === 'MANUAL' && !(form.ip_address && String(form.ip_address).trim())) {
+          const ipRes = await allocateFreeIp();
+          if (ipRes && ipRes.success && ipRes.ip) {
+            form.ip_address = ipRes.ip;
+          } else {
+            return { success: false, error: `IP allocation failed: ${ipRes?.error || 'unknown'}` };
+          }
+        }
+      } catch (e) {
+        return { success: false, error: `IP allocation failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
       const dnsList = form.dns_servers
         ? form.dns_servers.split(',').map((s: string) => s.trim()).filter(Boolean)
         : ctx.dnsServers || ['15.122.222.53'];
@@ -300,13 +434,27 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         compute_policy_id: form.compute_policy_id || ctx.computePolicyId || '',
         setup_ilm: form.setup_ilm,
         ilm_version: form.ilm_version,
+        custom_script: form.custom_script,
         custom_env_content: form.custom_env_content,
         setup_idm: form.setup_idm,
         idm_custom_env_content: form.idm_custom_env_content,
       });
       return { success: true, result };
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      // Build a richer error string including status/body snippets when available
+      const baseMsg = err instanceof Error ? err.message : String(err);
+      const e = err as any;
+      let errMsg = baseMsg;
+      if (e?.status) errMsg += ` | status: ${e.status}`;
+      if (e?.body) {
+        try {
+          const bodySnippet = typeof e.body === 'string' ? e.body.slice(0, 2000) : JSON.stringify(e.body).slice(0, 2000);
+          errMsg += ` | body: ${bodySnippet}`;
+        } catch (ex) {
+          // ignore body serialization errors
+        }
+      }
+      return { success: false, error: errMsg };
     }
   });
 
@@ -320,6 +468,32 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
 
   ipcMain.handle('vcd:status', async () => {
     return vcdStatus();
+  });
+
+  // Return a sanitized vCD context (no tokens)
+  ipcMain.handle('vcd:getContext', async () => {
+    try {
+      const ctx = getVcdContext();
+      return {
+        success: true,
+        context: {
+          host: ctx.host,
+          apiVersion: ctx.apiVersion,
+          orgName: ctx.orgName,
+          orgUuid: ctx.orgUuid,
+          username: ctx.username,
+          vdcId: ctx.vdcId,
+          networkName: ctx.networkName,
+          gateway: ctx.gateway,
+          dnsServers: ctx.dnsServers,
+          storageProfileId: ctx.storageProfileId,
+          computePolicyId: ctx.computePolicyId,
+          rejectUnauthorized: ctx.rejectUnauthorized,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle('vcd:signOut', async () => {
@@ -441,6 +615,39 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     try {
       const result = await allocateFreeIp();
       return result;
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: List templates (optional name filter)
+  console.log('[IPC] Registering handler: vcd:listTemplates');
+  ipcMain.handle('vcd:listTemplates', async (_event, nameFilter?: string) => {
+    try {
+      const result = await listTemplates(nameFilter ?? '');
+      return { success: true, ...result };
+    } catch (err) {
+      return { success: false, templates: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: Get raw template XML by template UUID
+  ipcMain.handle('vcd:getTemplate', async (_event, templateId: string) => {
+    try {
+      if (!templateId) throw new Error('templateId required');
+      const xml = await getTemplateXml(templateId);
+      return { success: true, xml };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // VCD: Update template XML body (may be restricted by server permissions)
+  ipcMain.handle('vcd:updateTemplate', async (_event, input: { templateId: string; xml: string }) => {
+    try {
+      if (!input || !input.templateId) throw new Error('templateId required');
+      const result = await updateTemplateXml(input.templateId, input.xml || '');
+      return { success: true, result };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
