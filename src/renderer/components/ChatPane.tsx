@@ -45,7 +45,7 @@ interface VApp {
 }
 
 const CHAT_WELCOME_MESSAGE = [
-  'Welcome. I can help you manage VMs using natural language.',
+  'Welcome. I can help you manage VMs and analyze product deployments.',
   '',
   '**What you can ask me:**',
   '- List VMs, vApps, templates, and recent tasks',
@@ -53,7 +53,8 @@ const CHAT_WELCOME_MESSAGE = [
   '- Create or clone VMs with a review form before execution',
   '- Set up ILM and upload a custom .env during VM creation',
   '- Resize VM CPU and memory',
-  '- Check VM status and troubleshoot failed actions',
+  '- **📄 Upload product documentation** to generate a deployment plan',
+  '- Analyze deployment requirements, architecture diagrams, and runbooks',
   '',
   '**Try prompts like:**',
   '- "Show all running VMs"',
@@ -62,8 +63,9 @@ const CHAT_WELCOME_MESSAGE = [
   '- "Resize vm-web-02 to 4 CPU and 8192 MB RAM"',
   '- "Show tasks from the last 30 minutes"',
   '- "Create a new Ubuntu VM with name appurbatest and setup ILM 1.3.0"',
-  '- "Create a VM with setup ILM and I will upload a custom .env"',
-  '- "Create a new SLES 15 SP6 VM with name appurbatest"',
+  '- "Analyze this product documentation and create a deployment plan"',
+  '',
+  '**💡 Tip:** Use the 📎 button to upload product documentation files (.md, .txt, .pdf, .docx)',
 ].join('\n');
 
 const ChatPane: React.FC = () => {
@@ -95,6 +97,8 @@ const ChatPane: React.FC = () => {
   const [fetchingIp, setFetchingIp] = useState(false);
   const [showShellEditor, setShowShellEditor] = useState(false);
   const [shellScriptDraft, setShellScriptDraft] = useState('');
+  const [uploadedDoc, setUploadedDoc] = useState<{ name: string; content: string } | null>(null);
+  const docFileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void)[]>([]);
 
@@ -207,10 +211,21 @@ const ChatPane: React.FC = () => {
   }, [pendingCopyForm, vapps.length, vappsLoading, loadVapps]);
 
   const sendMessage = useCallback(async () => {
-    const trimmed = input.trim();
+    let trimmed = input.trim();
+    // If doc is attached but no text, use a default analysis prompt
+    if (!trimmed && uploadedDoc) {
+      trimmed = 'Analyze this product documentation and create a deployment plan with services, dependencies, and a Mermaid architecture diagram.';
+    }
     if (!trimmed || isStreaming) return;
 
-    const userMsg: Message = { role: 'user', content: trimmed };
+    // If a document is attached, prepend it to the message
+    let messageContent = trimmed;
+    if (uploadedDoc) {
+      messageContent = `[Uploaded Document: ${uploadedDoc.name}]\n\n---\n${uploadedDoc.content}\n---\n\n${trimmed}`;
+      setUploadedDoc(null); // Clear after sending
+    }
+
+    const userMsg: Message = { role: 'user', content: messageContent };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setIsStreaming(true);
@@ -224,7 +239,7 @@ const ChatPane: React.FC = () => {
     } else {
       await window.copilot.sendChatMessage(selectedModel, historyForApi);
     }
-  }, [input, isStreaming, messages, selectedModel, useTools]);
+  }, [input, isStreaming, messages, selectedModel, useTools, uploadedDoc]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -259,6 +274,24 @@ const ChatPane: React.FC = () => {
       updateForm('custom_shell_script', content);
     };
     reader.readAsText(file);
+  };
+
+  const handleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result;
+      const content = typeof result === 'string' ? result : '';
+      setUploadedDoc({ name: file.name, content });
+    };
+    reader.readAsText(file);
+    // Reset input so same file can be re-uploaded
+    e.target.value = '';
+  };
+
+  const removeUploadedDoc = () => {
+    setUploadedDoc(null);
   };
 
   const handleEditShellScript = () => {
@@ -434,12 +467,25 @@ const ChatPane: React.FC = () => {
       {/* Messages */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && !pendingForm && !pendingCopyForm && (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm space-y-2">
+          <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm space-y-4">
             <span className="text-4xl">:)</span>
-            <p>Ask about your VMs or create new ones</p>
+            <p>Ask about your VMs or upload product docs for deployment analysis</p>
             {useTools && (
-              <p className="text-xs text-gray-400">Tip: Tools enabled. Try "list my VMs" or "create a new VM"</p>
+              <p className="text-xs text-gray-400">Tip: Tools enabled. Try "list my VMs" or upload documentation.</p>
             )}
+            {/* Quick action button for doc upload */}
+            <button
+              onClick={() => docFileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600/20 border border-blue-600/40 text-blue-400 hover:bg-blue-600/30 hover:border-blue-500/60 rounded-lg text-xs font-medium transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="11" x2="12" y2="17" />
+                <line x1="9" y1="14" x2="15" y2="14" />
+              </svg>
+              Upload Product Documentation
+            </button>
           </div>
         )}
 
@@ -797,19 +843,63 @@ const ChatPane: React.FC = () => {
 
       {/* Input Area */}
       <div className="px-4 py-3 bg-gray-800 border-t border-gray-700">
+        {/* Uploaded document badge */}
+        {uploadedDoc && (
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-900/40 border border-blue-700/50 rounded-lg text-xs text-blue-300">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+              <span className="max-w-[200px] truncate">{uploadedDoc.name}</span>
+              <span className="text-blue-400/60">({Math.round(uploadedDoc.content.length / 1024)}KB)</span>
+              <button
+                onClick={removeUploadedDoc}
+                className="ml-1 text-blue-400 hover:text-red-400 transition-colors"
+                title="Remove attached document"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <span className="text-xs text-gray-500">Will be sent with your next message</span>
+          </div>
+        )}
         <div className="flex gap-2 items-end">
+          {/* Document upload button */}
+          <button
+            onClick={() => docFileInputRef.current?.click()}
+            disabled={isStreaming}
+            className="p-2 text-gray-400 hover:text-blue-400 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50 h-[4.5rem] flex items-center justify-center"
+            title="Upload product documentation (.md, .txt, .pdf, .docx)"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+          <input
+            ref={docFileInputRef}
+            type="file"
+            accept=".md,.txt,.pdf,.doc,.docx,.yaml,.yml,.json,.xml,.html,.rst,.adoc"
+            onChange={handleDocUpload}
+            className="hidden"
+          />
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask Copilot... (Enter to send, Shift+Enter for newline)"
+            placeholder={uploadedDoc ? "Describe what to do with the uploaded document..." : "Ask Copilot... (Enter to send, Shift+Enter for newline)"}
             disabled={isStreaming}
             rows={3}
             className="flex-1 bg-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 border border-gray-600 placeholder-gray-500 disabled:opacity-50"
           />
           <button
             onClick={sendMessage}
-            disabled={isStreaming || !input.trim()}
+            disabled={isStreaming || (!input.trim() && !uploadedDoc)}
             className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg px-4 py-2 text-sm font-semibold transition-colors h-[4.5rem] flex items-center justify-center"
           >
             {isStreaming ? (
