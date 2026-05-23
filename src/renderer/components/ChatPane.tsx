@@ -44,6 +44,12 @@ interface VApp {
   owner?: string;
 }
 
+interface UploadedDocContext {
+  name: string;
+  content: string;
+  includedInConversation?: boolean;
+}
+
 const CHAT_WELCOME_MESSAGE = [
   'Welcome. I can help you manage VMs and analyze product deployments.',
   '',
@@ -97,7 +103,7 @@ const ChatPane: React.FC = () => {
   const [fetchingIp, setFetchingIp] = useState(false);
   const [showShellEditor, setShowShellEditor] = useState(false);
   const [shellScriptDraft, setShellScriptDraft] = useState('');
-  const [uploadedDoc, setUploadedDoc] = useState<{ name: string; content: string } | null>(null);
+  const [uploadedDoc, setUploadedDoc] = useState<UploadedDocContext | null>(null);
   const docFileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void)[]>([]);
@@ -220,9 +226,9 @@ const ChatPane: React.FC = () => {
 
     // If a document is attached, prepend it to the message
     let messageContent = trimmed;
-    if (uploadedDoc) {
+    if (uploadedDoc && !uploadedDoc.includedInConversation) {
       messageContent = `[Uploaded Document: ${uploadedDoc.name}]\n\n---\n${uploadedDoc.content}\n---\n\n${trimmed}`;
-      setUploadedDoc(null); // Clear after sending
+      setUploadedDoc((prev) => (prev ? { ...prev, includedInConversation: true } : prev));
     }
 
     const userMsg: Message = { role: 'user', content: messageContent };
@@ -283,7 +289,7 @@ const ChatPane: React.FC = () => {
     reader.onload = (event) => {
       const result = event.target?.result;
       const content = typeof result === 'string' ? result : '';
-      setUploadedDoc({ name: file.name, content });
+      setUploadedDoc({ name: file.name, content, includedInConversation: false });
     };
     reader.readAsText(file);
     // Reset input so same file can be re-uploaded
@@ -866,7 +872,9 @@ const ChatPane: React.FC = () => {
                 </svg>
               </button>
             </div>
-            <span className="text-xs text-gray-500">Will be sent with your next message</span>
+            <span className="text-xs text-gray-500">
+              {uploadedDoc.includedInConversation ? 'Document context active for this chat' : 'Will be sent with your next message'}
+            </span>
           </div>
         )}
         <div className="flex gap-2 items-end">

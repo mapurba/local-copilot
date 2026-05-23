@@ -25,7 +25,6 @@ const App: React.FC = () => {
   const [authStatus, setAuthStatus] = useState<string>('Unknown');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [user, setUser] = useState<string | undefined>();
-  const [authStatusChanged, setAuthStatusChanged] = useState(0);
   const [vcdStatus, setVcdStatus] = useState<{ connected: boolean; user?: string; org?: string; host?: string }>({ connected: false });
   const [showVcdModal, setShowVcdModal] = useState(false);
 
@@ -92,6 +91,32 @@ const App: React.FC = () => {
     };
     window.addEventListener('open-deployment-plan', handler as EventListener);
     return () => window.removeEventListener('open-deployment-plan', handler as EventListener);
+  }, []);
+
+  // Restore the latest saved deployment plan on app startup
+  useEffect(() => {
+    const restoreLatestPlan = async () => {
+      try {
+        const listResult = await window.copilot.listDeploymentPlans();
+        if (!listResult.success || !Array.isArray(listResult.plans) || listResult.plans.length === 0) {
+          return;
+        }
+
+        const latest = [...listResult.plans]
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+        if (!latest?.id) return;
+
+        const loadResult = await window.copilot.loadDeploymentPlan(latest.id);
+        if (loadResult.success && loadResult.plan) {
+          setDeploymentPlan(loadResult.plan as unknown as DeploymentPlan);
+        }
+      } catch (err) {
+        console.warn('[App] Failed to restore latest deployment plan:', err);
+      }
+    };
+
+    restoreLatestPlan();
   }, []);
 
   // Deployment plan handlers
@@ -166,7 +191,6 @@ const App: React.FC = () => {
     setUser(username);
     if (status === 'OK' || status === 'AlreadySignedIn') {
       setShowAuthModal(false);
-      setAuthStatusChanged(prev => prev + 1);
     }
   };
 
@@ -314,14 +338,18 @@ const App: React.FC = () => {
 
               {/* Content Area */}
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                {activeTab === 'chat' && <ChatPane key={authStatusChanged} />}
-                {activeTab === 'deploy' && deploymentPlan && (
-                  <DeploymentPlanPane
-                    plan={deploymentPlan}
-                    onPlanUpdate={handlePlanUpdate}
-                    onDeployAll={handleDeployAll}
-                    onDeployService={handleDeployService}
-                  />
+                <div className={`flex-1 min-h-0 ${activeTab === 'chat' ? 'block' : 'hidden'}`}>
+                  <ChatPane />
+                </div>
+                {deploymentPlan && (
+                  <div className={`flex-1 min-h-0 ${activeTab === 'deploy' ? 'block' : 'hidden'}`}>
+                    <DeploymentPlanPane
+                      plan={deploymentPlan}
+                      onPlanUpdate={handlePlanUpdate}
+                      onDeployAll={handleDeployAll}
+                      onDeployService={handleDeployService}
+                    />
+                  </div>
                 )}
               </div>
             </div>

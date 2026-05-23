@@ -5,6 +5,7 @@ interface ServiceDetailPanelProps {
   service: ServiceNode;
   onClose: () => void;
   onDeploy: () => void;
+  onRunbookSave: (serviceId: string, runbook: string) => void;
   planStatus: string;
 }
 
@@ -12,11 +13,24 @@ const ServiceDetailPanel: React.FC<ServiceDetailPanelProps> = ({
   service,
   onClose,
   onDeploy,
+  onRunbookSave,
   planStatus,
 }) => {
   const [activeTab, setActiveTab] = useState<'details' | 'runbook' | 'logs'>('details');
+  const [isEditingRunbook, setIsEditingRunbook] = useState(false);
+  const [runbookDraft, setRunbookDraft] = useState(service.runbook || '#!/bin/bash\n');
 
   const canDeploy = planStatus !== 'complete' && service.status === 'pending';
+
+  React.useEffect(() => {
+    setRunbookDraft(service.runbook || '#!/bin/bash\n');
+    setIsEditingRunbook(false);
+  }, [service.id, service.runbook]);
+
+  const handleSaveRunbook = () => {
+    onRunbookSave(service.id, runbookDraft);
+    setIsEditingRunbook(false);
+  };
 
   return (
     <div className="w-96 border-l border-gray-700 bg-gray-850 flex flex-col overflow-hidden">
@@ -150,10 +164,47 @@ const ServiceDetailPanel: React.FC<ServiceDetailPanelProps> = ({
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400">Shell script to execute on VM</span>
+              <div className="flex items-center gap-2">
+                {isEditingRunbook ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setRunbookDraft(service.runbook || '#!/bin/bash\n');
+                        setIsEditingRunbook(false);
+                      }}
+                      className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveRunbook}
+                      className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"
+                    >
+                      Save
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setIsEditingRunbook(true)}
+                    className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
             </div>
-            <pre className="flex-1 overflow-auto bg-gray-800 text-gray-200 text-xs font-mono p-3 rounded border border-gray-700 whitespace-pre-wrap">
-              {service.runbook || '# No runbook defined'}
-            </pre>
+            {isEditingRunbook ? (
+              <textarea
+                value={runbookDraft}
+                onChange={(e) => setRunbookDraft(e.target.value)}
+                spellCheck={false}
+                className="flex-1 overflow-auto bg-gray-800 text-gray-200 text-xs font-mono p-3 rounded border border-gray-700 focus:outline-none focus:border-blue-500 resize-none"
+              />
+            ) : (
+              <pre className="flex-1 overflow-auto bg-gray-800 text-gray-200 text-xs font-mono p-3 rounded border border-gray-700 whitespace-pre-wrap">
+                {service.runbook || '# No runbook defined'}
+              </pre>
+            )}
           </div>
         )}
 

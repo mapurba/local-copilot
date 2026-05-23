@@ -4,6 +4,7 @@
 import https from 'https';
 import { tokenManager } from './tokenManager';
 import { logApi } from './apiLogger';
+import type { DeploymentPlan } from '../renderer/deploymentTypes';
 import {
   listVms,
   listVApps,
@@ -481,6 +482,72 @@ async function fetchFreeIps(count: number): Promise<string[]> {
   });
 }
 
+function normalizeServiceId(value: string, index: number): string {
+  const base = value
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return base || `svc-${index + 1}`;
+}
+
+function extractServiceNamesFromMermaid(mermaid: string): string[] {
+  if (!mermaid) return [];
+
+  const labels: string[] = [];
+  const bracketRegex = /\b[A-Za-z0-9_]+\[(.+?)\]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = bracketRegex.exec(mermaid)) !== null) {
+    const label = String(match[1] || '').trim();
+    if (label) labels.push(label);
+  }
+
+  return Array.from(new Set(labels));
+}
+
+function defaultRunbookForService(serviceName: string): string {
+  return [
+    '#!/bin/bash',
+    'set -euo pipefail',
+    '',
+    `echo "Installing ${serviceName}"`,
+    '# TODO: Add package installation and configuration steps',
+    '# systemctl enable --now <service-name>',
+    '',
+    `echo "${serviceName} setup complete"`,
+  ].join('\n');
+}
+
+function buildFallbackServices(productName: string, mermaidDiagram: string, freeIps: string[]): Array<Record<string, unknown>> {
+  const extracted = extractServiceNamesFromMermaid(mermaidDiagram)
+    .map((name) => name.replace(/^\s*[^-]+-\s*/i, '').trim())
+    .filter((name) => name.length > 0);
+
+  const serviceNames = extracted.length > 0
+    ? extracted
+    : ['Load Balancer', 'Application Server', 'Database'];
+
+  return serviceNames.map((name, idx) => {
+    const id = normalizeServiceId(name, idx);
+    return {
+      id,
+      name,
+      description: `${name} service for ${productName}`,
+      vm_name: `vm-${normalizeServiceId(productName, 0)}-${idx + 1}`,
+      port: /database|db/i.test(name) ? 5432 : /load balancer|gateway/i.test(name) ? 443 : 8080,
+      os: 'SLES 15 SP6',
+      prerequisites: [],
+      runbook: defaultRunbookForService(name),
+      health_check_command: /database|db/i.test(name)
+        ? 'pg_isready -h 127.0.0.1 -p 5432'
+        : 'curl -f http://127.0.0.1:8080/health || exit 1',
+      depends_on: [],
+      ip: freeIps[idx] || undefined,
+    };
+  });
+}
+
 const analyzeDeploymentDocsTool = lcTool(
   async (args) => {
     const { documentation, product_name, deployment_mode } = args;
@@ -493,39 +560,63 @@ const analyzeDeploymentDocsTool = lcTool(
     const planId = `plan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const now = new Date().toISOString();
 
-    // Build deployment plan structure (the LLM will have already analyzed the content)
+    const productName = product_name || 'Deployment Plan';
+    const mermaidDiagram = args.mermaid_diagram || generateDefaultMermaid(productName);
+
+    const providedServices = Array.isArray(args.services) ? args.services : [];
+    const effectiveServices = providedServices.length > 0
+      ? providedServices
+      : buildFallbackServices(productName, mermaidDiagram, freeIps);
+
+    const idByName = new Map<string, string>();
+    for (let idx = 0; idx < effectiveServices.length; idx += 1) {
+      const svc = effectiveServices[idx] as Record<string, unknown>;
+      const id = String(svc.id || normalizeServiceId(String(svc.name || `service-${idx + 1}`), idx));
+      const name = String(svc.name || `Service ${idx + 1}`);
+      idByName.set(name.toLowerCase(), id);
+      idByName.set(id.toLowerCase(), id);
+    }
+
+    // Build deployment plan structure
     const plan = {
       id: planId,
-      name: product_name || 'Deployment Plan',
+      name: productName,
       description: `Deployment plan generated from product documentation analysis`,
       createdAt: now,
       updatedAt: now,
-      mermaidDiagram: args.mermaid_diagram || generateDefaultMermaid(product_name || 'Product'),
-      services: (args.services || []).map((svc: Record<string, unknown>, idx: number) => ({
+      mermaidDiagram,
+      services: effectiveServices.map((svc: Record<string, unknown>, idx: number) => ({
         id: svc.id || `svc-${idx + 1}`,
         name: svc.name || `Service ${idx + 1}`,
         description: svc.description || '',
-        vmName: svc.vm_name || `vm-${product_name?.toLowerCase().replace(/\s+/g, '-') || 'svc'}-${idx + 1}`,
+        vmName: svc.vm_name || `vm-${productName.toLowerCase().replace(/\s+/g, '-') || 'svc'}-${idx + 1}`,
         ip: freeIps[idx] || undefined,
         port: svc.port || undefined,
         os: svc.os || 'SLES 15 SP6',
         prerequisites: Array.isArray(svc.prerequisites) ? svc.prerequisites : [],
-        runbook: svc.runbook || '#!/bin/bash\n# No runbook defined yet',
+        runbook: svc.runbook || defaultRunbookForService(String(svc.name || `Service ${idx + 1}`)),
         healthCheckCommand: svc.health_check_command || undefined,
         healthCheckUrl: svc.health_check_url || undefined,
-        dependsOn: Array.isArray(svc.depends_on) ? svc.depends_on : [],
+        dependsOn: Array.isArray(svc.depends_on)
+          ? svc.depends_on
+            .map((dep: unknown) => {
+              const depKey = String(dep || '').toLowerCase().trim();
+              return idByName.get(depKey) || String(dep || '').trim();
+            })
+            .filter((dep: string) => dep.length > 0)
+          : [],
         status: 'pending',
       })),
       deploymentMode: deployment_mode || 'distributed',
       sourceDocumentation: documentation.substring(0, 5000),
-      markdownSummary: args.markdown_summary || `# ${product_name || 'Product'} Deployment Plan\n\nGenerated from documentation analysis.`,
+      markdownSummary: args.markdown_summary || `# ${productName || 'Product'} Deployment Plan\n\nGenerated from documentation analysis.`,
       status: 'draft',
       ipPoolSource: IP_POOL_API,
     };
 
     // Save the plan
     try {
-      saveDeploymentPlan(plan as any);
+      saveDeploymentPlan(plan as DeploymentPlan);
     } catch (e) {
       console.error('[DeploymentTool] Failed to save plan:', e);
     }

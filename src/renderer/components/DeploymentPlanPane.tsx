@@ -61,6 +61,16 @@ const DeploymentPlanPane: React.FC<DeploymentPlanPaneProps> = ({
     renderDiagram(plan.mermaidDiagram);
   }, [plan.mermaidDiagram, renderDiagram]);
 
+  useEffect(() => {
+    if (!selectedService) return;
+    const latest = plan.services.find((s) => s.id === selectedService.id);
+    if (latest) {
+      setSelectedService(latest);
+    } else {
+      setSelectedService(null);
+    }
+  }, [plan.services, selectedService]);
+
   // Handle diagram click to select a service node
   const handleDiagramClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -84,6 +94,17 @@ const DeploymentPlanPane: React.FC<DeploymentPlanPaneProps> = ({
     onPlanUpdate(updatedPlan);
     renderDiagram(mermaidSource);
     setActiveView('diagram');
+  };
+
+  const handleSaveServiceRunbook = (serviceId: string, runbook: string) => {
+    const updatedPlan: DeploymentPlan = {
+      ...plan,
+      updatedAt: new Date().toISOString(),
+      services: plan.services.map((service) =>
+        service.id === serviceId ? { ...service, runbook } : service
+      ),
+    };
+    onPlanUpdate(updatedPlan);
   };
 
   // Get status color for service badges
@@ -217,6 +238,7 @@ const DeploymentPlanPane: React.FC<DeploymentPlanPaneProps> = ({
             onDeploy={() => {
               onDeployService(selectedService.id);
             }}
+            onRunbookSave={(serviceId, runbook) => handleSaveServiceRunbook(serviceId, runbook)}
             planStatus={plan.status}
           />
         )}
