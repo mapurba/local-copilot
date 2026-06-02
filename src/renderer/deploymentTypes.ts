@@ -33,4 +33,7 @@ export interface DeploymentPlan {
   sourceDocumentation?: string;
   markdownSummary: string;
   status: 'draft' | 'ready' | 'deploying' | 'complete' | 'failed';
+  // Optional plan-level global VM template (template id and name)
+  vm_template_id?: string;
+  vm_template_name?: string;
 }

@@ -57,6 +57,45 @@ export interface CopilotAPI {
   fileMkdir: (options: { terminalId: string; path: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
   checkForUpdate: () => void;
   onDeploymentPlanReady: (callback: (event: Electron.IpcRendererEvent, plan: Record<string, unknown>) => void) => () => void;
+  dryRunRunbookScript: (input: { script: string; serviceName?: string; osHint?: string }) => Promise<{
+    success: boolean;
+    summary?: string;
+    hasCriticalErrors?: boolean;
+    issues?: Array<{ severity?: string; title?: string; detail?: string; lineHint?: string }>;
+    changed?: boolean;
+    healedScript?: string;
+    error?: string;
+  }>;
+
+  // ── HITL Deployment Graph ──────────────────────────────────────────────────
+  startDeploymentGraph: (threadId: string, input: {
+    userPrompt: string;
+    docId: string;
+    rawContent?: string;
+    chatContext?: string;
+    modeName?: string;
+  }) => Promise<{ success: boolean; done?: boolean; phase?: string; error?: string }>;
+  resumeDeploymentGraph: (threadId: string, userUpdate: {
+    osPreference?: string;
+    vmTemplate?: string;
+    modeName?: string;
+    architectureApproved?: boolean;
+    networkDetails?: { usePoolIps: boolean; staticIps?: Record<string, string>; hostname?: string; subnet?: string; gateway?: string };
+    credentialVarsAcknowledged?: boolean;
+    finalApproved?: boolean;
+  }) => Promise<{ success: boolean; done?: boolean; phase?: string; error?: string }>;
+  clearDeploymentGraph: (threadId: string) => Promise<{ success: boolean; error?: string }>;
+  onDeploymentCheckpoint: (callback: (event: Electron.IpcRendererEvent, payload: {
+    threadId: string;
+    phase: string;
+    question: string;
+    data?: Record<string, unknown>;
+  }) => void) => () => void;
+  onDeploymentGraphComplete: (callback: (event: Electron.IpcRendererEvent, payload: {
+    threadId: string;
+    designId?: string;
+    warnings?: string[];
+  }) => void) => () => void;
   saveDeploymentDraft: (plan: Record<string, unknown>) => Promise<{ success: boolean; id?: string; savedAt?: string; error?: string }>;
   loadDeploymentDraft: (id: string) => Promise<{ success: boolean; plan?: Record<string, unknown>; error?: string }>;
   listDeploymentDrafts: () => Promise<{ success: boolean; drafts: Array<{ id: string; name: string; status: string; createdAt: string; updatedAt: string }>; error?: string }>;
@@ -157,6 +196,20 @@ contextBridge.exposeInMainWorld('copilot', {
   docsGet: (docId: string) => ipcRenderer.invoke('docs:get', docId),
   docsGetContent: (docId: string) => ipcRenderer.invoke('docs:getContent', docId),
   docsDelete: (docId: string) => ipcRenderer.invoke('docs:delete', docId),
+  docsImportFromUrl: (url: string) => ipcRenderer.invoke('docs:importFromUrl', url),
+  docsMergeDocs: (docIds: string[]) => ipcRenderer.invoke('docs:mergeDocs', docIds),
+  docsFetchUrlMarkdown: (url: string) => ipcRenderer.invoke('docs:fetchUrlMarkdown', url),
+  docsSaveMarkdown: (title: string, markdown: string) => ipcRenderer.invoke('docs:saveMarkdown', title, markdown),
+  docsAnalyze: (docId: string) => ipcRenderer.invoke('docs:analyze', docId),
+  onDocsAnalyzeLog: (callback: (event: Electron.IpcRendererEvent, payload: {
+    docId: string;
+    message: string;
+    level: 'info' | 'warn' | 'error';
+    done: boolean;
+  }) => void) => {
+    ipcRenderer.on('docs:analyze-log', callback);
+    return () => ipcRenderer.removeListener('docs:analyze-log', callback);
+  },
 
   // Chat history (conversations)
   chatHistoryNew: (name?: string) => ipcRenderer.invoke('chat:createConversation', name),
@@ -180,6 +233,9 @@ contextBridge.exposeInMainWorld('copilot', {
     ipcRenderer.on('deployment:planReady', callback);
     return () => ipcRenderer.removeListener('deployment:planReady', callback);
   },
+
+  dryRunRunbookScript: (input: { script: string; serviceName?: string; osHint?: string }) =>
+    ipcRenderer.invoke('deployment:dryRunRunbookScript', input),
 
   saveDeploymentDraft: (plan: Record<string, unknown>) => ipcRenderer.invoke('deploymentDraft:save', plan),
   loadDeploymentDraft: (id: string) => ipcRenderer.invoke('deploymentDraft:load', id),
@@ -232,4 +288,20 @@ contextBridge.exposeInMainWorld('copilot', {
   //   ipcRenderer.invoke('file:mkdir', options),
   checkForUpdate: () => ipcRenderer.send('check-for-update'),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+
+  // ── HITL Deployment Graph ──────────────────────────────────────────────────
+  startDeploymentGraph: (threadId: string, input: Record<string, unknown>) =>
+    ipcRenderer.invoke('deployment:graph:start', threadId, input),
+  resumeDeploymentGraph: (threadId: string, userUpdate: Record<string, unknown>) =>
+    ipcRenderer.invoke('deployment:graph:resume', threadId, userUpdate),
+  clearDeploymentGraph: (threadId: string) =>
+    ipcRenderer.invoke('deployment:graph:clear', threadId),
+  onDeploymentCheckpoint: (callback: (event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => void) => {
+    ipcRenderer.on('deployment:checkpoint', callback);
+    return () => ipcRenderer.removeListener('deployment:checkpoint', callback);
+  },
+  onDeploymentGraphComplete: (callback: (event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => void) => {
+    ipcRenderer.on('deployment:graph:complete', callback);
+    return () => ipcRenderer.removeListener('deployment:graph:complete', callback);
+  },
 } as unknown as CopilotAPI);

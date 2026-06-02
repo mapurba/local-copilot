@@ -64,7 +64,7 @@ function extractJsonObject(text: string): string {
   throw new Error('Failed to find JSON object in LLM response.');
 }
 
-export async function rewriteEnvWithVmIp(envContent: string, ipAddress: string, modelId = 'gpt-4'): Promise<{
+export async function rewriteEnvWithVmIp(envContent: string, ipAddress: string, modelId = 'gpt-4.1'): Promise<{
   updatedEnv: string;
   changesSummary: string;
   rationale: string;

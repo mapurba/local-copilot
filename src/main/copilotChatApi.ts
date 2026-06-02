@@ -121,11 +121,6 @@ const TOOL_SYSTEM_PROMPT = [
   '5) To cancel a running watch, call vm_watch_cancel with the taskId.',
   'Default commands if the user only wants OS version: ["cat /etc/os-release"]',
   '',
-  '── DOCUMENT Q&A ──',
-  'When the user asks about uploaded documents or asks factual questions about doc content:',
-  '  - The document content is ALREADY in this conversation as a [Document: "..."] block — read it from context and answer directly. No tool call is needed or available for reading docs.',
-  'EXCEPTION: If the question is about deployment planning, deployment design, IP requirements, or installation architecture → go to DEPLOYMENT INTELLIGENCE rules instead.',
-  '',
   '── DEPLOYMENT INTELLIGENCE ──',
   '⚠ THIS SECTION TAKES PRIORITY OVER DOCUMENT Q&A.',
   'When user intent matches any RULE below, go directly to the tool — no document pre-reading needed.',
@@ -155,7 +150,7 @@ const TOOL_SYSTEM_PROMPT = [
   '    This returns: designId, mermaid diagram, per-VM resource table, IP assignments, install order.',
   '    Render mermaid in ```mermaid block. Show resource table. Show IPs. Show install order.',
   '',
-  '  FULL DESIGN (user says "generate design", "create deployment design", no dry-run keyword):',
+  '  FULL DESIGN (user says  "create deployment design", no dry-run keyword):',
   '  → Call deployment:analyzeAndDesign(docId, modeName, rawContent?)',
   '    Returns: { designId, mermaid, vms[], installOrder[], runbookSummary }',
   '',
@@ -165,7 +160,20 @@ const TOOL_SYSTEM_PROMPT = [
   '   - Extract docId from the header. The text after the header IS the rawContent — pass it directly.',
   '   - If no [Document] block is present, tell the user to attach a document first and stop.',
   '   - Do NOT call any tool to look up or fetch document content.',
-  '2) Call the chosen tool ONCE with (docId, modeName, rawContent if available).',
+  '2) Build the chatContext parameter by scanning THIS ENTIRE CONVERSATION for anything the user',
+  '   stated verbally that should influence the deployment:',
+  '   - Component lists or selections (e.g. "install OSP, SSPR, UA, ActiveMQ, Reporting")',
+  '   - Silent properties variables or configuration values the user pasted or discussed',
+  '   - OS/version preferences explicitly stated ("SLES 15 SP6", "use single node")',
+  '   - Passwords, ports, database names, tree names, container names, admin DNs',
+  '   - Any "use this" or "use the above" instructions that reference earlier chat content',
+  '   Collect ALL such details into one plain-text block and pass as chatContext.',
+  '   If the user said "use this" or "use the above", look backwards in the conversation to find',
+  '   what "this" refers to and include the full content.',
+  '   ⚠ If the user provided any configuration (e.g. silent.properties) in this conversation,',
+  '   chatContext is NOT OPTIONAL — you MUST pass it. Omitting it means the LLM will ignore',
+  '   all user-supplied specs and generate a generic plan from the document alone.',
+  '3) Call the chosen tool ONCE with (docId, modeName, rawContent, chatContext).',
   '3) Render the mermaid field in a ```mermaid block — ALWAYS, immediately.',
   '4) For dry run: show resource table | VM | Role | OS | vCPU | RAM (GB) | Disk (GB) | IP |',
   '   For full design: show vms[] as table | VM | Role | OS | vCPU | RAM | Disk |',
@@ -227,6 +235,39 @@ const TOOL_SYSTEM_PROMPT = [
   'When the user refers to a previous design or asks "what designs do I have":',
   '  call deployment:listDesigns and format results as a table.',
   'When the user asks about a specific design: call deployment:getDesign with the designId.',
+  '',
+  '## RULE E — Update / correct / modify an existing deployment plan',
+  'Triggers (ANY of these phrases, even with typos):',
+  '  "update the plan", "update this plan", "update this to the current deployment plan"',
+  '  "fix the plan", "correct the plan", "change the plan", "modify the plan"',
+  '  "add X to the plan", "remove X from the plan", "replace X with Y in the plan"',
+  '  "update the deployment design", "revise the design", "amend the design"',
+  '  "update the runbook", "fix the runbook", "regenerate the runbook"',
+  '  ANY request that implies changing a previously generated deployment plan/design.',
+  '',
+  '⛔ ABSOLUTE RULE: NEVER print the updated plan as text in the chat.',
+  '   You MUST call deployment:updateDesign to persist the change. Printing is not updating.',
+  '   If you print it without calling the tool, the user sees a plan that was never saved.',
+  '',
+  'Steps:',
+  '1) Find the designId — look in this conversation for a previously returned designId.',
+  '   If no designId exists in the conversation, call deployment:listDesigns and pick the most',
+  '   recent one, or ask the user which design to update.',
+  '2) Determine WHAT changed:',
+  '   - Read the user instruction carefully.',
+  '   - Scan the ENTIRE conversation for user-provided specs: properties files, component lists,',
+  '     configuration values, "use this" references, and any other user-stated overrides.',
+  '   - If a [Document: "..." | docId: doc-XXXX] block is present, use it as the source of truth',
+  '     for updated content (e.g. updated properties file, new service list, etc.).',
+  '   - Build a partial DeploymentDesign JSON containing ONLY the fields that need to change.',
+  '     For VM/service changes: include the full updated "vms" array (not just the changed VM).',
+  '3) Call deployment:updateDesign(designId, designJson) ONCE.',
+  '   The tool automatically rebuilds the dependency graph, Mermaid diagram, and runbook.',
+  '4) After the tool returns, render:',
+  '   - The updated Mermaid diagram in a ```mermaid block.',
+  '   - A brief summary of what changed.',
+  '   - The updated VM resource table.',
+  '   Do NOT re-print the raw JSON. Do NOT loop.',
   '',
   'Never describe how to deploy manually when deployment tools can do it directly.',
   'Never invent hostnames or IPs — always use what the tools return.',
@@ -1053,10 +1094,18 @@ function buildDeploymentPlanPayload(designId: string, modeName?: string): Record
         .map((step) => step.command)
         .filter((cmd): cmd is string => Boolean(cmd))
         .join('\n');
+      // Use an env-var reference when the IP is still a placeholder so the
+      // health-check command is runnable even before IPs are assigned.
+      const resolvedIp = vm.ip || design.ipAssignments?.[svc.id];
+      const ipRef = (!resolvedIp || resolvedIp === '?.?.?.?')
+        ? (svc.configKeys.find((ck) => ck.valueType === 'host' || !ck.valueType)?.key
+            ? `$${svc.configKeys.find((ck) => ck.valueType === 'host' || !ck.valueType)!.key}`
+            : '${TARGET_HOST}')
+        : resolvedIp;
       const healthCheckCommand = svc.healthCheck?.type === 'http'
         ? `curl -f ${svc.healthCheck.target}`
         : svc.healthCheck?.type === 'port'
-          ? `nc -z -w${svc.healthCheck.timeoutSeconds} ${vm.ip || design.ipAssignments?.[svc.id] || '127.0.0.1'} ${svc.healthCheck.target}`
+          ? `nc -z -w${svc.healthCheck.timeoutSeconds} ${ipRef} ${svc.healthCheck.target}`
           : svc.healthCheck?.type === 'systemctl'
             ? `systemctl is-active ${svc.healthCheck.target}`
             : svc.healthCheck?.type === 'process'
@@ -1075,7 +1124,13 @@ function buildDeploymentPlanPayload(designId: string, modeName?: string): Record
         prerequisites: svc.installSteps
           .filter((step) => step.isPrerequisite)
           .map((step) => step.description),
-        runbook: extractedScript || fallbackScript || '#!/bin/bash\n# No runbook defined yet',
+        runbook: (() => {
+          let script = extractedScript || fallbackScript || '';
+          if (script && !script.startsWith('#!')) {
+            script = `#!/bin/bash\n\n${script}`;
+          }
+          return script || '#!/bin/bash\n# No runbook defined yet';
+        })(),
         healthCheckCommand,
         dependsOn: svc.requiresConfigFrom || [],
         status: 'pending',
@@ -1130,10 +1185,10 @@ export async function getModels(): Promise<string[]> {
     }
 
     // Fallback model list if API doesn't return expected format
-    return ['gpt-4', 'gpt-4o', 'claude-3.5-sonnet', 'o1-preview'];
+    return ['gpt-5.3-codex', 'gpt-4o', 'claude-3.5-sonnet', 'o1-preview'];
   } catch (e) {
     console.error('[ChatAPI] getModels error:', e);
-    return ['gpt-4', 'gpt-4o', 'claude-3.5-sonnet', 'o1-preview'];
+    return ['gpt-4.1', 'gpt-4o', 'claude-3.5-sonnet', 'o1-preview'];
   }
 }
 
@@ -1400,15 +1455,21 @@ export async function chatWithTools(
           }
         }
 
-        if ((tc.name === 'deployment_analyzeAndDesign' || tc.name === 'deployment_dryRun') && onDeploymentPlanReady) {
+        if (tc.name.startsWith('deployment_') && onDeploymentPlanReady) {
+          // The result may have been truncated by the OUTPUT_TRUNCATE guard, making it
+          // invalid JSON. Try JSON.parse first; fall back to regex-extracting designId.
+          let parsedDesign: { designId?: string; mode?: string; modeName?: string; error?: string } = {};
           try {
-            const parsed = JSON.parse(result) as { designId?: string; mode?: string; modeName?: string; error?: string };
-            if (parsed.designId && !parsed.error) {
-              const payload = buildDeploymentPlanPayload(parsed.designId, parsed.mode || parsed.modeName);
-              onDeploymentPlanReady(payload);
-            }
-          } catch (err) {
-            console.warn('[DeploymentPlan] Failed to parse deployment tool result for UI payload:', err);
+            parsedDesign = JSON.parse(result) as typeof parsedDesign;
+          } catch {
+            const m = result.match(/"designId"\s*:\s*"([^"]+)"/);
+            if (m) parsedDesign = { designId: m[1] };
+          }
+          if (parsedDesign.designId && !parsedDesign.error) {
+            const payload = buildDeploymentPlanPayload(parsedDesign.designId, parsedDesign.mode || parsedDesign.modeName);
+            onDeploymentPlanReady(payload);
+          } else if (!parsedDesign.designId) {
+            console.warn('[DeploymentPlan] Could not extract designId from tool result');
           }
         }
       }
@@ -1418,13 +1479,20 @@ export async function chatWithTools(
       // ── Post-execution: inject stop/render instructions ──────────────────
 
       // 1) If a deployment design tool succeeded, tell the LLM to render now.
-      const DESIGN_TOOLS = new Set(['deployment_analyzeAndDesign', 'deployment_dryRun']);
+      const DESIGN_TOOLS = new Set(['deployment_analyzeAndDesign', 'deployment_dryRun', 'deployment_generateDesign', 'deployment_updateDesign', 'deployment_assignIps']);
       for (const tm of toolMessages) {
         const tc = resolvedToolCalls.find((c) => c.id === tm.tool_call_id);
         if (tc && DESIGN_TOOLS.has(tc.name)) {
+          // Same truncation-resilient parse as above
+          let parsed: Record<string, unknown> = {};
           try {
-            const parsed = JSON.parse(typeof tm.content === 'string' ? tm.content : '{}') as Record<string, unknown>;
-            if (parsed.designId && !parsed.error) {
+            parsed = JSON.parse(typeof tm.content === 'string' ? tm.content : '{}') as Record<string, unknown>;
+          } catch {
+            const raw = typeof tm.content === 'string' ? tm.content : '';
+            const m = raw.match(/"designId"\s*:\s*"([^"]+)"/);
+            if (m) parsed = { designId: m[1] };
+          }
+          if (parsed.designId && !parsed.error) {
               console.log('[LANGCHAIN] Deployment design succeeded, injecting render instruction');
               lcMessages.push(new HumanMessage(
                 `The deployment design is complete (designId: ${parsed.designId}). ` +
@@ -1433,7 +1501,6 @@ export async function chatWithTools(
                 `and list the install order. Do NOT call any more tools.`
               ));
             }
-          } catch { /* non-JSON result, ignore */ }
         }
       }
 
@@ -1502,3 +1569,18 @@ export async function chatWithTools(
     }
   }
 }
+
+// ── HITL Deployment Graph — re-exported for IPC handlers ─────────────────────
+// Thin wrappers so ipcHandlers.ts has a single import point for everything chat-related.
+
+export {
+  startDeploymentGraph,
+  resumeDeploymentGraph,
+  clearDeploymentGraph,
+} from './deployment/hitl/deploymentGraph';
+
+export type {
+  GraphStartInput,
+  GraphResumeInput,
+  GraphRunResult,
+} from './deployment/hitl/deploymentGraph';

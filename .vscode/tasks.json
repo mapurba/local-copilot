@@ -1,0 +1,58 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build:electron-main",
+      "type": "shell",
+      "command": "npx",
+      "args": [
+        "tsc",
+        "-p",
+        "tsconfig.electron.json"
+      ],
+      "problemMatcher": [
+        "$tsc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "vite",
+      "type": "shell",
+      "command": "npx",
+      "args": [
+        "cross-env",
+        "PORT=5173",
+        "vite"
+      ],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "custom",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "http://localhost:5173|ready in"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "dev:prepare",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "build:electron-main",
+        "vite"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

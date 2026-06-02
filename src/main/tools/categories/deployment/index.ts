@@ -32,7 +32,7 @@ export function registerDeploymentTools(): void {
   // large DeploymentIntelligence object never has to flow through LLM context.
   toolRegistry.register(
     'deployment:analyzeAndDesign',
-    async (args: { docId: string; modeName?: string; strategy?: string; rawContent?: string }) => {
+    async (args: { docId: string; modeName?: string; strategy?: string; rawContent?: string; chatContext?: string }) => {
       if (!args.docId || args.docId === 'none' || args.docId === '') {
         return {
           error: 'No docId provided. Please call docs_list to find an uploaded document, then retry with the correct docId.',
@@ -40,7 +40,7 @@ export function registerDeploymentTools(): void {
       }
       const intel = await extractFromDocument(args.docId, {
         strategy: (args.strategy as 'auto' | 'single-pass' | 'chunked') ?? 'auto',
-      }, args.rawContent);
+      }, args.rawContent, args.chatContext);
       const mode = args.modeName ?? 'distributed';
       const design = buildDeploymentDesign(intel, mode);
       const id = saveDesign(design);
@@ -53,8 +53,8 @@ export function registerDeploymentTools(): void {
           if (ip) vm.ip = ip;
         }
         design.ipAssignments = ipAssignments;
-        design.mermaid = generateTopologyDiagram(design);
-        design.runbook = generateFullRunbook(design);
+        design.mermaid = generateTopologyDiagram(design, intel);
+        design.runbook = generateFullRunbook(design, intel);
         updateDesign(id, design);
       } catch (err) {
         // Partial or full failure — still return the design, just with some ?.?.?.? IPs
@@ -68,15 +68,18 @@ export function registerDeploymentTools(): void {
               vm.services.map((svc) => [svc.id, vm.ip ?? '?.?.?.?'])
             )
           );
-          design.mermaid = generateTopologyDiagram(design);
-          design.runbook = generateFullRunbook(design);
+          design.mermaid = generateTopologyDiagram(design, intel);
+          design.runbook = generateFullRunbook(design, intel);
           updateDesign(id, design);
         } else {
           console.warn('[analyzeAndDesign] IP allocation failed, returning design without IPs:', err);
         }
       }
 
-      // Return only what the LLM needs to render — not the full intel blob
+      // Return only what the LLM needs to render — not the full intel blob.
+      // Keep this compact: the mermaid diagram and full runbook are stored in the
+      // design and displayed by the UI. Returning them here would push the tool
+      // result over the 3 KB truncation threshold and break JSON.parse.
       const firstProduct = intel.products?.[0];
       return {
         designId: id,
@@ -95,7 +98,6 @@ export function registerDeploymentTools(): void {
           ip: v.ip ?? '?.?.?.?',
         })),
         ipAssignments: design.ipAssignments ?? {},
-        mermaid: design.mermaid,
         installOrder: design.dependencyGraph?.levels
           ?.flat()
           .map((svcId) => {
@@ -104,7 +106,8 @@ export function registerDeploymentTools(): void {
             return svc?.name ?? svcId;
           })
           .filter(Boolean) ?? [],
-        runbookSummary: design.runbook?.split('\n').slice(0, 30).join('\n') ?? '',
+        // Intentionally omitted: mermaid (large string — rendered by UI from design store)
+        // Intentionally omitted: runbookSummary (full runbook available via deployment:getDesign)
       };
     },
     {
@@ -116,7 +119,15 @@ export function registerDeploymentTools(): void {
       schema: z.object({
         docId: z.string().describe('Document ID (from docs_list or from [Document: ... | docId: XXX] in context)'),
         modeName: z.string().optional().describe('Deployment mode: "distributed", "ha", or "single-node". Default: "distributed"'),
-        strategy: z.enum(['auto', 'single-pass', 'chunked']).optional().describe('Extraction strategy. Default: auto'),        rawContent: z.string().optional().describe('Full document text if already available (e.g. from attached doc in context). Skips DB chunk reads for better accuracy.'),      }),
+        strategy: z.enum(['auto', 'single-pass', 'chunked']).optional().describe('Extraction strategy. Default: auto'),
+        rawContent: z.string().optional().describe('Full document text if already available (e.g. from attached doc in context). Skips DB chunk reads for better accuracy.'),
+        chatContext: z.string().optional().describe(
+          'Relevant information the user provided in this conversation: component lists, silent.properties variables, ' +
+          'configuration preferences, overrides, or any other specs the user stated verbally. ' +
+          'This is PREPENDED to the document and takes priority over document defaults. ' +
+          'Collect ALL relevant user-stated details from the current conversation and pass them here.'
+        ),
+      }),
     }
   );
 
@@ -215,8 +226,8 @@ export function registerDeploymentTools(): void {
       if (partial.vms || partial.intelligence) {
         const allServices = merged.vms.flatMap((v) => v.services);
         merged.dependencyGraph = buildDependencyGraph(allServices);
-        merged.mermaid = generateTopologyDiagram(merged);
-        merged.runbook = generateFullRunbook(merged);
+        merged.mermaid = generateTopologyDiagram(merged, merged.intelligence);
+        merged.runbook = generateFullRunbook(merged, merged.intelligence);
       }
 
       updateDesign(args.designId, merged);
@@ -267,8 +278,8 @@ export function registerDeploymentTools(): void {
         if (ip) vm.ip = ip;
       }
       design.ipAssignments = ipAssignments;
-      design.mermaid = generateTopologyDiagram(design);
-      design.runbook = generateFullRunbook(design);
+      design.mermaid = generateTopologyDiagram(design, design.intelligence);
+      design.runbook = generateFullRunbook(design, design.intelligence);
       updateDesign(args.designId, design);
       return {
         designId: args.designId,
@@ -455,7 +466,7 @@ export function registerDeploymentTools(): void {
   // No VMs are created. Safe to call at any time.
   toolRegistry.register(
     'deployment:dryRun',
-    async (args: { docId: string; modeName?: string; strategy?: string; rawContent?: string }) => {
+    async (args: { docId: string; modeName?: string; strategy?: string; rawContent?: string; chatContext?: string }) => {
       if (!args.docId || args.docId === 'none' || args.docId === '') {
         return { error: 'No docId provided. Call docs:list to find an uploaded document, then retry.' };
       }
@@ -464,7 +475,8 @@ export function registerDeploymentTools(): void {
       const intel = await extractFromDocument(
         args.docId,
         { strategy: (args.strategy as 'auto' | 'single-pass' | 'chunked') ?? 'auto' },
-        args.rawContent
+        args.rawContent,
+        args.chatContext
       );
 
       const mode = args.modeName ?? 'distributed';
@@ -486,8 +498,8 @@ export function registerDeploymentTools(): void {
         // Regenerate diagram and runbook now that IPs are assigned
         const { generateTopologyDiagram: genDiagram } = await import('../../../deployment/mermaidGenerator');
         const { generateFullRunbook: genRunbook } = await import('../../../deployment/runbookGenerator');
-        design.mermaid = genDiagram(design);
-        design.runbook = genRunbook(design);
+        design.mermaid = genDiagram(design, intel);
+        design.runbook = genRunbook(design, intel);
       } catch (err) {
         // Recover partial successes from IpAllocationError (succeeded is vmId → ip)
         if (err instanceof IpAllocationError && Object.keys(err.succeeded).length > 0) {
@@ -571,6 +583,12 @@ export function registerDeploymentTools(): void {
         modeName: z.string().optional().describe('Deployment mode: "distributed", "ha", or "single-node". Default: "distributed"'),
         strategy: z.enum(['auto', 'single-pass', 'chunked']).optional().describe('Extraction strategy. Default: auto'),
         rawContent: z.string().optional().describe('Full document text if already in context (improves accuracy by skipping DB chunk reads)'),
+        chatContext: z.string().optional().describe(
+          'Relevant information the user provided in this conversation: component lists, silent.properties variables, ' +
+          'configuration preferences, overrides, or any other specs the user stated verbally. ' +
+          'This is PREPENDED to the document and takes priority over document defaults. ' +
+          'Collect ALL relevant user-stated details from the current conversation and pass them here.'
+        ),
       }),
     }
   );

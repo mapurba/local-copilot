@@ -3,8 +3,17 @@ import ConfirmDialog from './ConfirmDialog';
 import ModelSelector from './ModelSelector';
 import ResponseRenderer from './ResponseRenderer';
 import ConfigureToolsPanel from './ConfigureToolsPanel';
+import DeploymentCheckpointCard from './DeploymentCheckpointCard';
+import type { CheckpointPayload } from './DeploymentCheckpointCard';
 import { Button, IconButton } from '@ux-aspects-universal/react/button';
 import { TextArea } from '@ux-aspects-universal/react/text-input';
+
+interface ChatPaneProps {
+  checkpointPayload?: CheckpointPayload | null;
+  checkpointLoading?: boolean;
+  onCheckpointSubmit?: (threadId: string, answers: Record<string, unknown>) => void;
+  onCheckpointCancel?: (threadId: string) => void;
+}
 
 interface Message {
   role: 'user' | 'assistant';
@@ -104,7 +113,12 @@ function buildWelcomeMessage(vmName: string): string {
   ].join('\n');
 }
 
-const ChatPane: React.FC = () => {
+const ChatPane: React.FC<ChatPaneProps> = ({
+  checkpointPayload,
+  checkpointLoading = false,
+  onCheckpointSubmit,
+  onCheckpointCancel,
+}) => {
   // Confirmation dialog state
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmMessage, setConfirmMessage] = useState('');
@@ -119,6 +133,8 @@ const ChatPane: React.FC = () => {
     { role: 'assistant', content: buildWelcomeMessage('myvm') },
   ]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const conversationIdRef = useRef<string | null>(conversationId);
+  useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
   const [conversationLoading, setConversationLoading] = useState(false);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gpt-4');
@@ -213,20 +229,22 @@ const ChatPane: React.FC = () => {
       setIsStreaming(false);
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        if (last && last.streaming) return [...prev.slice(0, -1), { ...last, streaming: false }];
+        if (last && last.streaming) {
+          const finalized = { ...last, streaming: false };
+          const newArr = [...prev.slice(0, -1), finalized];
+          // Persist final assistant message using the latest conversationId from ref
+          try {
+            const convId = conversationIdRef.current;
+            if (convId) {
+              void window.copilot.chatHistoryAppend(convId, { role: 'assistant', content: finalized.content, ts: new Date().toISOString() });
+            }
+          } catch (err) {
+            // ignore persistence errors
+          }
+          return newArr;
+        }
         return prev;
       });
-      // Persist final assistant message to conversation store
-      try {
-        if (conversationId) {
-          const last = messages[messages.length - 1];
-          if (last && last.role === 'assistant') {
-            void window.copilot.chatHistoryAppend(conversationId, { role: 'assistant', content: last.content, ts: new Date().toISOString() });
-          }
-        }
-      } catch (err) {
-        // ignore persistence errors
-      }
     });
 
     const unsubError = window.copilot.onChatError((_event: unknown, message: string) => {
@@ -1099,6 +1117,16 @@ const ChatPane: React.FC = () => {
         )}
 
         <div ref={messagesEndRef} />
+
+        {/* HITL Deployment Graph checkpoint card — shown inline after messages */}
+        {checkpointPayload && (
+          <DeploymentCheckpointCard
+            payload={checkpointPayload}
+            isLoading={checkpointLoading}
+            onSubmit={(threadId, answers) => onCheckpointSubmit?.(threadId, answers)}
+            onCancel={(threadId) => onCheckpointCancel?.(threadId)}
+          />
+        )}
       </div>
 
       {/* ── Input Area ─────────────────────────────────────────────────── */}

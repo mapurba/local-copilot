@@ -1,7 +1,11 @@
 import { BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { lspClient } from './lspClient';
 import { tokenManager } from './tokenManager';
-import { getModels, streamChatCompletion, chatWithTools, cancelChatWithTools, ChatMessage, getToolManifest } from './copilotChatApi';
+import {
+  getModels, streamChatCompletion, chatWithTools, cancelChatWithTools, getToolManifest,
+  startDeploymentGraph, resumeDeploymentGraph, clearDeploymentGraph,
+} from './copilotChatApi';
+import type { ChatMessage, GraphStartInput, GraphResumeInput } from './copilotChatApi';
 import http from 'http';
 import https from 'https';
 import { vcdSignIn, vcdStatus, vcdSignOut } from './vcdAuth';
@@ -27,8 +31,9 @@ import { checkForUpdates } from './autoUpdater';
 import { listVms } from './vcdApi';
 import { logApi } from './apiLogger';
 import { approvalSystem } from './tools';
-import { listDocuments, getDocument, deleteDocument } from './tools/categories/docs/storage';
-import { readDocContent } from './tools/categories/docs/fileStore';
+import { listDocuments, getDocument, deleteDocument, insertDocument } from './tools/categories/docs/storage';
+import { readDocContent, saveDocContent } from './tools/categories/docs/fileStore';
+import { callLlm } from './tools/categories/docs/pipeline';
 import { taskTracker } from './taskTracker';
 import {
   saveDeploymentDraft,
@@ -74,6 +79,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
         reject(err);
       });
   });
+}
+
+function extractJsonObject(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]+?)\s*```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) return raw.slice(start, end + 1);
+  return raw.trim();
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
@@ -874,6 +888,165 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     }
   });
 
+  // ── Import a URL as a document (markitdown-ts → raw markdown → docs folder)
+  ipcMain.handle('docs:importFromUrl', async (_event, url: string) => {
+    if (!url || !url.startsWith('http')) {
+      return { success: false, error: 'A valid http/https URL is required.' };
+    }
+    try {
+      const { MarkItDown } = await import('markitdown-ts');
+      const mid = new MarkItDown();
+
+      console.log(`[DocImport] Fetching and converting URL: ${url}`);
+      const result = await mid.convert(url);
+      const markdown = result?.markdown ?? '';
+
+      if (!markdown.trim()) {
+        return { success: false, error: 'markitdown-ts returned empty content for this URL.' };
+      }
+
+      // Derive a filename from the URL
+      const urlObj = new URL(url);
+      const rawName = urlObj.pathname.split('/').filter(Boolean).pop() ?? urlObj.hostname;
+      const filename = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
+
+      const docId = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      // Insert metadata record (pending, no auto-analysis)
+      insertDocument({
+        id: docId,
+        filename,
+        originalPath: url,
+        fileType: 'url',
+        sizeBytes: Buffer.byteLength(markdown, 'utf-8'),
+        uploadedAt: Date.now(),
+        status: 'pending',
+        tags: [],
+        title: filename,
+      });
+
+      // Save raw markdown content
+      saveDocContent(docId, markdown);
+
+      console.log(`[DocImport] ✓ Saved ${markdown.length} chars as ${docId} (${filename})`);
+      return { success: true, docId, filename };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[DocImport] Failed:', msg);
+      return { success: false, error: msg };
+    }
+  });
+
+  // ── Run the refiner pipeline on a stored document (streams logs via push event)
+  ipcMain.handle('docs:analyze', async (_event, docId: string) => {
+    const doc = getDocument(docId);
+    if (!doc) return { success: false, error: `Document not found: ${docId}` };
+
+    const win = BrowserWindow.getAllWindows()[0];
+    const pushLog = (log: { message: string; level: string; done: boolean }) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('docs:analyze-log', { docId, ...log });
+      }
+    };
+
+    // Kick off asynchronously — caller gets { started: true } immediately
+    // and receives progress via 'docs:analyze-log' push events.
+    (async () => {
+      try {
+        const { analyzeStoredDoc } = await import('./tools/categories/docs/refinePipeline');
+        await analyzeStoredDoc(docId, pushLog);
+      } catch {
+        // errors already sent via pushLog inside analyzeStoredDoc
+      }
+    })();
+
+    return { success: true, started: true };
+  });
+
+  // ── Merge multiple stored documents into one (concat content, delete originals)
+  ipcMain.handle('docs:mergeDocs', async (_event, docIds: string[]) => {
+    if (!Array.isArray(docIds) || docIds.length < 2) {
+      return { success: false, error: 'At least 2 document IDs are required to merge.' };
+    }
+    try {
+      const parts: string[] = [];
+      for (const id of docIds) {
+        const content = readDocContent(id);
+        if (content) parts.push(content);
+      }
+      const combined = parts.join('\n\n---\n\n');
+      const mergedId = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      insertDocument({
+        id: mergedId,
+        filename: 'merged.md',
+        fileType: 'merged',
+        sizeBytes: Buffer.byteLength(combined, 'utf-8'),
+        uploadedAt: Date.now(),
+        status: 'pending',
+        tags: [],
+        title: `Merged (${docIds.length} sources)`,
+      });
+      saveDocContent(mergedId, combined);
+      // Remove the individual source docs now that they are merged
+      for (const id of docIds) {
+        deleteDocument(id);
+      }
+      console.log(`[DocMerge] Created merged doc ${mergedId} from ${docIds.length} sources`);
+      return { success: true, docId: mergedId, filename: 'merged.md' };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[DocMerge] Failed:', msg);
+      return { success: false, error: msg };
+    }
+  });
+
+  // ── Fetch a URL as markdown without saving it (used for concat import preview)
+  ipcMain.handle('docs:fetchUrlMarkdown', async (_event, url: string) => {
+    if (!url || !url.startsWith('http')) {
+      return { success: false, error: 'A valid http/https URL is required.' };
+    }
+    try {
+      const { MarkItDown } = await import('markitdown-ts');
+      const mid = new MarkItDown();
+      console.log(`[DocFetch] Fetching ${url}`);
+      const result = await mid.convert(url);
+      const markdown = result?.markdown ?? '';
+      if (!markdown.trim()) {
+        return { success: false, error: 'Empty content returned for this URL.' };
+      }
+      return { success: true, markdown };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── Save raw markdown content as a new document (used for merged / concat imports)
+  ipcMain.handle('docs:saveMarkdown', async (_event, title: string, markdown: string) => {
+    if (!markdown?.trim()) {
+      return { success: false, error: 'No content to save.' };
+    }
+    try {
+      const docId = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const safeTitle = (title ?? 'merged').replace(/[^a-z0-9\-_ ]/gi, '').trim().slice(0, 60) || 'merged';
+      const filename = `${safeTitle.replace(/\s+/g, '-')}.md`;
+      insertDocument({
+        id: docId,
+        filename,
+        fileType: 'merged',
+        sizeBytes: Buffer.byteLength(markdown, 'utf-8'),
+        uploadedAt: Date.now(),
+        status: 'pending',
+        tags: [],
+        title: title ?? safeTitle,
+      });
+      saveDocContent(docId, markdown);
+      console.log(`[DocSave] Saved ${markdown.length} chars as ${docId} (${filename})`);
+      return { success: true, docId, filename };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   // ── Task Tracker Handlers ─────────────────────────────────────────────────
 
   // List recent tasks
@@ -959,8 +1132,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
       if (partial.vms || partial.intelligence) {
         const allServices = merged.vms.flatMap((v) => v.services);
         merged.dependencyGraph = buildDependencyGraph(allServices);
-        merged.mermaid = generateTopologyDiagram(merged);
-        merged.runbook = generateFullRunbook(merged);
+        merged.mermaid = generateTopologyDiagram(merged, merged.intelligence);
+        merged.runbook = generateFullRunbook(merged, merged.intelligence);
       }
       updateDesign(designId, merged);
       return { success: true };
@@ -982,8 +1155,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         if (ip) vm.ip = ip;
       }
       design.ipAssignments = ipAssignments;
-      design.mermaid = generateTopologyDiagram(design);
-      design.runbook = generateFullRunbook(design);
+      design.mermaid = generateTopologyDiagram(design, design.intelligence);
+      design.runbook = generateFullRunbook(design, design.intelligence);
       updateDesign(designId, design);
       return { success: true, ipAssignments };
     } catch (err) {
@@ -1036,6 +1209,171 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         allResults.push(...results);
       }
       return { success: true, results: allResults };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // LLM dry-run validation for runbook shell scripts.
+  // Detects obvious syntax / quoting / interpolation issues and returns
+  // a healed script when fixes are required.
+  ipcMain.handle('deployment:dryRunRunbookScript', async (_event, input: {
+    script: string;
+    serviceName?: string;
+    osHint?: string;
+  }) => {
+    try {
+      const script = String(input?.script ?? '').trim();
+      if (!script) {
+        return { success: false, error: 'Script is empty.' };
+      }
+
+      const systemPrompt = [
+        'You are a senior DevOps reviewer for bash deployment scripts.',
+        'Perform a DRY-RUN style static validation only (no execution).',
+        'Find obvious syntax/runtime blockers and auto-heal the script if needed.',
+        'The final script MUST be fully unattended (zero user interaction).',
+        'Focus on:',
+        '- quote misuse that blocks variable expansion (e.g. sed with single quotes around ${VAR})',
+        '- heredoc delimiter quoting errors that unintentionally prevent interpolation',
+        '- missing referenced env vars',
+        '- interactive commands/prompts: read -p, select, passwd, whiptail/dialog, yes/no prompts, or stdin waits',
+        '- unresolved placeholders that require manual input (CHANGE_ME, TODO, <FILL_ME>)',
+        '- dangerous or invalid shell syntax',
+        '- contradictory/misleading port exports when hardcoded values differ later',
+        '- obvious command sequencing/idempotency mistakes',
+        'Healing requirements:',
+        '- Remove all interactive behavior.',
+        '- For required values, inject non-interactive env defaults at top of script using pattern:',
+        '  : "${VAR_NAME:=defaultValueFromDoc}"',
+        '- If the source doc provides concrete defaults (e.g., host/password), use them.',
+        '- Keep script runnable end-to-end without asking the user for any input.',
+        'Preserve intent and keep changes minimal.',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "summary": "short text",',
+        '  "hasCriticalErrors": true,',
+        '  "issues": [',
+        '    {"severity":"critical|warning|info","title":"...","detail":"...","lineHint":"optional"}',
+        '  ],',
+        '  "changed": true,',
+        '  "healedScript": "full bash script"',
+        '}',
+      ].join('\n');
+
+      const userContent = [
+        `Service: ${input?.serviceName ?? 'unknown'}`,
+        `OS: ${input?.osHint ?? 'linux'}`,
+        '',
+        'Script to validate and heal:',
+        '```bash',
+        script,
+        '```',
+      ].join('\n');
+
+      const raw = await callLlm(systemPrompt, userContent, 3500);
+      const json = extractJsonObject(raw);
+      const parsed = JSON.parse(json) as {
+        summary?: string;
+        hasCriticalErrors?: boolean;
+        issues?: Array<{ severity?: string; title?: string; detail?: string; lineHint?: string }>;
+        changed?: boolean;
+        healedScript?: string;
+      };
+
+      const healed = String(parsed.healedScript ?? script).trim();
+      const changed = Boolean(parsed.changed) || healed !== script;
+      return {
+        success: true,
+        summary: parsed.summary ?? 'Validation completed.',
+        hasCriticalErrors: Boolean(parsed.hasCriticalErrors),
+        issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+        changed,
+        healedScript: healed,
+      };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── HITL Deployment Graph ──────────────────────────────────────────────────
+
+  /**
+   * Start a new HITL deployment graph run.
+   * The threadId ties the graph state to a specific conversation so the user
+   * can resume across separate messages (or even app restarts).
+   */
+  ipcMain.handle(
+    'deployment:graph:start',
+    async (
+      _event,
+      threadId: string,
+      input: GraphStartInput
+    ) => {
+      try {
+        const result = await startDeploymentGraph(threadId, input);
+        if (!result.done && result.question) {
+          mainWindow.webContents.send('deployment:checkpoint', {
+            threadId,
+            phase: result.phase,
+            question: result.question,
+            data: result.data ?? {},
+          });
+        } else if (result.done) {
+          mainWindow.webContents.send('deployment:graph:complete', {
+            threadId,
+            designId: result.designId,
+            warnings: result.warnings,
+          });
+        }
+        return { success: true, ...result };
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+  );
+
+  /**
+   * Resume the HITL deployment graph after the user answered a checkpoint question.
+   * userUpdate contains the fields the user provided (osPreference, networkDetails, etc.).
+   */
+  ipcMain.handle(
+    'deployment:graph:resume',
+    async (
+      _event,
+      threadId: string,
+      userUpdate: GraphResumeInput
+    ) => {
+      try {
+        const result = await resumeDeploymentGraph(threadId, userUpdate);
+        if (!result.done && result.question) {
+          mainWindow.webContents.send('deployment:checkpoint', {
+            threadId,
+            phase: result.phase,
+            question: result.question,
+            data: result.data ?? {},
+          });
+        } else if (result.done) {
+          mainWindow.webContents.send('deployment:graph:complete', {
+            threadId,
+            designId: result.designId,
+            warnings: result.warnings,
+          });
+        }
+        return { success: true, ...result };
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+  );
+
+  /**
+   * Abandon an in-progress HITL graph run (deletes checkpoint file for the thread).
+   */
+  ipcMain.handle('deployment:graph:clear', async (_event, threadId: string) => {
+    try {
+      clearDeploymentGraph(threadId);
+      return { success: true };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }

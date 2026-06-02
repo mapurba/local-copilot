@@ -32,7 +32,7 @@ export interface DocumentRecord {
   sizeBytes: number;
   uploadedAt: number;
   processedAt?: number;
-  status: 'pending' | 'processing' | 'ready' | 'error';
+  status: 'pending' | 'processing' | 'ready' | 'analysed' | 'error';
   summary?: string;
   title?: string;
   tags: string[];

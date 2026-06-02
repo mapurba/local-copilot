@@ -6,10 +6,12 @@ import { ThemeProvider, Theme } from '@ux-aspects-universal/react/theming';
 import { IconButton } from '@ux-aspects-universal/react/button';
 import { Dialog, DialogHeader, DialogContent, DialogFooter } from '@ux-aspects-universal/react/dialog';
 import { Button } from '@ux-aspects-universal/react/button';
+import DocPreviewPane from './components/DocPreviewPane';
 import UpdateToast from './components/UpdateToast';
 import { checkForAppUpdate } from './autoUpdate';
 import Sidebar from './components/Sidebar';
 import ChatPane from './components/ChatPane';
+import type { CheckpointPayload } from './components/DeploymentCheckpointCard';
 import DeploymentPlanPane from './components/DeploymentPlanPane';
 import AuthModal from './components/AuthModal';
 import VcdAuthModal from './components/VcdAuthModal';
@@ -54,13 +56,19 @@ const App: React.FC = () => {
   const [user, setUser] = useState<string | undefined>();
   const [vcdStatus, setVcdStatus] = useState<{ connected: boolean; user?: string; org?: string; host?: string }>({ connected: false });
   const [showVcdModal, setShowVcdModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'chat' | 'deploy'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'deploy' | 'preview'>('chat');
+  const [deployTabOpen, setDeployTabOpen] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<{ docId: string; title: string; content: string } | null>(null);
   const [deploymentPlan, setDeploymentPlan] = useState<DeploymentPlan | null>(null);
   const [currentDraftSavedAt, setCurrentDraftSavedAt] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     return saved === 'dark' ? 'dark' : 'light';
   });
+
+  // HITL Deployment Graph checkpoint state
+  const [checkpointPayload, setCheckpointPayload] = useState<CheckpointPayload | null>(null);
+  const [checkpointLoading, setCheckpointLoading] = useState(false);
 
   // Tool approval state
   const [approvalRequest, setApprovalRequest] = useState<{
@@ -144,14 +152,41 @@ const App: React.FC = () => {
     const cleanupPlan = window.copilot.onDeploymentPlanReady((_event, plan) => {
       const deployment = plan as unknown as DeploymentPlan;
       setDeploymentPlan(deployment);
+      setDeployTabOpen(true);
       setActiveTab('deploy');
+      setCheckpointPayload(null);
+      setCheckpointLoading(false);
       void saveDraft(deployment);
     });
+
+    const cleanupCheckpoint = window.copilot.onDeploymentCheckpoint((_event, payload) => {
+      console.log('[App] Deployment checkpoint:', payload);
+      setCheckpointPayload(payload as CheckpointPayload);
+      setCheckpointLoading(false);
+      // Switch to chat tab so the user sees the checkpoint card
+      setActiveTab('chat');
+    });
+
+    const cleanupGraphComplete = window.copilot.onDeploymentGraphComplete((_event, payload) => {
+      console.log('[App] Deployment graph complete:', payload);
+      setCheckpointPayload(null);
+      setCheckpointLoading(false);
+    });
+
+    const handlePreviewDoc = (e: Event) => {
+      const { docId, title, content } = (e as CustomEvent<{ docId: string; title: string; content: string }>).detail;
+      setPreviewDoc({ docId, title, content });
+      setActiveTab('preview');
+    };
+    window.addEventListener('preview-doc', handlePreviewDoc);
 
     return () => {
       cleanupVcd();
       cleanupApproval();
       cleanupPlan();
+      cleanupCheckpoint();
+      cleanupGraphComplete();
+      window.removeEventListener('preview-doc', handlePreviewDoc);
     };
   }, []);
 
@@ -203,6 +238,7 @@ const App: React.FC = () => {
                 return;
               }
               setDeploymentPlan(loadRes.plan as unknown as DeploymentPlan);
+              setDeployTabOpen(true);
               setActiveTab('deploy');
               resolve();
             });
@@ -222,6 +258,7 @@ const App: React.FC = () => {
         return;
       }
       setDeploymentPlan(loadRes.plan as unknown as DeploymentPlan);
+      setDeployTabOpen(true);
       setActiveTab('deploy');
     } catch (e: any) {
       window.alert(e?.message || String(e));
@@ -240,6 +277,7 @@ const App: React.FC = () => {
       }
       if (deploymentPlan && deploymentPlan.id === id) {
         setDeploymentPlan(null);
+        setDeployTabOpen(false);
         setActiveTab('chat');
         setCurrentDraftSavedAt(null);
       }
@@ -265,6 +303,7 @@ const App: React.FC = () => {
   };
 
   const handleCloseDraft = () => {
+    setDeployTabOpen(false);
     setActiveTab('chat');
   };
 
@@ -273,6 +312,7 @@ const App: React.FC = () => {
     if (!confirmed) return;
 
     setDeploymentPlan(null);
+    setDeployTabOpen(false);
     setActiveTab('chat');
   };
 
@@ -281,6 +321,7 @@ const App: React.FC = () => {
     if (!confirmed) return;
 
     setDeploymentPlan(null);
+    setDeployTabOpen(false);
     setActiveTab('chat');
     setCurrentDraftSavedAt(null);
   };
@@ -356,9 +397,20 @@ const App: React.FC = () => {
 
   const resolveTemplateForService = async (serviceId: string, vmName: string, os?: string) => {
     const current = deploymentPlan?.services.find((s) => s.id === serviceId);
-    const existingTemplateId = current?.templateId?.trim();
+    // Check camelCase (set via updateServiceFields during session), then snake_case
+    // (loaded from persisted JSON), then the plan-level global template.
+    const existingTemplateId = (
+      current?.templateId?.trim() ||
+      (current as any)?.vm_template_id?.trim() ||
+      deploymentPlan?.vm_template_id?.trim()
+    );
+    const existingTemplateName = (
+      current?.templateName?.trim() ||
+      (current as any)?.vm_template_name?.trim() ||
+      deploymentPlan?.vm_template_name?.trim()
+    );
     if (existingTemplateId) {
-      return { templateId: existingTemplateId, templateName: current?.templateName?.trim() || undefined };
+      return { templateId: existingTemplateId, templateName: existingTemplateName || undefined };
     }
 
     // Try to parse runbook metadata (template id/name, vm name, ip)
@@ -424,15 +476,15 @@ const App: React.FC = () => {
       return { templateId: metadata.templateId, templateName: metadata.templateName };
     }
 
-    // Show modal dialog for template selection, prefill with template name if available
+    // Show modal dialog for template selection, prefill with global template if available
     return new Promise<{ templateId: string; templateName?: string } | null>((resolve) => {
       setTemplateDialog({
         open: true,
         serviceId,
         vmName,
         os,
-        initialTemplateId: '',
-        initialTemplateName: metadata.templateName || '',
+        initialTemplateId: deploymentPlan?.vm_template_id || '',
+        initialTemplateName: metadata.templateName || deploymentPlan?.vm_template_name || '',
         resolve,
       });
     });
@@ -492,80 +544,140 @@ const App: React.FC = () => {
   };
 
   const deployServiceById = async (serviceId: string): Promise<boolean> => {
-    const service = deploymentPlan?.services.find((s) => s.id === serviceId);
-    if (!service || !deploymentPlan) return false;
+    if (!deploymentPlan) return false;
+    const service = deploymentPlan.services.find((s) => s.id === serviceId);
+    if (!service) return false;
+    // Delegate to VM-group deployment so co-located services are combined
+    const vmName = service.vmName || serviceId;
+    const colocated = deploymentPlan.services
+      .filter((s) => (s.vmName || s.id) === vmName && (s.status === 'pending' || s.status === 'failed'));
+    const ids = colocated.length > 0 ? colocated.map((s) => s.id) : [serviceId];
+    return deployVmGroup(vmName, ids);
+  };
+
+  /**
+   * Deploy all services that share the same VM as one unit.
+   * Creates the VM once with a combined runbook containing every service's steps.
+   */
+  const deployVmGroup = async (vmName: string, serviceIds: string[]): Promise<boolean> => {
+    if (!deploymentPlan) return false;
+    const services = serviceIds
+      .map((id) => deploymentPlan.services.find((s) => s.id === id))
+      .filter(Boolean) as typeof deploymentPlan.services;
+    if (services.length === 0) return false;
 
     if (!vcdStatus.connected) {
       setShowVcdModal(true);
-      appendServiceLog(serviceId, 'VCD session is not connected. Please sign in and retry.', {
-        status: 'failed',
-        statusMessage: 'VCD login required',
-      });
+      for (const svc of services) {
+        appendServiceLog(svc.id, 'VCD session is not connected. Please sign in and retry.', {
+          status: 'failed',
+          statusMessage: 'VCD login required',
+        });
+      }
       return false;
     }
 
-    try {
-      appendServiceLog(serviceId, `Starting VM provisioning for service "${service.name}"...`, {
+    // Mark all co-located services as provisioning
+    for (const svc of services) {
+      appendServiceLog(svc.id, `Starting VM provisioning for "${svc.name}" on ${vmName}...`, {
         status: 'provisioning',
         statusMessage: 'Preparing deployment request',
       });
+    }
 
-      const resolvedTemplate = await resolveTemplateForService(serviceId, service.vmName, service.os);
+    try {
+      // Resolve template once for this VM (primary service drives the dialog if needed)
+      const primary = services[0];
+      const resolvedTemplate = await resolveTemplateForService(primary.id, vmName, primary.os);
       if (!resolvedTemplate) {
-        appendServiceLog(serviceId, 'Deployment cancelled. Template ID was not provided.', {
-          status: 'failed',
-          statusMessage: 'Template selection cancelled',
-        });
+        for (const svc of services) {
+          appendServiceLog(svc.id, 'Deployment cancelled. Template ID was not provided.', {
+            status: 'failed',
+            statusMessage: 'Template selection cancelled',
+          });
+        }
         return false;
       }
 
-      updateServiceFields(serviceId, {
-        templateId: resolvedTemplate.templateId,
-        templateName: resolvedTemplate.templateName,
-      });
-      appendServiceLog(serviceId, `Using template ${resolvedTemplate.templateName || resolvedTemplate.templateId}.`);
+      for (const svc of services) {
+        updateServiceFields(svc.id, {
+          templateId: resolvedTemplate.templateId,
+          templateName: resolvedTemplate.templateName,
+          vm_template_id: resolvedTemplate.templateId,
+          vm_template_name: resolvedTemplate.templateName,
+        } as any);
+      }
+      appendServiceLog(primary.id, `Using template ${resolvedTemplate.templateName || resolvedTemplate.templateId}.`);
 
-      const assignedIp = await ensureServiceIp(serviceId, service.vmName, service.ip);
+      // Allocate or reuse the shared IP for this VM
+      const existingIp = services.find((s) => s.ip?.trim())?.ip;
+      const assignedIp = await ensureServiceIp(primary.id, vmName, existingIp);
+      // Propagate the same IP to every co-located service
+      for (const svc of services) {
+        if (!svc.ip?.trim() || svc.ip !== assignedIp) {
+          updateServiceFields(svc.id, { ip: assignedIp });
+        }
+      }
 
-      appendServiceLog(serviceId, 'Submitting create VM request via deployVm...', {
-        status: 'installing',
-        statusMessage: 'Submitting VM creation request',
-      });
+      // Build combined runbook — one #!/bin/bash header then per-service sections
+      const combinedRunbook = [
+        '#!/bin/bash',
+        `# Combined deployment script for VM: ${vmName}`,
+        `# Services: ${services.map((s) => s.name).join(', ')}`,
+        '',
+        ...services.map((svc, idx) => {
+          // Strip shebang from non-first runbooks
+          const rb = (svc.runbook || '').replace(/^#!\/[^\n]*\n?/, '').trim();
+          return `# ${'─'.repeat(60)}\n# Service ${idx + 1}/${services.length}: ${svc.name}\n# ${'─'.repeat(60)}\n${rb}`;
+        }),
+      ].join('\n\n');
+
+      const label = services.length > 1
+        ? `${services.length} services (${services.map((s) => s.name).join(', ')})`
+        : `"${services[0].name}"`;
+
+      for (const svc of services) {
+        appendServiceLog(svc.id, `Deploying ${label} on VM ${vmName}...`, {
+          status: 'installing',
+          statusMessage: 'Submitting VM creation request',
+        });
+      }
 
       const deployResult = await window.copilot.deployVm({
-        vm_name: service.vmName,
+        vm_name: vmName,
         template_id: resolvedTemplate.templateId,
         template_name: resolvedTemplate.templateName,
         ip_address: assignedIp,
         ip_allocation_mode: 'MANUAL',
         power_on: true,
-        custom_script: service.runbook,
+        custom_script: combinedRunbook,
       });
 
       if (!deployResult.success) {
         throw new Error(deployResult.error || 'Unknown VM deployment error');
       }
 
-      appendServiceLog(serviceId, 'VM creation request accepted by backend.', {
-        status: 'running',
-        statusMessage: 'VM create request submitted',
-      });
+      for (const svc of services) {
+        appendServiceLog(svc.id, `VM ${vmName} created. All services on this VM are deployed together.`, {
+          status: 'running',
+          statusMessage: 'VM create request submitted',
+        });
+      }
 
       const resultPreview = JSON.stringify(deployResult.result ?? {}, null, 2);
       if (resultPreview && resultPreview !== '{}') {
-        appendServiceLog(serviceId, `Backend response:\n${resultPreview}`);
+        appendServiceLog(primary.id, `Backend response:\n${resultPreview}`);
       }
 
       return true;
     } catch (err) {
-      appendServiceLog(
-        serviceId,
-        `Deployment failed: ${err instanceof Error ? err.message : String(err)}`,
-        {
+      const msg = err instanceof Error ? err.message : String(err);
+      for (const svc of services) {
+        appendServiceLog(svc.id, `Deployment failed: ${msg}`, {
           status: 'failed',
-          statusMessage: err instanceof Error ? err.message : 'Deployment failed',
-        }
-      );
+          statusMessage: msg,
+        });
+      }
       return false;
     }
   };
@@ -576,15 +688,28 @@ const App: React.FC = () => {
 
   const handleDeployAll = async () => {
     if (!deploymentPlan) return;
-    const queue = [...deploymentPlan.services]
-      .filter((service) => service.status === 'pending' || service.status === 'failed')
-      .sort((a, b) => a.dependsOn.length - b.dependsOn.length);
 
-    if (queue.length === 0) return;
+    // Group pending/failed services by vmName — each VM is deployed once
+    const vmGroups = new Map<string, string[]>();
+    for (const svc of deploymentPlan.services) {
+      if (svc.status !== 'pending' && svc.status !== 'failed') continue;
+      const key = svc.vmName || svc.id;
+      if (!vmGroups.has(key)) vmGroups.set(key, []);
+      vmGroups.get(key)!.push(svc.id);
+    }
+
+    if (vmGroups.size === 0) return;
+
+    // Sort VMs: those whose services have fewer dependencies go first
+    const sorted = [...vmGroups.entries()].sort(([, aIds], [, bIds]) => {
+      const minDeps = (ids: string[]) =>
+        Math.min(...ids.map((id) => deploymentPlan.services.find((s) => s.id === id)?.dependsOn.length ?? 0));
+      return minDeps(aIds) - minDeps(bIds);
+    });
 
     let allSucceeded = true;
-    for (const service of queue) {
-      const ok = await deployServiceById(service.id);
+    for (const [vmName, serviceIds] of sorted) {
+      const ok = await deployVmGroup(vmName, serviceIds);
       if (!ok) allSucceeded = false;
     }
 
@@ -698,24 +823,58 @@ const App: React.FC = () => {
                     </svg>
                     Chat
                   </button>
-                  {deploymentPlan && (
-                    <button
-                      onClick={() => setActiveTab('deploy')}
-                      className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-colors ${activeTab === 'deploy' ? 'border-green-500 text-green-400' : 'border-transparent text-gray-400 hover:text-gray-300'}`}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                        <line x1="8" y1="21" x2="16" y2="21" />
-                        <line x1="12" y1="17" x2="12" y2="21" />
-                      </svg>
-                      Design / Deploy
-                    </button>
+                  {deploymentPlan && deployTabOpen && (
+                    <div className="flex items-center">
+                      <button
+                        onClick={() => setActiveTab('deploy')}
+                        className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-colors ${activeTab === 'deploy' ? 'border-green-500 text-green-400' : 'border-transparent text-gray-400 hover:text-gray-300'}`}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                          <line x1="8" y1="21" x2="16" y2="21" />
+                          <line x1="12" y1="17" x2="12" y2="21" />
+                        </svg>
+                        Design / Deploy
+                      </button>
+                      <button
+                        onClick={handleCloseDraft}
+                        className="px-1.5 py-3 text-gray-600 hover:text-gray-300 transition-colors"
+                        title="Close tab"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  {previewDoc && (
+                    <div className="flex items-center">
+                      <button
+                        onClick={() => setActiveTab('preview')}
+                        className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-colors ${activeTab === 'preview' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400 hover:text-gray-300'}`}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                        Preview
+                      </button>
+                      <button
+                        onClick={() => { setPreviewDoc(null); setActiveTab('chat'); }}
+                        className="px-1.5 py-3 text-gray-600 hover:text-gray-300 transition-colors"
+                        title="Close preview"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                {deploymentPlan && (
+                {deploymentPlan && deployTabOpen && (
                   <div className="flex items-center gap-1 px-2 border-l border-gray-700">
-                    <button
+                    {/* <button
                       onClick={handleOpenDraft}
                       className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded"
                     >
@@ -756,7 +915,7 @@ const App: React.FC = () => {
                       className="px-2 py-1 text-xs bg-emerald-700 hover:bg-emerald-600 text-white rounded"
                     >
                       Start Fresh
-                    </button>
+                    </button> */}
                   </div>
                 )}
 
@@ -821,9 +980,20 @@ const App: React.FC = () => {
               {/* Content Pane */}
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 <div className={`${activeTab === 'chat' ? 'flex flex-1 min-h-0 flex-col' : 'hidden'}`}>
-                  <ChatPane />
+                  <ChatPane
+                    checkpointPayload={checkpointPayload}
+                    checkpointLoading={checkpointLoading}
+                    onCheckpointSubmit={async (threadId, answers) => {
+                      setCheckpointLoading(true);
+                      await window.copilot.resumeDeploymentGraph(threadId, answers);
+                    }}
+                    onCheckpointCancel={async (threadId) => {
+                      setCheckpointPayload(null);
+                      await window.copilot.clearDeploymentGraph(threadId);
+                    }}
+                  />
                 </div>
-                {deploymentPlan && (
+                {deploymentPlan && deployTabOpen && (
                   <div className={`${activeTab === 'deploy' ? 'flex flex-1 min-h-0 flex-col' : 'hidden'}`}>
                     <DeploymentPlanPane
                       plan={deploymentPlan}
@@ -831,6 +1001,11 @@ const App: React.FC = () => {
                       onDeployAll={handleDeployAll}
                       onDeployService={handleDeployService}
                     />
+                  </div>
+                )}
+                {previewDoc && (
+                  <div className={`${activeTab === 'preview' ? 'flex flex-1 min-h-0 flex-col' : 'hidden'}`}>
+                    <DocPreviewPane title={previewDoc.title} content={previewDoc.content} />
                   </div>
                 )}
               </div>

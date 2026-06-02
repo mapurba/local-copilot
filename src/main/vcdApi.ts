@@ -480,7 +480,7 @@ export async function listTemplates(nameFilter = ''): Promise<Record<string, unk
   url.searchParams.set('type', 'vAppTemplate');
   url.searchParams.set('format', 'records');
   url.searchParams.set('page', '1');
-  url.searchParams.set('pageSize', '15');
+  url.searchParams.set('pageSize', '128');
   url.searchParams.set('filterEncoded', 'true');
   url.searchParams.set('filter', filter);
   url.searchParams.set('sortAsc', 'name');
@@ -632,7 +632,8 @@ function getUnifiedCustomizationScript(
   ilmVersion = 'latest',
   customEnvContent?: string,
   setupIdm = false,
-  idmCustomEnvContent?: string
+  idmCustomEnvContent?: string,
+  customScript?: string
 ): string {
   const ipWithCidr = ipAddress.includes('/') ? ipAddress : `${ipAddress}/21`;
   const dnsPrimary = dnsServers.length ? dnsServers[0] : '15.122.222.53';
@@ -655,11 +656,17 @@ function getUnifiedCustomizationScript(
 
   let script = `#!/bin/bash
 #scriptversion:20250302-unified-fixed-final
-set -u
+set -euo pipefail
 
 LOG="/root/vcdcustlog"
 touch "$LOG"
 echo "Script Start" >> "$LOG"
+
+# ── Error handler — logs failing line before finalizer runs ──────────────────
+_vcd_on_error() {
+    echo "[ERROR] Script failed at line $1: $2" | tee -a "$LOG" >&2
+}
+trap '_vcd_on_error $LINENO "$BASH_COMMAND"' ERR
 
 # ── VCD post-customization guard ─────────────────────────────────────────────
 if [ "x__DOLLAR_CURLY__1:-}" != "xpostcustomization" ]; then
@@ -732,6 +739,9 @@ trap '_vcd_finalize' EXIT TERM
 ${ILM_SETUP_SCRIPT}
 ${IDM_SETUP_SCRIPT}
 
+# ── Per-service custom script injection (if any) ─────────────────────────────
+__CUSTOM_SCRIPT__
+
 # ── Explicit finalization call at end of normal flow ─────────────────────────
 _vcd_finalize
 `;
@@ -750,6 +760,10 @@ _vcd_finalize
     .replace(/__ILM_URL__/g, ilmEntry.url)
     .replace(/__IDM_ENABLED__/g, idmEnabled)
     .replace(/__DOLLAR_CURLY__/g, '${');
+
+  // Inject any per-service custom script just before the explicit finalization
+  // call so that finalization runs after service install steps.
+  script = script.replace(/__CUSTOM_SCRIPT__/g, customScript && String(customScript).trim() ? `\n\n${customScript}\n\n` : '');
 
   return script;
 }
@@ -1399,10 +1413,9 @@ export async function createVmFromTemplate(params: {
     }
   }
 
-  // Always build the unified customization script (it injects env updates,
-  // network setup, ILM/IDM helpers, etc.), then append any service-specific
-  // custom script provided by the caller (for installation steps).
-  const unifiedCustomizationScript = getUnifiedCustomizationScript(
+  // Build the unified customization script and inject any per-service
+  // custom script so it runs before the explicit finalization call.
+  const customizationScript = getUnifiedCustomizationScript(
     params.ip_address,
     params.gateway,
     params.dns_servers,
@@ -1410,15 +1423,9 @@ export async function createVmFromTemplate(params: {
     params.ilm_version,
     updatedEnvContent,
     params.setup_idm,
-    params.idm_custom_env_content
+    params.idm_custom_env_content,
+    params.custom_script
   );
-
-  let customizationScript = unifiedCustomizationScript || '';
-  if (params.custom_script && String(params.custom_script).trim()) {
-    // Append the service install script after the unified setup script,
-    // separated by a blank line for readability.
-    customizationScript = (customizationScript ? `${customizationScript}\n\n` : '') + params.custom_script;
-  }
 
   const computerName = sanitizeComputerName(params.vm_name);
   const xmlPayload = `<?xml version="1.0" encoding="UTF-8"?>

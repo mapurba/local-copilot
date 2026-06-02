@@ -7,18 +7,36 @@ interface ServiceDetailPanelProps {
   onDeploy: () => void;
   onRunbookSave: (serviceId: string, runbook: string) => void;
   planStatus: string;
+  planVmTemplateName?: string;
+  planVmTemplateId?: string;
 }
-
 const ServiceDetailPanel: React.FC<ServiceDetailPanelProps> = ({
   service,
   onClose,
   onDeploy,
   onRunbookSave,
   planStatus,
+  planVmTemplateName,
+  planVmTemplateId,
 }) => {
   const [activeTab, setActiveTab] = useState<'details' | 'runbook' | 'logs'>('details');
   const [isEditingRunbook, setIsEditingRunbook] = useState(false);
   const [runbookDraft, setRunbookDraft] = useState(service.runbook || '#!/bin/bash\n');
+  const [isDryRunning, setIsDryRunning] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<{
+    summary?: string;
+    hasCriticalErrors?: boolean;
+    issues?: Array<{ severity?: string; title?: string; detail?: string; lineHint?: string }>;
+    changed?: boolean;
+    autoHealApplied?: boolean;
+    error?: string;
+  } | null>(null);
+  const [panelWidth, setPanelWidth] = useState(384);
+  const resizeStateRef = React.useRef<{
+    active: boolean;
+    startX: number;
+    startWidth: number;
+  }>({ active: false, startX: 0, startWidth: 384 });
 
   const canDeploy = planStatus !== 'complete' && service.status === 'pending';
 
@@ -27,15 +45,97 @@ const ServiceDetailPanel: React.FC<ServiceDetailPanelProps> = ({
     setIsEditingRunbook(false);
   }, [service.id, service.runbook]);
 
+  React.useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      const st = resizeStateRef.current;
+      if (!st.active) return;
+      const deltaX = st.startX - e.clientX;
+      const nextWidth = Math.min(900, Math.max(320, st.startWidth + deltaX));
+      setPanelWidth(nextWidth);
+    };
+
+    const onMouseUp = () => {
+      resizeStateRef.current.active = false;
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
+  const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    resizeStateRef.current = {
+      active: true,
+      startX: e.clientX,
+      startWidth: panelWidth,
+    };
+    e.preventDefault();
+  };
+
   const handleSaveRunbook = () => {
     onRunbookSave(service.id, runbookDraft);
     setIsEditingRunbook(false);
   };
 
+  const handleDryRunRunbook = async () => {
+    const script = (isEditingRunbook ? runbookDraft : (service.runbook || runbookDraft || '')).trim();
+    if (!script) {
+      setDryRunResult({ error: 'Runbook script is empty.' });
+      return;
+    }
+
+    setIsDryRunning(true);
+    setDryRunResult(null);
+    try {
+      const res = await window.copilot.dryRunRunbookScript({
+        script,
+        serviceName: service.name,
+        osHint: service.os,
+      });
+
+      if (!res.success) {
+        setDryRunResult({ error: res.error || 'Dry run failed.' });
+        return;
+      }
+
+      const healed = (res.healedScript || script).trim();
+      const changed = Boolean(res.changed) && healed !== script;
+      if (changed) {
+        setRunbookDraft(healed);
+        onRunbookSave(service.id, healed);
+      }
+
+      setDryRunResult({
+        summary: res.summary,
+        hasCriticalErrors: res.hasCriticalErrors,
+        issues: res.issues || [],
+        changed,
+        autoHealApplied: changed,
+      });
+    } catch (err) {
+      setDryRunResult({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setIsDryRunning(false);
+    }
+  };
+
   return (
-    <div className="w-96 border-l border-gray-700 bg-gray-850 flex flex-col overflow-hidden">
+    <div
+      className="relative border-l border-gray-700 bg-gray-850 flex flex-col overflow-hidden"
+      style={{ width: `${panelWidth}px` }}
+    >
+      <div
+        className="absolute left-0 top-0 h-full w-1 cursor-col-resize z-20 hover:bg-blue-500/40"
+        onMouseDown={handleResizeMouseDown}
+        title="Drag to resize width"
+      />
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-gray-800">
+      <div
+        className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-gray-800 select-none"
+      >
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-gray-200 truncate">{service.name}</h3>
           <p className="text-xs text-gray-400 truncate">{service.vmName}</p>
@@ -112,6 +212,14 @@ const ServiceDetailPanel: React.FC<ServiceDetailPanelProps> = ({
                 <p className="mt-1 text-sm text-gray-200">{service.os}</p>
               </div>
             )}
+            {/* Template */}
+            <div>
+              <label className="text-xs font-medium text-gray-400 uppercase">Template</label>
+              <p className="mt-1 text-sm text-gray-200">{service.templateName || planVmTemplateName || '—'}</p>
+              {service.templateId && (
+                <p className="text-xs text-gray-400">(service override: {service.templateId})</p>
+              )}
+            </div>
 
             {/* Description */}
             <div>
@@ -165,6 +273,14 @@ const ServiceDetailPanel: React.FC<ServiceDetailPanelProps> = ({
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400">Shell script to execute on VM</span>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDryRunRunbook}
+                  disabled={isDryRunning}
+                  className="px-2 py-1 text-xs bg-emerald-700 hover:bg-emerald-600 text-white rounded disabled:opacity-60 disabled:cursor-not-allowed"
+                  title="Validate script with LLM and auto-heal obvious issues"
+                >
+                  {isDryRunning ? 'Dry Running...' : 'Dry Run + Heal'}
+                </button>
                 {isEditingRunbook ? (
                   <>
                     <button
@@ -193,6 +309,37 @@ const ServiceDetailPanel: React.FC<ServiceDetailPanelProps> = ({
                 )}
               </div>
             </div>
+
+            {dryRunResult && (
+              <div className={`mb-2 p-2 rounded border text-xs ${dryRunResult.error
+                ? 'border-red-700 bg-red-950/40 text-red-200'
+                : dryRunResult.hasCriticalErrors
+                  ? 'border-amber-700 bg-amber-950/30 text-amber-100'
+                  : 'border-emerald-700 bg-emerald-950/30'}`}>
+                {dryRunResult.error ? (
+                  <div>{dryRunResult.error}</div>
+                ) : (
+                  <>
+                    <div className="font-medium">{dryRunResult.summary || 'Dry run completed.'}</div>
+                    {dryRunResult.autoHealApplied && (
+                      <div className="mt-1 text-emerald-200">Auto-heal applied and script saved.</div>
+                    )}
+                    {!!dryRunResult.issues?.length && (
+                      <ul className="mt-2 space-y-1 max-h-32 overflow-auto">
+                        {dryRunResult.issues.map((issue, idx) => (
+                          <li key={idx} className="leading-snug">
+                            <span className="uppercase mr-1">[{issue.severity || 'info'}]</span>
+                            <span className="font-medium">{issue.title || 'Issue'}:</span> {issue.detail || ''}
+                            {issue.lineHint ? ` (${issue.lineHint})` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
             {isEditingRunbook ? (
               <textarea
                 value={runbookDraft}

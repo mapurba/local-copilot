@@ -1,0 +1,73 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Electron Dev",
+      "type": "node-terminal",
+      "request": "launch",
+      "preLaunchTask": "build:electron-main",
+      "command": "npx concurrently \"cross-env PORT=5173 vite\" \"wait-on http://localhost:5173 && electron . --inspect=5858 --remote-debugging-port=9222\"",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Attach Electron Main (port 5858)",
+      "type": "node",
+      "request": "attach",
+      "port": 5858,
+      "restart": true,
+      "sourceMaps": true,
+      "outFiles": [
+        "${workspaceFolder}/dist-electron/**/*.js"
+      ],
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    },
+    {
+      "name": "Debug Electron Main",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/electron/cli.js",
+      "args": [
+        ".",
+        "--remote-debugging-port=9222"
+      ],
+      "preLaunchTask": "dev:prepare",
+      "autoAttachChildProcesses": true,
+      "sourceMaps": true,
+      "outFiles": [
+        "${workspaceFolder}/dist-electron/**/*.js"
+      ],
+      "smartStep": true,
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "outputCapture": "std"
+    },
+    {
+      "name": "Attach Renderer (Chrome DevTools Protocol)",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Run Dev + Attach (Main + Renderer)",
+      "configurations": [
+        "Run Electron Dev",
+        "Attach Electron Main (port 5858)",
+        "Attach Renderer (Chrome DevTools Protocol)"
+      ]
+    },
+    {
+      "name": "Debug Dev + Attach Renderer",
+      "configurations": [
+        "Debug Electron Main",
+        "Attach Renderer (Chrome DevTools Protocol)"
+      ]
+    }
+  ]
+}

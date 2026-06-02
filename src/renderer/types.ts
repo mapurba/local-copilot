@@ -70,6 +70,17 @@ export interface CopilotAPI {
   docsGet: (docId: string) => Promise<{ success: boolean; document?: { id: string; filename: string; title?: string; status: string; summary?: string; tags: string[]; error?: string } }>;
   docsGetContent: (docId: string) => Promise<{ success: boolean; docId?: string; title?: string; summary?: string; content?: string; error?: string }>;
   docsDelete: (docId: string) => Promise<{ success: boolean; error?: string }>;
+  docsImportFromUrl: (url: string) => Promise<{ success: boolean; docId?: string; filename?: string; error?: string }>;
+  docsMergeDocs: (docIds: string[]) => Promise<{ success: boolean; docId?: string; filename?: string; error?: string }>;
+  docsFetchUrlMarkdown: (url: string) => Promise<{ success: boolean; markdown?: string; error?: string }>;
+  docsSaveMarkdown: (title: string, markdown: string) => Promise<{ success: boolean; docId?: string; filename?: string; error?: string }>;
+  docsAnalyze: (docId: string) => Promise<{ success: boolean; started?: boolean; error?: string }>;
+  onDocsAnalyzeLog: (callback: (event: unknown, payload: {
+    docId: string;
+    message: string;
+    level: 'info' | 'warn' | 'error';
+    done: boolean;
+  }) => void) => () => void;
 
   // Task Tracker
   taskList: () => Promise<{
@@ -102,10 +113,43 @@ export interface CopilotAPI {
   taskCancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
   onTaskUpdated: (callback: () => void) => () => void;
   onDeploymentPlanReady: (callback: (event: unknown, plan: Record<string, unknown>) => void) => () => void;
+  dryRunRunbookScript: (input: { script: string; serviceName?: string; osHint?: string }) => Promise<{
+    success: boolean;
+    summary?: string;
+    hasCriticalErrors?: boolean;
+    issues?: Array<{ severity?: string; title?: string; detail?: string; lineHint?: string }>;
+    changed?: boolean;
+    healedScript?: string;
+    error?: string;
+  }>;
+
+  // ── HITL Deployment Graph ─────────────────────────────────────────────────
+  startDeploymentGraph: (threadId: string, input: {
+    userPrompt: string;
+    docId: string;
+    rawContent?: string;
+    chatContext?: string;
+    modeName?: string;
+  }) => Promise<{ success: boolean; done?: boolean; phase?: string; error?: string }>;
+  resumeDeploymentGraph: (threadId: string, userUpdate: Record<string, unknown>) =>
+    Promise<{ success: boolean; done?: boolean; phase?: string; error?: string }>;
+  clearDeploymentGraph: (threadId: string) => Promise<{ success: boolean; error?: string }>;
+  onDeploymentCheckpoint: (callback: (event: unknown, payload: {
+    threadId: string;
+    phase: string;
+    question: string;
+    data?: Record<string, unknown>;
+  }) => void) => () => void;
+  onDeploymentGraphComplete: (callback: (event: unknown, payload: {
+    threadId: string;
+    designId?: string;
+    warnings?: string[];
+  }) => void) => () => void;
   saveDeploymentDraft: (plan: Record<string, unknown>) => Promise<{ success: boolean; id?: string; savedAt?: string; error?: string }>;
   loadDeploymentDraft: (id: string) => Promise<{ success: boolean; plan?: Record<string, unknown>; error?: string }>;
   listDeploymentDrafts: () => Promise<{ success: boolean; drafts: Array<{ id: string; name: string; status: string; createdAt: string; updatedAt: string }>; error?: string }>;
   deleteDeploymentDraft: (id: string) => Promise<{ success: boolean; error?: string }>;
+  listTemplates: (nameFilter?: string) => Promise<{ success?: boolean; count?: number; total?: number; templates?: Array<Record<string, unknown>>; error?: string }>;
   openExternal: (url: string) => Promise<void>;
 
   // DISABLED: Terminal methods removed to prevent antivirus quarantine

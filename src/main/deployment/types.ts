@@ -23,6 +23,19 @@ export interface PortSpec {
 export interface ConfigKey {
   key: string;           // env var name this service exports (e.g. 'DB_HOST')
   description: string;
+  /**
+   * Semantic type assigned by the LLM during extraction.
+   * - 'host'       → connection endpoint / IP address / hostname / URL
+   * - 'port'       → port number
+   * - 'credential' → password, secret, API key, token
+   * - 'name'       → database name, schema, tenant, username, display name
+   * - 'path'       → file system path or directory
+   * - 'other'      → anything that does not fit the categories above
+   *
+   * Plans extracted before this field was added will have `valueType` undefined;
+   * runbookGenerator falls back to heuristic name-matching in that case.
+   */
+  valueType?: 'host' | 'port' | 'credential' | 'name' | 'path' | 'other';
 }
 
 export interface InstallStep {
@@ -185,4 +198,99 @@ export interface DesignSummary {
   status: DeploymentDesign['status'];
   createdAt: number;
   updatedAt: number;
+}
+
+// ── HITL Graph State ──────────────────────────────────────────────────────────
+
+/**
+ * The five phases of the HITL deployment state machine.
+ *
+ *   classifyIntent       → CHECKPOINT 1: OS / VM template?
+ *   generateArchitecture → CHECKPOINT 2: Architecture approval?
+ *   allocateNetwork      → CHECKPOINT 3: IPs / hostname?
+ *   generateScripts      → CHECKPOINT 4: Credential env var acknowledgement?
+ *   finalizeAndVisualize → CHECKPOINT 5: Final "Approve"?
+ */
+export type CheckpointPhase =
+  | 'classifyIntent'
+  | 'generateArchitecture'
+  | 'allocateNetwork'
+  | 'generateScripts'
+  | 'finalizeAndVisualize'
+  | 'complete';
+
+/**
+ * Full state object passed between nodes in the LangGraph deployment graph.
+ * All fields are optional; each node reads what it needs and returns only
+ * what it changes.
+ */
+export interface DeploymentGraphState {
+  // ── Inputs ──────────────────────────────────────────────────────────────
+  /** Original user prompt */
+  userPrompt: string;
+  /** Document ID from docs store */
+  docId: string;
+  /** Raw document text (if available in context — skips DB reads) */
+  rawContent?: string;
+  /** User-stated config/preferences collected from chat so far */
+  chatContext?: string;
+
+  // ── Checkpoint 1 answers ─────────────────────────────────────────────────
+  /** Target OS extracted or confirmed by user (e.g. 'RHEL 8', 'SLES 15') */
+  osPreference?: string;
+  /** VCD VM template UUID for provisioning */
+  vmTemplate?: string;
+
+  // ── Checkpoint 2 answers ─────────────────────────────────────────────────
+  /** Deployment mode selected/confirmed by user */
+  modeName?: string;
+  /** Whether the user approved the architecture draft */
+  architectureApproved?: boolean;
+  /** designId after initial build (may lack IPs at this stage) */
+  draftDesignId?: string;
+
+  // ── Checkpoint 3 answers ─────────────────────────────────────────────────
+  /** User-supplied network details (if they want to provide their own IPs) */
+  networkDetails?: {
+    usePoolIps: boolean;                     // true = allocate from pool
+    staticIps?: Record<string, string>;      // vmId → ip (when usePoolIps is false)
+    hostname?: string;
+    subnet?: string;
+    gateway?: string;
+  };
+
+  // ── Checkpoint 4 answers ─────────────────────────────────────────────────
+  /** Env var names the user must configure before running the install (never values) */
+  credentialVarNames?: string[];
+  /** Whether user acknowledged the credential vars list */
+  credentialVarsAcknowledged?: boolean;
+
+  // ── Checkpoint 5 answers ─────────────────────────────────────────────────
+  /** Whether user gave final approval to save the plan */
+  finalApproved?: boolean;
+
+  // ── Internal graph state ─────────────────────────────────────────────────
+  /** Current processing phase */
+  phase: CheckpointPhase;
+  /** Saved deployment design ID (set after architecture is saved to disk) */
+  designId?: string;
+  /** Non-fatal warnings accumulated during processing */
+  warnings: string[];
+  /** The question the graph emits when it pauses at a checkpoint */
+  checkpointQuestion?: string;
+  /** Structured data the UI needs to render the current checkpoint form */
+  checkpointPayload?: Record<string, unknown>;
+}
+
+/**
+ * The payload emitted over IPC when the graph pauses at a checkpoint.
+ * The renderer uses this to show the correct input form.
+ */
+export interface DeploymentCheckpointPayload {
+  threadId: string;
+  phase: CheckpointPhase;
+  /** The human-readable question to show the user */
+  question: string;
+  /** Extra structured data for the UI (e.g. available OS list, draft VM topology) */
+  data?: Record<string, unknown>;
 }

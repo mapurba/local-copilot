@@ -10,13 +10,39 @@
 
 import {
   DeploymentDesign,
+  DeploymentIntelligence,
   DeploymentRunState,
   ServiceSpec,
   VmPlan,
   ValidationResult,
+  ConfigKey,
+  PortSpec,
 } from './types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true if a ConfigKey should receive a HOST / IP address value.
+ * Prefers LLM-assigned `valueType`; falls back to key-name heuristics.
+ */
+function isHostKey(ck: ConfigKey): boolean {
+  if (ck.valueType === 'host') return true;
+  if (ck.valueType) return false; // port / credential / name / path / other
+  const upper = ck.key.toUpperCase();
+  if (/(^|_)(HOST|IP|ADDR|ADDRESS|URL|ENDPOINT|URI|BASE|SERVER|ORIGIN)(_|$)/.test(upper)) return true;
+  if (/(^|_)(PORT|NAME|USER|USERNAME|PASS|PASSWORD|SECRET|TOKEN|KEY|CERT|DATABASE|DB_NAME|TENANT)(_|$)/.test(upper)) return false;
+  return true;
+}
+
+/**
+ * Returns true if a ConfigKey should receive a PORT NUMBER value.
+ * Prefers LLM-assigned `valueType`; falls back to key-name heuristics.
+ */
+function isPortKey(ck: ConfigKey): boolean {
+  if (ck.valueType === 'port') return true;
+  if (ck.valueType) return false;
+  return /(^|_)(PORT)(_|$)/.test(ck.key.toUpperCase());
+}
 
 function formatDate(ts: number): string {
   return new Date(ts).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
@@ -26,81 +52,248 @@ function codeBlock(lang: string, content: string): string {
   return `\`\`\`${lang}\n${content}\n\`\`\``;
 }
 
+// ── Idempotency post-processor ────────────────────────────────────────────────
+
+/**
+ * Wraps a single-token shell sub-command (no compound operators) with an
+ * appropriate idempotency guard.
+ *
+ * Handles:
+ *  - useradd → getent passwd <user> >/dev/null || useradd ...
+ *  - groupadd → getent group <grp> >/dev/null || groupadd ...
+ *  - systemctl enable --now → is-active guard
+ *  - wget/curl download → [ -f <dest> ] guard
+ *  - mount → mountpoint guard
+ */
+function guardSingleSubCommand(sub: string): string {
+  const s = sub.trim();
+  if (!s) return s;
+
+  // useradd: extract last non-flag token as username
+  if (/^useradd\b/.test(s)) {
+    const parts = s.split(/\s+/);
+    const user = parts[parts.length - 1];
+    if (user && !user.startsWith('-')) {
+      return `getent passwd ${user} >/dev/null 2>&1 || ${s}`;
+    }
+  }
+
+  // groupadd
+  if (/^groupadd\b/.test(s)) {
+    const parts = s.split(/\s+/);
+    const grp = parts[parts.length - 1];
+    if (grp && !grp.startsWith('-')) {
+      return `getent group ${grp} >/dev/null 2>&1 || ${s}`;
+    }
+  }
+
+  // systemctl enable (with or without --now)
+  const systemctlM = s.match(/^systemctl\s+enable\b(.*)/);
+  if (systemctlM) {
+    // extract service name: last space-separated token that doesn't start with -
+    const parts = s.split(/\s+/);
+    const svcName = parts.slice().reverse().find((p) => !p.startsWith('-') && p !== 'enable' && p !== 'systemctl');
+    if (svcName) {
+      return `systemctl is-active --quiet ${svcName} 2>/dev/null || ${s}`;
+    }
+  }
+
+  // wget -O dest or -o dest
+  const wgetM = s.match(/^wget\b.*?(?:-O|-o)\s+(\S+)/);
+  if (wgetM) {
+    return `[ -f ${wgetM[1]} ] || ${s}`;
+  }
+
+  // curl -o dest or --output dest
+  const curlM = s.match(/^curl\b.*?(?:-o|--output)\s+(\S+)/);
+  if (curlM) {
+    return `[ -f ${curlM[1]} ] || ${s}`;
+  }
+
+  // mount -o loop ISO DIR — guard with mountpoint on DIR
+  const mountM = s.match(/^mount\b.*\s+(\S+)$/);
+  if (mountM && !/--bind/.test(s)) {
+    return `mountpoint -q ${mountM[1]} 2>/dev/null || ${s}`;
+  }
+
+  return s;
+}
+
+/**
+ * Applies idempotency guards to a command string that may contain sub-commands
+ * joined with `;` or `&&`.
+ *
+ * If the command already contains an idempotency guard pattern (||, [ -f, getent,
+ * mountpoint, systemctl is-active) we leave it untouched.
+ */
+function applyIdempotencyGuard(cmd: string): string {
+  if (!cmd) return cmd;
+  const c = cmd.trim();
+
+  // Already guarded — don't double-wrap
+  if (/\|\|/.test(c) || /\bgetent\b/.test(c) || /\bmountpoint\b/.test(c) || /\[ -f /.test(c) || /systemctl is-active/.test(c)) {
+    return c;
+  }
+
+  // Multi-line commands (heredocs, inline scripts with newlines) must pass through
+  // unchanged — splitting them on ; or adding guards would break the heredoc syntax.
+  if (c.includes('\n')) return c;
+
+  // Compound commands joined by `;`  — guard each sub-command individually.
+  // Only split on standalone `;` (not inside quotes or $(...) — simple heuristic).
+  if (c.includes(';')) {
+    const parts = c.split(/\s*;\s*/);
+    return parts.map(guardSingleSubCommand).join('; ');
+  }
+
+  return guardSingleSubCommand(c);
+}
+
+export function buildEnvironmentExports(
+  service: ServiceSpec,
+  design: DeploymentDesign,
+  includeComments = false
+): string[] {
+  const emitted = new Set<string>();
+  const lines: string[] = [];
+
+  // Find the VM this service belongs to
+  const vm = design.vms.find((v) => v.services.some((s) => s.id === service.id));
+  const myIp = vm?.ip ?? design.ipAssignments[service.id] ?? '127.0.0.1';
+
+  /** Emit a single export line, deduplicating by key. */
+  const emit = (key: string, value: string | number, comment: string) => {
+    if (emitted.has(key)) return;
+    emitted.add(key);
+    lines.push(`export ${key}=${value}${comment}`);
+  };
+
+  /**
+   * If a configKey in THIS service's own list logically belongs to one of its
+   * dependencies (detected by description text or key-name prefix matching the
+   * dep's name/id), return that dep's IP and port list so the correct values
+   * can be used instead of the service's own IP.
+   *
+   * This handles the case where the LLM places dependency-connection keys (e.g.
+   * DB_HOST, FLASK_API_PORT) in the consuming service's configKeys rather than
+   * in the providing service's configKeys.
+   */
+  const findOwningDep = (ck: ConfigKey): { depIp: string; depPorts: PortSpec[] } | null => {
+    for (const depId of service.requiresConfigFrom) {
+      const depVm = design.vms.find((v) => v.services.some((s) => s.id === depId));
+      const depSvc = depVm?.services.find((s) => s.id === depId);
+      if (!depSvc || !depVm) continue;
+      const depIp = depVm.ip ?? design.ipAssignments?.[depId] ?? '';
+      const depNameNorm = depSvc.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const depIdNorm = depId.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const descNorm = (ck.description ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const keyNorm = ck.key.toLowerCase().replace(/[^a-z0-9]/g, '');
+      // Match by description (more reliable) or key-name prefix
+      if (
+        (descNorm && (descNorm.includes(depNameNorm) || descNorm.includes(depIdNorm))) ||
+        keyNorm.startsWith(depNameNorm) ||
+        keyNorm.startsWith(depIdNorm)
+      ) {
+        return { depIp, depPorts: depSvc.ports };
+      }
+    }
+    return null;
+  };
+
+  // ── 1. Own configKeys ─────────────────────────────────────────────────────
+  // Host keys: use own IP UNLESS the key belongs to a dependency — in that
+  //   case use the dependency's IP (corrects LLM mis-assignments).
+  // Port keys: use the actual port NUMBER (own or dependency's) — NOT an IP.
+  // Credential/name/path/other: skip; no value is known at plan-time.
+  for (const ck of service.configKeys) {
+    const comment = includeComments ? `  # ${ck.description || ''}`.trimEnd() : '';
+    if (isHostKey(ck)) {
+      const dep = findOwningDep(ck);
+      emit(ck.key, dep?.depIp || myIp, comment);
+    } else if (isPortKey(ck)) {
+      const dep = findOwningDep(ck);
+      const portList: PortSpec[] = dep ? dep.depPorts : service.ports;
+      const portValue = portList.find((p) => p.isPublic)?.port ?? portList[0]?.port;
+      if (portValue !== undefined) emit(ck.key, portValue, comment);
+    }
+    // credential / name / path / other: deliberately omitted
+  }
+
+  // ── 2. Own port env vars (convention: <SERVICE_ID>_PORT=<port>) ───────────
+  for (const port of service.ports.filter((p) => p.isPublic)) {
+    const comment = includeComments ? '  # Own service port' : '';
+    emit(
+      `${service.id.toUpperCase().replace(/-/g, '_')}_PORT`,
+      port.port,
+      comment
+    );
+  }
+
+  // ── 3. Dependency configKeys ───────────────────────────────────────────────
+  // Export each dependency's config keys with the DEPENDENCY's own IP/port.
+  // Host keys  → dependency's IP address.
+  // Port keys  → dependency's actual PORT NUMBER (not its IP).
+  // Credential → CHANGE_ME placeholder.
+  for (const depId of service.requiresConfigFrom) {
+    const depVm = design.vms.find((v) => v.services.some((s) => s.id === depId));
+    // Prefer the VM's resolved IP over the raw ipAssignments map
+    const depIp = depVm?.ip ?? design.ipAssignments?.[depId] ?? '(unknown)';
+    const depService = depVm?.services.find((s) => s.id === depId);
+    if (!depService) continue;
+
+    for (const ck of depService.configKeys) {
+      const comment = includeComments ? `  # ${ck.description}` : '';
+      if (isHostKey(ck)) {
+        emit(ck.key, depIp, comment);
+      } else if (isPortKey(ck)) {
+        const portValue =
+          depService.ports.find((p) => p.isPublic)?.port ?? depService.ports[0]?.port;
+        if (portValue !== undefined) emit(ck.key, portValue, comment);
+      } else {
+        // Credential / name key — emit as a placeholder
+        emit(ck.key, 'CHANGE_ME', comment);
+      }
+    }
+
+    // Convention port vars for deps whose configKeys don't already cover them
+    for (const port of depService.ports.filter((p) => p.isPublic)) {
+      const comment = includeComments ? `  # ${port.description}` : '';
+      emit(
+        `${depId.toUpperCase().replace(/-/g, '_')}_PORT`,
+        port.port,
+        comment
+      );
+    }
+  }
+
+  return lines;
+}
+
 function buildDependencyInjectionBlock(
   service: ServiceSpec,
   design: DeploymentDesign
 ): string | null {
-  if (service.requiresConfigFrom.length === 0) return null;
-
-  const lines: string[] = [];
-  for (const depId of service.requiresConfigFrom) {
-    const depIp = design.ipAssignments[depId] ?? '(unknown)';
-    const depVm = design.vms.find((v) => v.services.some((s) => s.id === depId));
-    const depService = depVm?.services.find((s) => s.id === depId);
-    if (depService) {
-      for (const ck of depService.configKeys) {
-        lines.push(`export ${ck.key}=${depIp}  # ${ck.description}`);
-      }
-      // Add port env vars for public ports
-      for (const port of depService.ports.filter((p) => p.isPublic)) {
-        lines.push(`export ${depId.toUpperCase().replace(/-/g, '_')}_PORT=${port.port}  # ${port.description}`);
-      }
-    }
-  }
+  const lines = buildEnvironmentExports(service, design, true);
   return lines.length > 0 ? codeBlock('bash', lines.join('\n')) : null;
-}
-
-function buildNodePropertiesBlock(vm: VmPlan, design: DeploymentDesign): string {
-  const entries = new Map<string, string>();
-
-  // Basic VM metadata
-  entries.set('VM_ID', vm.id);
-  entries.set('VM_ROLE', vm.role || '');
-  entries.set('VM_NAME', vm.vmName ?? vm.id);
-  entries.set('SERVICES', vm.services.map((s) => s.name || s.id).join(','));
-  entries.set('VM_IP', vm.ip ?? '');
-  if (vm.templateId) entries.set('TEMPLATE_ID', vm.templateId);
-  const product = design.intelligence?.products?.[0];
-  if (product?.name) entries.set('PRODUCT_NAME', product.name);
-  if (design.id) entries.set('DESIGN_ID', design.id);
-
-  // Inject dependency-derived values (IP addresses and public ports)
-  for (const svc of vm.services) {
-    for (const depId of svc.requiresConfigFrom) {
-      const depVm = design.vms.find((v) => v.services.some((s) => s.id === depId));
-      const depIp = depVm?.ip ?? design.ipAssignments?.[depId] ?? '(unknown)';
-      const depService = depVm?.services.find((s) => s.id === depId);
-      if (depService) {
-        for (const ck of depService.configKeys) {
-          entries.set(ck.key, depIp);
-        }
-        for (const port of depService.ports.filter((p) => p.isPublic)) {
-          const key = `${depId.toUpperCase().replace(/-/g, '_')}_PORT`;
-          entries.set(key, String(port.port));
-        }
-      }
-    }
-  }
-
-  // Ensure service-local configKeys exist (default to VM IP if unset)
-  for (const svc of vm.services) {
-    for (const ck of svc.configKeys) {
-      if (!entries.has(ck.key)) entries.set(ck.key, vm.ip ?? '');
-    }
-  }
-
-  const lines: string[] = [];
-  for (const [k, v] of entries) lines.push(`${k}=${v}`);
-  return lines.join('\n');
 }
 
 function buildHealthCheckProcedure(service: ServiceSpec, ip: string): string {
   const hc = service.healthCheck;
+  // Prefer an env-var reference when the IP is still a placeholder or unknown.
+  // This produces a runnable health-check command even before IPs are assigned.
+  const ipRef =
+    !ip || ip === '?.?.?.?' || ip === '(to be assigned)'
+      ? (service.configKeys.find((ck) => isHostKey(ck))?.key
+          ? `$${service.configKeys.find((ck) => isHostKey(ck))!.key}`
+          : '${TARGET_HOST}')
+      : ip;
   switch (hc.type) {
     case 'port':
-      return codeBlock('bash', `nc -z -w${hc.timeoutSeconds} ${ip} ${hc.target}`);
-    case 'http':
-      return codeBlock('bash', `curl -s -o /dev/null -w "%{http_code}" ${hc.target.startsWith('http') ? hc.target : `http://${ip}${hc.target}`}`);
+      return codeBlock('bash', `nc -z -w${hc.timeoutSeconds} ${ipRef} ${hc.target}`);
+    case 'http': {
+      const target = hc.target.startsWith('http') ? hc.target : `http://${ipRef}${hc.target}`;
+      return codeBlock('bash', `curl -s -o /dev/null -w "%{http_code}" ${target}`);
+    }
     case 'process':
       return codeBlock('bash', `pgrep -x ${hc.target}`);
     case 'systemctl':
@@ -110,33 +303,71 @@ function buildHealthCheckProcedure(service: ServiceSpec, ip: string): string {
   }
 }
 
-function serviceSection(service: ServiceSpec, vm: VmPlan, design: DeploymentDesign): string {
+/**
+ * Builds a bash block that aborts the script if any required credential/name
+ * configuration variables are still set to the CHANGE_ME placeholder or are empty.
+ * Returns null when the service has no credential/name configKeys.
+ */
+function buildConfigValidationBlock(service: ServiceSpec): string | null {
+  const isCredentialOrName = (ck: ConfigKey): boolean => {
+    if (ck.valueType) return ck.valueType === 'credential' || ck.valueType === 'name';
+    // Legacy: heuristic on key name
+    const u = ck.key.toUpperCase();
+    return /(^|_)(NAME|USER|USERNAME|PASS|PASSWORD|SECRET|TOKEN|KEY|CERT|DATABASE|DB_NAME|TENANT)(_|$)/.test(u);
+  };
+
+  const requiredVars = service.configKeys.filter(isCredentialOrName).map(ck => ck.key);
+  if (requiredVars.length === 0) return null;
+
+  // const varList = requiredVars.join(' ');
+  const lines: string[] = [
+  //   `# ── Required credential / name configuration guard ───────────────────────`,
+  //   `_vcd_check_config() {`,
+  //   `  local _missing=0 _log="\${LOG:-/var/log/vcd-agent.log}"`,
+  //   `  for _var in ${varList}; do`,
+  //   `    local _val; _val="\${!_var:-}"`,
+  //   `    if [ "$_val" = "CHANGE_ME" ] || [ -z "$_val" ]; then`,
+  //   `      echo "[CONFIG ERROR] Required variable $_var is not configured" | tee -a "$_log" >&2`,
+  //   `      _missing=1`,
+  //   `    fi`,
+  //   `  done`,
+  //   `  [ "$_missing" -eq 0 ] || { echo "[CONFIG ERROR] Deployment aborted — configure the variables above." | tee -a "$_log" >&2; exit 1; }`,
+  //   `}`,
+  //   `_vcd_check_config`,
+  ];
+  return codeBlock('bash', lines.join('\n'));
+}
+
+function resolveRunbookService(
+  service: ServiceSpec,
+  intelligence?: DeploymentIntelligence
+): ServiceSpec {
+  if (!intelligence || service.id === 'all-in-one') return service;
+
+  const candidates = intelligence.products
+    .flatMap((product) => product.services)
+    .filter((candidate) => candidate.id === service.id || candidate.name === service.name);
+
+  if (candidates.length === 0) return service;
+
+  return candidates.reduce((best, candidate) => {
+    const bestScore = (best.installSteps?.length ?? 0) + (best.configKeys?.length ?? 0);
+    const candidateScore = (candidate.installSteps?.length ?? 0) + (candidate.configKeys?.length ?? 0);
+    return candidateScore > bestScore ? candidate : best;
+  }, candidates[0]);
+}
+
+function serviceSection(
+  service: ServiceSpec,
+  vm: VmPlan,
+  design: DeploymentDesign,
+  intelligence?: DeploymentIntelligence
+): string {
   const ip = vm.ip ?? '?.?.?.?';
+  const runbookService = resolveRunbookService(service, intelligence);
   const sections: string[] = [`### Service: ${service.name}`, ''];
 
-  // Prerequisites
-  const prereqs = service.installSteps.filter((s) => s.isPrerequisite);
-  if (prereqs.length > 0) {
-    sections.push('#### Prerequisites');
-    for (const step of prereqs) {
-      sections.push(`${step.stepNumber}. ${step.description}`);
-      if (step.command) sections.push(codeBlock('bash', step.command));
-    }
-    sections.push('');
-  }
-
-  // Install steps
-  const mainSteps = service.installSteps.filter((s) => !s.isPrerequisite);
-  if (mainSteps.length > 0) {
-    sections.push('#### Install Steps');
-    for (const step of mainSteps) {
-      sections.push(`${step.stepNumber}. ${step.description}`);
-      if (step.command) sections.push(codeBlock('bash', step.command));
-    }
-    sections.push('');
-  }
-
-  // Dependency injection
+  // Dependency injection (moved to top of serviceSection so exports happen before commands run)
   const depBlock = buildDependencyInjectionBlock(service, design);
   if (depBlock) {
     sections.push('#### Dependency Injection');
@@ -145,9 +376,40 @@ function serviceSection(service: ServiceSpec, vm: VmPlan, design: DeploymentDesi
     sections.push('');
   }
 
+  // Configuration guard — abort if credential/name vars are still CHANGE_ME / empty
+  const configGuard = buildConfigValidationBlock(runbookService);
+  if (configGuard) {
+    sections.push('#### Configuration Guard');
+    sections.push('Verify all required credential/name variables are configured before proceeding:');
+    sections.push(configGuard);
+    sections.push('');
+  }
+
+  // Prerequisites
+  const prereqs = runbookService.installSteps.filter((s) => s.isPrerequisite);
+  if (prereqs.length > 0) {
+    sections.push('#### Prerequisites');
+    for (const step of prereqs) {
+      sections.push(`${step.stepNumber}. ${step.description}`);
+      if (step.command) sections.push(codeBlock('bash', applyIdempotencyGuard(step.command)));
+    }
+    sections.push('');
+  }
+
+  // Install steps
+  const mainSteps = runbookService.installSteps.filter((s) => !s.isPrerequisite);
+  if (mainSteps.length > 0) {
+    sections.push('#### Install Steps');
+    for (const step of mainSteps) {
+      sections.push(`${step.stepNumber}. ${step.description}`);
+      if (step.command) sections.push(codeBlock('bash', applyIdempotencyGuard(step.command)));
+    }
+    sections.push('');
+  }
+
   // Health check
   sections.push('#### Health Check');
-  sections.push(buildHealthCheckProcedure(service, ip));
+  sections.push(buildHealthCheckProcedure(runbookService, ip));
   sections.push('');
 
   return sections.join('\n');
@@ -158,13 +420,20 @@ function serviceSection(service: ServiceSpec, vm: VmPlan, design: DeploymentDesi
 /**
  * Generate the complete deployment runbook for the full design.
  */
-export function generateFullRunbook(design: DeploymentDesign): string {
-  const product = design.intelligence.products[0];
+export function generateFullRunbook(
+  design: DeploymentDesign,
+  intelligence: DeploymentIntelligence = design.intelligence
+): string {
+  const product = intelligence.products[0];
+  const selectedMode =
+    intelligence.deploymentModes.find((mode) =>
+      Object.keys(mode.serviceAssignments).some((role) => design.vms.some((vm) => vm.role === role))
+    ) ?? intelligence.deploymentModes[0];
   const lines: string[] = [];
 
   lines.push(`# ${product?.name ?? 'Product'} Deployment Runbook`);
   lines.push('');
-  lines.push(`**Mode:** ${design.intelligence.deploymentModes[0]?.name ?? 'default'}`);
+  lines.push(`**Mode:** ${selectedMode?.name ?? 'default'}`);
   lines.push(`**Generated:** ${formatDate(Date.now())}`);
   lines.push('');
 
@@ -203,19 +472,8 @@ export function generateFullRunbook(design: DeploymentDesign): string {
     lines.push(`**OS:** ${vm.osRequirement.type} ${vm.osRequirement.minVersion ?? ''}`);
     lines.push('');
 
-    // Node-specific properties file (written on the VM before installs)
-    try {
-      const nodeProps = buildNodePropertiesBlock(vm, design);
-      lines.push('#### Node-specific properties');
-      lines.push('Writes a node-specific properties file consumed by installers:');
-      lines.push(codeBlock('bash', `cat > /tmp/node_specific_silent.properties <<'EOF_NODE_PROPS'\n${nodeProps}\nEOF_NODE_PROPS\nchmod 600 /tmp/node_specific_silent.properties`));
-      lines.push('');
-    } catch (err) {
-      // Non-fatal: if properties generation fails, continue without block
-    }
-
     for (const svc of vm.services) {
-      lines.push(serviceSection(svc, vm, design));
+      lines.push(serviceSection(svc, vm, design, intelligence));
     }
     lines.push('---');
     lines.push('');
@@ -227,7 +485,11 @@ export function generateFullRunbook(design: DeploymentDesign): string {
 /**
  * Generate a runbook slice for a single service.
  */
-export function generateServiceRunbook(serviceId: string, design: DeploymentDesign): string {
+export function generateServiceRunbook(
+  serviceId: string,
+  design: DeploymentDesign,
+  intelligence: DeploymentIntelligence = design.intelligence
+): string {
   const vm = design.vms.find((v) => v.services.some((s) => s.id === serviceId));
   const svc = vm?.services.find((s) => s.id === serviceId);
   if (!vm || !svc) return `# Service not found: ${serviceId}`;
@@ -241,18 +503,7 @@ export function generateServiceRunbook(serviceId: string, design: DeploymentDesi
     '',
   ];
 
-  // Prepend node-specific properties (so extracted shell script contains file-write)
-  try {
-    const nodeProps = buildNodePropertiesBlock(vm, design);
-    lines.push('#### Node-specific properties');
-    lines.push('Writes a node-specific properties file consumed by installers:');
-    lines.push(codeBlock('bash', `cat > /tmp/node_specific_silent.properties <<'EOF_NODE_PROPS'\n${nodeProps}\nEOF_NODE_PROPS\nchmod 600 /tmp/node_specific_silent.properties`));
-    lines.push('');
-  } catch (err) {
-    // ignore
-  }
-
-  lines.push(serviceSection(svc, vm, design));
+  lines.push(serviceSection(svc, vm, design, intelligence));
   return lines.join('\n');
 }
 

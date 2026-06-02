@@ -7,7 +7,7 @@
  *   - state diagram (same topology + colour classes per service status)
  */
 
-import { DeploymentDesign, DeploymentRunState } from './types';
+import { DeploymentDesign, DeploymentIntelligence, DeploymentRunState } from './types';
 
 function sanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_]/g, '_');
@@ -17,8 +17,12 @@ function sanitizeId(id: string): string {
  * Generate a static topology diagram showing VM subgraphs,
  * service nodes (with IP:port), and labelled dependency arrows.
  */
-export function generateTopologyDiagram(design: DeploymentDesign): string {
-  const lines: string[] = ['graph TD', ''];
+export function generateTopologyDiagram(
+  design: DeploymentDesign,
+  intelligence: DeploymentIntelligence = design.intelligence
+): string {
+  const productName = intelligence.products[0]?.name ?? 'Unknown Product';
+  const lines: string[] = ['graph TD', `%% Product: ${productName}`, ''];
 
   // Build a map: serviceId → VmPlan
   const serviceToVm = new Map<string, { vmId: string; vmName: string; ip: string }>();
@@ -49,7 +53,7 @@ export function generateTopologyDiagram(design: DeploymentDesign): string {
   for (const edge of design.dependencyGraph.edges) {
     const keyLabel = edge.configKeys.slice(0, 2).join(', ') || '';
     const arrow = keyLabel
-      ? `${sanitizeId('svc_' + edge.from)} -->|${keyLabel}| ${sanitizeId('svc_' + edge.to)}`
+      ? `${sanitizeId('svc_' + edge.from)} --> ${sanitizeId('svc_' + edge.to)}`
       : `${sanitizeId('svc_' + edge.from)} --> ${sanitizeId('svc_' + edge.to)}`;
     lines.push(arrow);
   }

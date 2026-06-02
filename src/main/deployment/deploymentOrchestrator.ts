@@ -24,7 +24,7 @@ import { getDesign, saveRun, updateRun, getRun } from './deploymentStore';
 import { snapshotBeforeDeployment, rollbackDeployment } from './rollbackManager';
 import { validateService, validateAllServices } from './healthValidationEngine';
 import { generateStateDiagram } from './mermaidGenerator';
-import { generateSummaryReport } from './runbookGenerator';
+import { generateSummaryReport, buildEnvironmentExports } from './runbookGenerator';
 import { taskTracker } from '../taskTracker';
 import { toolRegistry } from '../tools/registry';
 import { createVmFromTemplate, checkVmStatus } from '../vcdApi';
@@ -122,20 +122,7 @@ async function deployService(
 
   try {
     // ── Inject dependency env vars ────────────────────────────────────────
-    for (const depId of svc.requiresConfigFrom) {
-      const depIp = design.ipAssignments[depId];
-      if (!depIp) continue;
-      const depVm = design.vms.find((v) => v.services.some((s) => s.id === depId));
-      const depSvc = depVm?.services.find((s) => s.id === depId);
-      if (!depSvc) continue;
-      for (const ck of depSvc.configKeys) {
-        await toolRegistry.execute({
-          toolName: 'ssh:runCommand',
-          args: { sessionId, command: `export ${ck.key}=${depIp}`, timeoutSecs: 10 },
-          context: { approved: true },
-        });
-      }
-    }
+    const envExports = buildEnvironmentExports(svc, design, false);
 
     runState.serviceStates[serviceId].status = 'configuring';
 
@@ -143,17 +130,21 @@ async function deployService(
     const prereqs = svc.installSteps.filter((s) => s.isPrerequisite);
     for (const step of prereqs) {
       if (!step.command) continue;
+      const command = envExports.length > 0 ? [...envExports, step.command].join('\n') : step.command;
       await toolRegistry.execute({
         toolName: 'ssh:runCommand',
-        args: { sessionId, command: step.command, timeoutSecs: step.timeoutSeconds ?? 120 },
+        args: { sessionId, command, timeoutSecs: step.timeoutSeconds ?? 120 },
         context: { approved: true },
       });
     }
 
     // ── Run main install steps ─────────────────────────────────────────────
     const mainSteps = svc.installSteps.filter((s) => !s.isPrerequisite);
-    const script = mainSteps.map((s) => s.command ?? `# ${s.description}`).join('\n');
+    let script = mainSteps.map((s) => s.command ?? `# ${s.description}`).join('\n');
     if (script.trim()) {
+      if (envExports.length > 0) {
+        script = [...envExports, '', script].join('\n');
+      }
       await toolRegistry.execute({
         toolName: 'ssh:runScript',
         args: { sessionId, script, timeoutSecs: 600 },

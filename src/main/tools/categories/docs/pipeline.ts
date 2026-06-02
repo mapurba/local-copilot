@@ -30,7 +30,7 @@ export async function callLlm(systemPrompt: string, userContent: string, maxToke
   const token = await tokenManager.getToken();
 
   const body = JSON.stringify({
-    model: 'gpt-4o',
+    model: 'gpt-4.1',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userContent },

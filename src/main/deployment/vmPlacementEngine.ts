@@ -16,6 +16,9 @@ import {
   DeploymentDesign,
   VmPlan,
   ServiceSpec,
+  InstallStep,
+  PortSpec,
+  ConfigKey,
   OSRequirement,
   ResourceSpec,
 } from './types';
@@ -73,10 +76,20 @@ export function planVmTopology(
   intel: DeploymentIntelligence,
   modeName: string
 ): VmPlan[] {
-  const mode = intel.deploymentModes.find((m) => m.name === modeName)
+  let mode = intel.deploymentModes.find((m) => m.name === modeName)
     ?? intel.deploymentModes[0];
 
-  if (!mode) throw new Error(`Deployment mode '${modeName}' not found in intelligence.`);
+  // When extraction produced no deployment modes (e.g. very short / ambiguous document),
+  // synthesise a single-node fallback that colocates all services on one VM.
+  if (!mode) {
+    const allServiceIds = intel.products.flatMap((p) => p.services.map((s) => s.id));
+    mode = {
+      name: 'single-node',
+      vmCount: 1,
+      description: 'Single-node deployment (auto-generated — no topology was defined in the document)',
+      serviceAssignments: allServiceIds.length > 0 ? { 'all-in-one': allServiceIds } : {},
+    };
+  }
 
   // Build a flat service map from all products
   const serviceMap = new Map<string, ServiceSpec>();
@@ -144,6 +157,93 @@ export function planVmTopology(
   return vmPlans;
 }
 
+// ── Single-VM consolidation ──────────────────────────────────────────────────
+
+/**
+ * When a deployment mode targets a single VM, merge all services on that VM
+ * into one synthetic "all-in-one" ServiceSpec so the UI shows ONE deployable
+ * unit and the runbook is a single sequential document.
+ *
+ * Steps are ordered by dependency relationships (dependencies first), with
+ * prerequisites before main steps within each group. Duplicate commands are
+ * deduplicated.
+ */
+function consolidateServicesForSingleNode(vm: VmPlan, productName: string): VmPlan {
+  const services = vm.services;
+  if (services.length <= 1) return vm;
+
+  // Order services by dependency relationships (leaf/dependency services first)
+  const depGraph = buildDependencyGraph(services);
+  const orderedIds = depGraph.deploymentOrder;
+  const orderedServices: ServiceSpec[] = orderedIds
+    .map((id) => services.find((s) => s.id === id))
+    .filter((s): s is ServiceSpec => s !== undefined);
+
+  // Safety: append any service not captured by the graph
+  for (const svc of services) {
+    if (!orderedServices.find((s) => s.id === svc.id)) orderedServices.push(svc);
+  }
+
+  // Merge install steps: prerequisites first (in dep order), then main steps
+  const allPrereqs: InstallStep[] = [];
+  const allMainSteps: InstallStep[] = [];
+  const seenCommands = new Set<string>();
+
+  for (const svc of orderedServices) {
+    for (const step of svc.installSteps) {
+      const dedupeKey = (step.command ?? step.description).trim();
+      if (seenCommands.has(dedupeKey)) continue;
+      seenCommands.add(dedupeKey);
+      if (step.isPrerequisite) {
+        allPrereqs.push(step);
+      } else {
+        allMainSteps.push(step);
+      }
+    }
+  }
+
+  const mergedSteps: InstallStep[] = [
+    ...allPrereqs.map((s, i) => ({ ...s, stepNumber: i + 1 })),
+    ...allMainSteps.map((s, i) => ({ ...s, stepNumber: allPrereqs.length + i + 1 })),
+  ];
+
+  // Merge ports (deduplicate by port number)
+  const portMap = new Map<number, PortSpec>();
+  for (const svc of orderedServices) {
+    for (const p of svc.ports) {
+      if (!portMap.has(p.port)) portMap.set(p.port, p);
+    }
+  }
+
+  // Merge configKeys (deduplicate by key name)
+  const configKeyMap = new Map<string, ConfigKey>();
+  for (const svc of orderedServices) {
+    for (const ck of svc.configKeys) {
+      if (!configKeyMap.has(ck.key)) configKeyMap.set(ck.key, ck);
+    }
+  }
+
+  // Use the primary service's health check; fall back to the last ordered service
+  const primary =
+    orderedServices.find((s) => s.role === 'primary') ??
+    orderedServices[orderedServices.length - 1];
+
+  const consolidated: ServiceSpec = {
+    id: 'all-in-one',
+    name: `${productName} (All-in-One)`,
+    role: 'primary',
+    deployOn: 'vm',
+    ports: Array.from(portMap.values()),
+    installSteps: mergedSteps,
+    healthCheck: primary.healthCheck,
+    configKeys: Array.from(configKeyMap.values()),
+    requiresConfigFrom: [], // all dependencies are now internal
+    resourceRequirements: maxResourceSpec(orderedServices.map((s) => s.resourceRequirements)),
+  };
+
+  return { ...vm, services: [consolidated] };
+}
+
 // ── Design builder ────────────────────────────────────────────────────────────
 
 /**
@@ -158,14 +258,31 @@ export function buildDeploymentDesign(
   modeName: string,
   ipAssignments: Record<string, string> = {}
 ): DeploymentDesign {
-  const vms = planVmTopology(intel, modeName);
+  let vms = planVmTopology(intel, modeName);
 
-  // Apply IPs to VmPlans
+  // Apply IPs to VmPlans before any consolidation so vm.ip is set
   for (const vm of vms) {
     const firstServiceIp = ipAssignments[vm.services[0]?.id];
     if (firstServiceIp) {
       vm.ip = firstServiceIp;
     }
+  }
+
+  // ── Single-VM consolidation ─────────────────────────────────────────────────
+  // When the chosen deployment mode targets a single VM, merge all services
+  // into one so the user gets ONE deployable unit with a single runbook instead
+  // of N separate deployment steps.
+  const selectedMode =
+    intel.deploymentModes.find((m) => m.name === modeName) ?? intel.deploymentModes[0];
+  const isSingleNode = (selectedMode?.vmCount ?? vms.length) === 1 || vms.length === 1;
+  if (isSingleNode) {
+    const productName = intel.products[0]?.name ?? 'Product';
+    vms = vms.map((vm) => {
+      const consolidated = consolidateServicesForSingleNode(vm, productName);
+      // Keep the IP accessible by the consolidated service id for runbook generation
+      if (vm.ip) ipAssignments[consolidated.services[0].id] = vm.ip;
+      return consolidated;
+    });
   }
 
   // Collect all services for dependency graph
@@ -185,8 +302,8 @@ export function buildDeploymentDesign(
   };
 
   // Generate diagram and runbook now that IPs are known
-  design.mermaid = generateTopologyDiagram(design);
-  design.runbook = generateFullRunbook(design);
+  design.mermaid = generateTopologyDiagram(design, intel);
+  design.runbook = generateFullRunbook(design, intel);
 
   // Attempt to discover a TEMPLATE UUID from each service's runbook and
   // attach it to the VmPlan so orchestration can prefer per-VM templates.

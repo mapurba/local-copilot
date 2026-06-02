@@ -31,7 +31,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelCha
         setModels(list);
         if (list.length > 0 && !selectedModel) onModelChangeRef.current(list[0]);
       } catch {
-        setModels(['gpt-4', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'claude-3-opus', 'o1', 'o1-preview']);
+        setModels(['gpt-5.3-codex', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'claude-3-opus', 'o1', 'o1-preview']);
       } finally {
         setLoading(false);
       }

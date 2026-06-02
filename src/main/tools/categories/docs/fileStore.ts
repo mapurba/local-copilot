@@ -23,7 +23,7 @@ export interface DocMeta {
   sizeBytes: number;
   uploadedAt: number;
   processedAt?: number;
-  status: 'pending' | 'processing' | 'ready' | 'error';
+  status: 'pending' | 'processing' | 'ready' | 'analysed' | 'error';
   summary?: string;
   title?: string;
   tags: string[];
