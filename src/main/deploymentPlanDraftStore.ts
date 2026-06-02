@@ -72,3 +72,41 @@ export function deleteDeploymentDraft(id: string): boolean {
   fs.unlinkSync(p);
   return true;
 }
+
+export function exportDeploymentDraft(id: string, destinationPath: string): { id: string; path: string } {
+  const draft = loadDeploymentDraft(id);
+  if (!draft) {
+    throw new Error(`Draft not found: ${id}`);
+  }
+
+  fs.writeFileSync(destinationPath, JSON.stringify(draft, null, 2), 'utf-8');
+  return { id, path: destinationPath };
+}
+
+export function importDeploymentDraft(sourcePath: string): { id: string; savedAt: string } {
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`Import file not found: ${sourcePath}`);
+  }
+
+  const raw = fs.readFileSync(sourcePath, 'utf-8');
+  const parsed = JSON.parse(raw) as DraftPlan;
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Invalid deployment draft file. Expected a JSON object.');
+  }
+
+  const requestedId = String(parsed.id || '').trim();
+  const id = requestedId || `draft-${Date.now()}`;
+
+  const existing = loadDeploymentDraft(id);
+  const finalPlan: DraftPlan = existing
+    ? {
+        ...parsed,
+        id: `${id}-imported-${Date.now()}`,
+      }
+    : {
+        ...parsed,
+        id,
+      };
+
+  return saveDeploymentDraft(finalPlan);
+}

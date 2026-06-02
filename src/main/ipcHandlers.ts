@@ -40,7 +40,15 @@ import {
   loadDeploymentDraft,
   listDeploymentDrafts,
   deleteDeploymentDraft,
+  exportDeploymentDraft,
+  importDeploymentDraft,
 } from './deploymentPlanDraftStore';
+import {
+  BEDROCK_MODEL_IDS,
+  getProviderConfigView,
+  saveBedrockConfig,
+  setProvider,
+} from './providerConfigStore';
 import {
   createConversation,
   listConversations,
@@ -82,12 +90,23 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 function extractJsonObject(raw: string): string {
+  // Try to strip complete markdown fences (well-formed response)
   const fenced = raw.match(/```(?:json)?\s*([\s\S]+?)\s*```/i);
   if (fenced?.[1]) return fenced[1].trim();
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start !== -1 && end !== -1 && end > start) return raw.slice(start, end + 1);
-  return raw.trim();
+
+  // Strip leading fence line for truncated responses (closing ``` missing)
+  let content = raw;
+  const fenceAt = raw.indexOf('```');
+  if (fenceAt !== -1) {
+    const nlAt = raw.indexOf('\n', fenceAt);
+    content = nlAt !== -1 ? raw.slice(nlAt + 1) : raw.slice(fenceAt).replace(/^```(?:json)?[^\n]*/, '');
+  }
+
+  const start = content.indexOf('{');
+  const end = content.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) return content.slice(start, end + 1);
+  if (start !== -1) return content.slice(start); // truncated JSON: no backticks, JSON.parse gives clearer error
+  return content.trim();
 }
 
 export function registerIpcHandlers(mainWindow: BrowserWindow) {
@@ -183,6 +202,46 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     } catch {
       return { success: false };
     }
+  });
+
+  // AI provider configuration
+  ipcMain.handle('provider:getConfig', async () => {
+    return getProviderConfigView();
+  });
+
+  ipcMain.handle('provider:setProvider', async (_event, provider: 'copilot' | 'bedrock') => {
+    const next = setProvider(provider === 'bedrock' ? 'bedrock' : 'copilot');
+    return {
+      success: true,
+      provider: next.provider,
+      bedrock: {
+        accessKeyId: next.bedrock.accessKeyId || '',
+        secretAccessKey: next.bedrock.secretAccessKey || '',
+        region: next.bedrock.region || '',
+        modelId: next.bedrock.modelId || BEDROCK_MODEL_IDS[0],
+        configured: Boolean(next.bedrock.accessKeyId && next.bedrock.secretAccessKey && next.bedrock.region && next.bedrock.modelId),
+      },
+    };
+  });
+
+  ipcMain.handle('provider:saveBedrockConfig', async (_event, input: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    region: string;
+    modelId: string;
+  }) => {
+    const next = saveBedrockConfig(input);
+    return {
+      success: true,
+      provider: next.provider,
+      bedrock: {
+        accessKeyId: next.bedrock.accessKeyId || '',
+        secretAccessKey: next.bedrock.secretAccessKey || '',
+        region: next.bedrock.region || '',
+        modelId: next.bedrock.modelId || BEDROCK_MODEL_IDS[0],
+        configured: Boolean(next.bedrock.accessKeyId && next.bedrock.secretAccessKey && next.bedrock.region && next.bedrock.modelId),
+      },
+    };
   });
 
   // Chat: Get available models
@@ -329,6 +388,48 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     try {
       const deleted = deleteDeploymentDraft(id);
       return { success: deleted };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deploymentDraft:export', async (_event, id: string) => {
+    try {
+      const draft = loadDeploymentDraft(id);
+      if (!draft) return { success: false, error: `Draft not found: ${id}` };
+
+      const draftName = String(draft.name || id).replace(/[^a-z0-9-_ ]/gi, '_').trim() || id;
+      const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+        title: 'Export Deployment Plan',
+        defaultPath: `${draftName}.json`,
+        filters: [{ name: 'JSON Files', extensions: ['json'] }],
+      });
+
+      if (canceled || !filePath) {
+        return { success: false, canceled: true };
+      }
+
+      const result = exportDeploymentDraft(id, filePath);
+      return { success: true, ...result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('deploymentDraft:import', async () => {
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        title: 'Import Deployment Plan',
+        properties: ['openFile'],
+        filters: [{ name: 'JSON Files', extensions: ['json'] }],
+      });
+
+      if (canceled || !filePaths?.length) {
+        return { success: false, canceled: true };
+      }
+
+      const result = importDeploymentDraft(filePaths[0]);
+      return { success: true, ...result };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -1271,7 +1372,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         '```',
       ].join('\n');
 
-      const raw = await callLlm(systemPrompt, userContent, 3500);
+      const raw = await callLlm(systemPrompt, userContent, 8192);
       const json = extractJsonObject(raw);
       const parsed = JSON.parse(json) as {
         summary?: string;

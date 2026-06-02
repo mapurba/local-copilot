@@ -137,7 +137,7 @@ const ChatPane: React.FC<ChatPaneProps> = ({
   useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
   const [conversationLoading, setConversationLoading] = useState(false);
   const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gpt-4');
+  const [selectedModel, setSelectedModel] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [useTools, setUseTools] = useState(true);
   const [disabledTools, setDisabledTools] = useState<Set<string>>(() => {
@@ -405,6 +405,12 @@ const ChatPane: React.FC<ChatPaneProps> = ({
     const historyForApi = [...messages, apiUserMsg]
       .filter((m) => !m.streaming)
       .map((m) => ({ role: m.role, content: m.content }));
+
+    if (!selectedModel) {
+      setIsStreaming(false);
+      setMessages((prev) => [...prev, { role: 'assistant', content: 'Please wait for model list to load, then try again.' }]);
+      return;
+    }
 
     if (useTools) {
       const disabled = disabledTools.size > 0 ? [...disabledTools] : undefined;

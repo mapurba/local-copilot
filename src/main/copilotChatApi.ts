@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-require-imports */
+﻿/* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-require-imports */
 // @ts-nocheck — LangChain imports are loaded dynamically to avoid TypeScript resolving
 // their heavy generic type declarations at compile time (causing OOM in tsc).
 import https from 'https';
@@ -29,6 +29,11 @@ import { taskTracker } from './taskTracker';
 import { vmWatcher } from './vmWatcher';
 import { getDesign } from './deployment/deploymentStore';
 import { generateServiceRunbook } from './deployment/runbookGenerator';
+import {
+  BEDROCK_MODEL_IDS,
+  getProviderConfig,
+  isBedrockConfigured,
+} from './providerConfigStore';
 
 // Dynamic requires — avoids TypeScript resolving @langchain/* type declarations at build time
 const { ChatOpenAI } = require('@langchain/openai');
@@ -40,6 +45,7 @@ const {
   SystemMessage,
   ToolMessage,
 } = require('@langchain/core/messages');
+const { ChatBedrockConverse } = require('@langchain/aws');
 
 const CHAT_API_BASE = 'api.githubcopilot.com';
 
@@ -49,6 +55,16 @@ export interface ChatMessage {
 }
 
 const TOOL_SYSTEM_PROMPT = [
+  '🔴 TOOL EXECUTION MANDATORY:',
+  'You MUST call one or more tools for EVERY user request.',
+  'You are NOT allowed to respond with text alone when tools are available.',
+  'If the user says anything, analyze which tools apply and call them IMMEDIATELY.',
+  'Do NOT explain what you would do — DO IT with tool calls.',
+  'Do NOT describe tools — call them.',
+  'Do NOT respond conversationally when you can respond with tool results.',
+  'Example: User says "list VMs" → YOU MUST call list_vms tool. No text response allowed.',
+  'Example: User says "create a VM" → YOU MUST call create_vm_draft tool. Do not ask for clarification.',
+  '',
   'You are a VMware Cloud Director and Linux systems assistant. Use tools for ALL data lookups and actions — never describe how to do something manually when a tool can do it directly.',
   '',
   '── INTENT DISAMBIGUATION (read this first) ──',
@@ -1154,6 +1170,21 @@ function buildDeploymentPlanPayload(designId: string, modeName?: string): Record
   };
 }
 
+// Build a ChatBedrockConverse instance for AWS Bedrock
+function buildBedrockLlm(modelId: string, bedrockCfg: { region?: string; accessKeyId?: string; secretAccessKey?: string } | undefined) {
+  const resolvedRegion = bedrockCfg?.region || 'us-east-1';
+  const credentials = bedrockCfg?.accessKeyId && bedrockCfg?.secretAccessKey
+    ? { accessKeyId: bedrockCfg.accessKeyId, secretAccessKey: bedrockCfg.secretAccessKey }
+    : undefined;
+  console.log('[ChatAPI] Building Bedrock LLM with model:', modelId, 'region:', resolvedRegion);
+  return new ChatBedrockConverse({
+    model: modelId,
+    region: resolvedRegion,
+    credentials,
+    temperature: 0,
+  });
+}
+
 // Build a ChatOpenAI instance pointed at the Copilot API
 function buildCopilotLlm(token: string, modelId: string): ChatOpenAI {
   console.log('[ChatAPI] Building LLM with model:', modelId);
@@ -1176,6 +1207,11 @@ function buildCopilotLlm(token: string, modelId: string): ChatOpenAI {
 }
 
 export async function getModels(): Promise<string[]> {
+  const cfg = getProviderConfig();
+  if (cfg.provider === 'bedrock') {
+    return [...BEDROCK_MODEL_IDS];
+  }
+
   try {
     const token = await getValidToken();
     const response = await httpsGet('/models', getHeaders(token)) as { data?: Array<{ id: string }> };
@@ -1201,6 +1237,27 @@ export function streamChatCompletion(
   onError: (err: Error) => void
 ): void {
   console.log('[ChatAPI] streamChatCompletion starting - model:', modelId);
+
+  const cfg = getProviderConfig();
+  if (cfg.provider === 'bedrock') {
+    (async () => {
+      try {
+        const llm = buildBedrockLlm(modelId, cfg.bedrock);
+        const lcMessages: BaseMessage[] = [
+          new SystemMessage(TOOL_SYSTEM_PROMPT.join('\n')),
+          ...toLcMessages(messages),
+        ];
+        const response = await llm.invoke(lcMessages);
+        const text = typeof response.content === 'string' ? response.content : '';
+        if (text) onChunk(text);
+        onEnd();
+      } catch (err) {
+        onError(err instanceof Error ? err : new Error(String(err)));
+      }
+    })();
+    return;
+  }
+
   getValidToken()
     .then(async (token) => {
       console.log('[ChatAPI] Token obtained for streaming');
@@ -1261,6 +1318,9 @@ export async function chatWithTools(
 
   try {
     console.log('[ChatAPI] chatWithTools starting - model:', modelId, 'messages:', messages.length);
+
+    const cfg = getProviderConfig();
+
     const token = await getValidToken();
     // Docs tools are intentionally NOT bound to LangChain — document content is already
     // injected into the user message as a [Document: "..." | docId: ...] block, so the
@@ -1274,7 +1334,11 @@ export async function chatWithTools(
     }
     console.log('[ChatAPI] Token obtained, building LLM with', allTools.length, 'tools',
       `(${LC_TOOLS.length} VCD + ${TASK_TOOLS.length} tasks + ${registryDeploymentTools.length} deployment + ${registrySshTools.length} ssh)`);
-    const llm = buildCopilotLlm(token, modelId).bindTools(allTools);
+
+    // ── Build LLM (Copilot or Bedrock) ────────────────────────────────────────
+    const llm = cfg.provider === 'bedrock'
+      ? buildBedrockLlm(modelId, cfg.bedrock).bindTools(allTools)
+      : buildCopilotLlm(token, modelId).bindTools(allTools);
 
     // Build dynamic addendum listing exactly what is/isn't available
     const toolNames = new Set(allTools.map((t) => t.name));

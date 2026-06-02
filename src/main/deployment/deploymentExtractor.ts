@@ -259,14 +259,23 @@ function sanitizeInstallStepCommand(cmd: string): string {
 // ── JSON extraction helper ────────────────────────────────────────────────────
 
 function extractJson(raw: string): string {
-  // Strip markdown code fences
+  // Strip markdown code fences (well-formed response)
   const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
   if (fenceMatch) return fenceMatch[1].trim();
-  // Find first { to last }
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start !== -1 && end !== -1) return raw.slice(start, end + 1);
-  return raw.trim();
+
+  // Strip leading fence line for truncated responses (closing ``` missing)
+  let content = raw;
+  const fenceAt = raw.indexOf('```');
+  if (fenceAt !== -1) {
+    const nlAt = raw.indexOf('\n', fenceAt);
+    content = nlAt !== -1 ? raw.slice(nlAt + 1) : raw.slice(fenceAt).replace(/^```(?:json)?[^\n]*/, '');
+  }
+
+  const start = content.indexOf('{');
+  const end = content.lastIndexOf('}');
+  if (start !== -1 && end !== -1) return content.slice(start, end + 1);
+  if (start !== -1) return content.slice(start); // truncated but no leading backticks
+  return content.trim();
 }
 
 // ── LLM call with retry ───────────────────────────────────────────────────────

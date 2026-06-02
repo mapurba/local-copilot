@@ -1,6 +1,43 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 export interface CopilotAPI {
+  getProviderConfig: () => Promise<{
+    provider: 'copilot' | 'bedrock';
+    bedrock: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      region: string;
+      modelId: string;
+      configured: boolean;
+    };
+  }>;
+  setProvider: (provider: 'copilot' | 'bedrock') => Promise<{
+    success: boolean;
+    provider: 'copilot' | 'bedrock';
+    bedrock: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      region: string;
+      modelId: string;
+      configured: boolean;
+    };
+  }>;
+  saveBedrockConfig: (input: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    region: string;
+    modelId: string;
+  }) => Promise<{
+    success: boolean;
+    provider: 'copilot' | 'bedrock';
+    bedrock: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      region: string;
+      modelId: string;
+      configured: boolean;
+    };
+  }>;
   status: () => Promise<{ status: string; user?: string }>;
   signIn: () => Promise<{ userCode: string; verificationUri: string; status: string }>;
   signInConfirm: () => Promise<{ status: string; user?: string }>;
@@ -100,10 +137,16 @@ export interface CopilotAPI {
   loadDeploymentDraft: (id: string) => Promise<{ success: boolean; plan?: Record<string, unknown>; error?: string }>;
   listDeploymentDrafts: () => Promise<{ success: boolean; drafts: Array<{ id: string; name: string; status: string; createdAt: string; updatedAt: string }>; error?: string }>;
   deleteDeploymentDraft: (id: string) => Promise<{ success: boolean; error?: string }>;
+  exportDeploymentDraft: (id: string) => Promise<{ success: boolean; canceled?: boolean; id?: string; path?: string; error?: string }>;
+  importDeploymentDraft: () => Promise<{ success: boolean; canceled?: boolean; id?: string; savedAt?: string; error?: string }>;
   openExternal: (url: string) => Promise<void>;
 }
 
 contextBridge.exposeInMainWorld('copilot', {
+  getProviderConfig: () => ipcRenderer.invoke('provider:getConfig'),
+  setProvider: (provider: 'copilot' | 'bedrock') => ipcRenderer.invoke('provider:setProvider', provider),
+  saveBedrockConfig: (input: { accessKeyId: string; secretAccessKey: string; region: string; modelId: string }) =>
+    ipcRenderer.invoke('provider:saveBedrockConfig', input),
   status: () => ipcRenderer.invoke('copilot:status'),
   signIn: () => ipcRenderer.invoke('copilot:signIn'),
   signInConfirm: () => ipcRenderer.invoke('copilot:signInConfirm'),
@@ -241,6 +284,8 @@ contextBridge.exposeInMainWorld('copilot', {
   loadDeploymentDraft: (id: string) => ipcRenderer.invoke('deploymentDraft:load', id),
   listDeploymentDrafts: () => ipcRenderer.invoke('deploymentDraft:list'),
   deleteDeploymentDraft: (id: string) => ipcRenderer.invoke('deploymentDraft:delete', id),
+  exportDeploymentDraft: (id: string) => ipcRenderer.invoke('deploymentDraft:export', id),
+  importDeploymentDraft: () => ipcRenderer.invoke('deploymentDraft:import'),
 
   // DISABLED: Terminal methods removed to prevent antivirus quarantine
   // terminalCreate: (options: { terminalId: string; cols: number; rows: number; command?: string }) =>

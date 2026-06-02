@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { DeploymentPlan, ServiceNode } from '../deploymentTypes';
 import ServiceDetailPanel from './ServiceDetailPanel';
 
@@ -354,9 +356,11 @@ const DeploymentPlanPane: React.FC<DeploymentPlanPaneProps> = ({
 
           {activeView === 'markdown' && (
             <div className="p-4 overflow-auto prose prose-invert max-w-none">
-              <pre className="whitespace-pre-wrap text-sm text-gray-200 bg-gray-800 p-4 rounded">
-                {plan.markdownSummary}
-              </pre>
+              <article className="prose prose-invert prose-sm max-w-none">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {plan.markdownSummary || '_No summary available._'}
+                </ReactMarkdown>
+              </article>
             </div>
           )}
         </div>

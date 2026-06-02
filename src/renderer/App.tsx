@@ -26,6 +26,17 @@ declare global {
   }
 }
 
+interface ProviderConfigView {
+  provider: 'copilot' | 'bedrock';
+  bedrock: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    region: string;
+    modelId: string;
+    configured: boolean;
+  };
+}
+
 
 const App: React.FC = () => {
   // Template dialog state (moved inside component to avoid invalid hook call)
@@ -54,6 +65,7 @@ const App: React.FC = () => {
   const [authStatus, setAuthStatus] = useState<string>('Unknown');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [user, setUser] = useState<string | undefined>();
+  const [providerConfig, setProviderConfig] = useState<ProviderConfigView | null>(null);
   const [vcdStatus, setVcdStatus] = useState<{ connected: boolean; user?: string; org?: string; host?: string }>({ connected: false });
   const [showVcdModal, setShowVcdModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'deploy' | 'preview'>('chat');
@@ -82,6 +94,11 @@ const App: React.FC = () => {
     impactAssessment?: string;
     timestamp: number;
   } | null>(null);
+
+  const applyProviderConfig = (cfg: ProviderConfigView) => {
+    setProviderConfig(cfg);
+    window.dispatchEvent(new CustomEvent('ai-provider-changed', { detail: cfg.provider }));
+  };
 
   // Check GitHub Copilot authentication status
   const checkAuth = async () => {
@@ -133,8 +150,24 @@ const App: React.FC = () => {
 
   // Auth and VCD status check on mount
   useEffect(() => {
-    checkAuth();
-    checkVcd();
+    const boot = async () => {
+      try {
+        const cfg = await window.copilot.getProviderConfig();
+        applyProviderConfig(cfg);
+        if (cfg.provider === 'bedrock') {
+          setUser(undefined);
+          setAuthStatus(cfg.bedrock.configured ? 'Bedrock' : 'BedrockNotConfigured');
+          setShowAuthModal(!cfg.bedrock.configured);
+        } else {
+          await checkAuth();
+        }
+      } catch {
+        await checkAuth();
+      }
+      await checkVcd();
+    };
+
+    void boot();
 
     // Listen for VCD session expiry
     const cleanupVcd = window.copilot.onVcdSessionExpired(() => {
@@ -205,6 +238,19 @@ const App: React.FC = () => {
     if (status === 'OK' || status === 'AlreadySignedIn') {
       setShowAuthModal(false);
     }
+  };
+
+  const handleProviderConfigChange = (cfg: ProviderConfigView) => {
+    applyProviderConfig(cfg);
+    if (cfg.provider === 'bedrock') {
+      setUser(undefined);
+      setAuthStatus(cfg.bedrock.configured ? 'Bedrock' : 'BedrockNotConfigured');
+      setShowAuthModal(!cfg.bedrock.configured);
+      return;
+    }
+
+    setShowAuthModal(false);
+    void checkAuth();
   };
 
   const handlePlanUpdate = (plan: DeploymentPlan) => {
@@ -921,6 +967,14 @@ const App: React.FC = () => {
 
                 {/* Action Buttons - Right side */}
                 <div className="flex items-center gap-1 px-2">
+                  <button
+                    onClick={() => setShowAuthModal(true)}
+                    className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded"
+                    title="AI provider settings"
+                  >
+                    Provider
+                  </button>
+
                   {/* Check for Update Button */}
                   <IconButton
                     flat
@@ -966,14 +1020,24 @@ const App: React.FC = () => {
               {/* Status Bar */}
               <div className="flex items-center justify-between px-4 py-2 bg-gray-850 border-b border-gray-700 text-xs">
                 <div className="text-gray-400">
-                  {user && <span>Copilot: <span className="text-gray-300">{user}</span></span>}
+                  {providerConfig?.provider === 'copilot' && user && <span>Copilot: <span className="text-gray-300">{user}</span></span>}
+                  {providerConfig?.provider === 'bedrock' && (
+                    <span>
+                      Provider: <span className="text-gray-300">Bedrock</span>
+                      {providerConfig.bedrock.region ? <span className="text-gray-500"> | {providerConfig.bedrock.region}</span> : null}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   {deploymentPlan && currentDraftSavedAt && (
                     <span className="text-gray-500">Draft saved: {new Date(currentDraftSavedAt).toLocaleTimeString()}</span>
                   )}
-                  <div className={`w-2 h-2 rounded-full ${authStatus === 'OK' || authStatus === 'AlreadySignedIn' ? 'bg-green-400' : 'bg-yellow-400'}`} />
-                  <span className="text-gray-400">{authStatus === 'AlreadySignedIn' ? 'Connected' : authStatus}</span>
+                  <div className={`w-2 h-2 rounded-full ${(providerConfig?.provider === 'bedrock' && providerConfig?.bedrock.configured) || authStatus === 'OK' || authStatus === 'AlreadySignedIn' ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                  <span className="text-gray-400">
+                    {providerConfig?.provider === 'bedrock'
+                      ? (providerConfig.bedrock.configured ? 'Bedrock Connected' : 'Bedrock Not Configured')
+                      : (authStatus === 'AlreadySignedIn' ? 'Connected' : authStatus)}
+                  </span>
                 </div>
               </div>
 
@@ -1019,7 +1083,15 @@ const App: React.FC = () => {
 
       {/* Auth Modal */}
       {showAuthModal && (
-        <AuthModal onComplete={handleAuthComplete} onClose={() => setShowAuthModal(false)} />
+        <AuthModal
+          onComplete={handleAuthComplete}
+          onClose={() => setShowAuthModal(false)}
+          providerConfig={providerConfig}
+          onProviderConfigChange={handleProviderConfigChange}
+          theme={theme}
+          copilotAuthStatus={authStatus}
+          copilotUser={user}
+        />
       )}
 
       {/* VCD Auth Modal */}

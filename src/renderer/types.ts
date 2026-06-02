@@ -1,4 +1,41 @@
 export interface CopilotAPI {
+  getProviderConfig: () => Promise<{
+    provider: 'copilot' | 'bedrock';
+    bedrock: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      region: string;
+      modelId: string;
+      configured: boolean;
+    };
+  }>;
+  setProvider: (provider: 'copilot' | 'bedrock') => Promise<{
+    success: boolean;
+    provider: 'copilot' | 'bedrock';
+    bedrock: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      region: string;
+      modelId: string;
+      configured: boolean;
+    };
+  }>;
+  saveBedrockConfig: (input: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    region: string;
+    modelId: string;
+  }) => Promise<{
+    success: boolean;
+    provider: 'copilot' | 'bedrock';
+    bedrock: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      region: string;
+      modelId: string;
+      configured: boolean;
+    };
+  }>;
   status: () => Promise<{ status: string; user?: string }>;
   signIn: () => Promise<{ userCode: string; verificationUri: string; status: string }>;
   signInConfirm: () => Promise<{ status: string; user?: string }>;
@@ -149,6 +186,8 @@ export interface CopilotAPI {
   loadDeploymentDraft: (id: string) => Promise<{ success: boolean; plan?: Record<string, unknown>; error?: string }>;
   listDeploymentDrafts: () => Promise<{ success: boolean; drafts: Array<{ id: string; name: string; status: string; createdAt: string; updatedAt: string }>; error?: string }>;
   deleteDeploymentDraft: (id: string) => Promise<{ success: boolean; error?: string }>;
+  exportDeploymentDraft: (id: string) => Promise<{ success: boolean; canceled?: boolean; id?: string; path?: string; error?: string }>;
+  importDeploymentDraft: () => Promise<{ success: boolean; canceled?: boolean; id?: string; savedAt?: string; error?: string }>;
   listTemplates: (nameFilter?: string) => Promise<{ success?: boolean; count?: number; total?: number; templates?: Array<Record<string, unknown>>; error?: string }>;
   openExternal: (url: string) => Promise<void>;
 

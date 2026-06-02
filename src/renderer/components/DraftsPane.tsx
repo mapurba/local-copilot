@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from '@ux-aspects-universal/react/button';
+import { ExportDocumentIcon, ImportDocumentIcon } from '@ux-aspects-universal/react/icon/jato';
 
 interface DraftItem {
   id: string;
@@ -12,6 +13,8 @@ interface DraftItem {
 const DraftsPane: React.FC<{ onLoad?: (id: string) => Promise<void>; onDelete?: (id: string) => Promise<void> }> = ({ onLoad, onDelete }) => {
   const [drafts, setDrafts] = useState<DraftItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [exportingId, setExportingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchDrafts = async () => {
@@ -82,11 +85,60 @@ const DraftsPane: React.FC<{ onLoad?: (id: string) => Promise<void>; onDelete?: 
     }
   };
 
+  const handleImport = async () => {
+    setImporting(true);
+    try {
+      // @ts-ignore
+      const res = await window.copilot.importDeploymentDraft();
+      if (!res?.success) {
+        if (!res?.canceled) {
+          window.alert(res?.error || 'Failed to import deployment plan');
+        }
+        return;
+      }
+
+      await fetchDrafts();
+      window.alert(`Deployment plan imported as draft: ${res.id}`);
+    } catch (e: any) {
+      window.alert(e?.message || String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleExport = async (id: string) => {
+    setExportingId(id);
+    try {
+      // @ts-ignore
+      const res = await window.copilot.exportDeploymentDraft(id);
+      if (!res?.success) {
+        if (!res?.canceled) {
+          window.alert(res?.error || 'Failed to export deployment plan');
+        }
+        return;
+      }
+
+      window.alert(`Deployment plan exported to:\n${res.path}`);
+    } catch (e: any) {
+      window.alert(e?.message || String(e));
+    } finally {
+      setExportingId(null);
+    }
+  };
+
   return (
     <div className="p-3">
       <div className="flex items-center gap-2 mb-3">
         <Button size="small" primary onClick={() => void fetchDrafts()}>
           Refresh
+        </Button>
+        <Button
+          size="small"
+          onClick={() => void handleImport()}
+          disabled={importing}
+          iconBefore={importing ? undefined : <ImportDocumentIcon />}
+        >
+          {importing ? 'Importing...' : 'Import Plan'}
         </Button>
       </div>
 
@@ -96,14 +148,22 @@ const DraftsPane: React.FC<{ onLoad?: (id: string) => Promise<void>; onDelete?: 
       <div className="space-y-2">
         {drafts.map((d) => (
           <div key={d.id} className="p-2 bg-gray-800 border border-gray-700 rounded">
-            <div className="flex justify-between items-center">
-              <div>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
                 <div className="text-sm font-medium text-gray-200">{d.name}</div>
-                <div className="text-xs text-gray-400">{d.id}</div>
+                <div className="text-xs text-gray-400 break-words">{d.id}</div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-gray-400 mr-2">{d.status}</div>
+              <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                <div className="text-xs text-gray-400">{d.status}</div>
                 <Button size="small" onClick={() => void handleLoad(d.id)}>Load</Button>
+                <Button
+                  size="small"
+                  onClick={() => void handleExport(d.id)}
+                  disabled={exportingId === d.id}
+                  iconBefore={exportingId === d.id ? undefined : <ExportDocumentIcon />}
+                >
+                  {exportingId === d.id ? 'Exporting...' : 'Export'}
+                </Button>
                 <Button size="small" flat onClick={() => void handleDelete(d.id)}>Delete</Button>
               </div>
             </div>

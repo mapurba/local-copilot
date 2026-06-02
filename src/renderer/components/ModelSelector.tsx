@@ -5,6 +5,9 @@ interface ModelSelectorProps {
   onModelChange: (model: string) => void;
 }
 
+const DEFAULT_COPILOT_MODEL = 'gpt-4.1';
+const DEFAULT_BEDROCK_MODEL = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
+
 /** Shorten a model id to a readable label, e.g. "claude-3.5-sonnet" → "Claude 3.5 Sonnet" */
 function labelOf(id: string): string {
   return id
@@ -19,9 +22,36 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelCha
   const [models, setModels] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState<'copilot' | 'bedrock'>('copilot');
+  const previousProviderRef = useRef<'copilot' | 'bedrock'>('copilot');
   const containerRef = useRef<HTMLDivElement>(null);
   const onModelChangeRef = useRef(onModelChange);
   onModelChangeRef.current = onModelChange;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const bootstrapProvider = async () => {
+      try {
+        const cfg = await window.copilot.getProviderConfig();
+        if (!cancelled) setProvider(cfg.provider);
+      } catch {
+        if (!cancelled) setProvider('copilot');
+      }
+    };
+
+    const handleProviderChanged = (event: Event) => {
+      const custom = event as CustomEvent<'copilot' | 'bedrock'>;
+      setProvider(custom.detail === 'bedrock' ? 'bedrock' : 'copilot');
+    };
+
+    void bootstrapProvider();
+    window.addEventListener('ai-provider-changed', handleProviderChanged as EventListener);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('ai-provider-changed', handleProviderChanged as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     const fetchModels = async () => {
@@ -29,16 +59,42 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelCha
         setLoading(true);
         const list = await window.copilot.getModels();
         setModels(list);
-        if (list.length > 0 && !selectedModel) onModelChangeRef.current(list[0]);
+        if (list.length > 0) {
+          const providerChanged = previousProviderRef.current !== provider;
+          const preferred = provider === 'copilot'
+            ? (list.includes(DEFAULT_COPILOT_MODEL) ? DEFAULT_COPILOT_MODEL : list[0])
+            : (list.includes(DEFAULT_BEDROCK_MODEL) ? DEFAULT_BEDROCK_MODEL : list[0]);
+
+          if (providerChanged || !selectedModel || !list.includes(selectedModel)) {
+            onModelChangeRef.current(preferred);
+          }
+        }
       } catch {
-        setModels(['gpt-5.3-codex', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'claude-3-opus', 'o1', 'o1-preview']);
+        const fallback = provider === 'bedrock'
+          ? [
+              'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+              'anthropic.claude-3-7-sonnet-20250219-v1:0',
+              'amazon.nova-pro-v1:0',
+            ]
+          : ['gpt-4.1', 'gpt-5.3-codex', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'claude-3-opus', 'o1', 'o1-preview'];
+        setModels(fallback);
+        if (fallback.length > 0) {
+          const providerChanged = previousProviderRef.current !== provider;
+          const preferred = provider === 'copilot'
+            ? (fallback.includes(DEFAULT_COPILOT_MODEL) ? DEFAULT_COPILOT_MODEL : fallback[0])
+            : (fallback.includes(DEFAULT_BEDROCK_MODEL) ? DEFAULT_BEDROCK_MODEL : fallback[0]);
+
+          if (providerChanged || !selectedModel || !fallback.includes(selectedModel)) {
+            onModelChangeRef.current(preferred);
+          }
+        }
       } finally {
+        previousProviderRef.current = provider;
         setLoading(false);
       }
     };
-    fetchModels();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void fetchModels();
+  }, [provider, selectedModel]);
 
   // Close on outside click
   useEffect(() => {

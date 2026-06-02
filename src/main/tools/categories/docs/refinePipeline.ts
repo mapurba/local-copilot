@@ -63,7 +63,7 @@ export async function runRefinePipeline(
 
   let refined: string;
   try {
-    onLog({ message: '[Pipeline] Calling LLM (gpt-4.1) — this may take 30-90 s for long documents…', level: 'info', done: false });
+    onLog({ message: '[Pipeline] Calling LLM — this may take 30-90 s for long documents…', level: 'info', done: false });
     refined = await callLlm(REFINER_SYSTEM, REFINER_PROMPT(rawContent), 16000);
     onLog({ message: `[Pipeline] LLM returned ${refined.length} chars`, level: 'info', done: false });
   } catch (err) {
@@ -105,7 +105,7 @@ export async function analyzeStoredDoc(
     saveDocContent(docId, refined);
 
     // Update index: status → 'analysed', processedAt = now
-    updateDocumentStatus(docId, 'analysed', {
+    updateDocumentStatus(docId, 'ready', {
       processedAt: Date.now(),
     });
 

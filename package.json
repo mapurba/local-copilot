@@ -1,13 +1,16 @@
 {
   "name": "vcd-agent",
   "private": true,
-  "version": "0.0.8",
+  "version": "0.0.9",
   "type": "commonjs",
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "concurrently \"cross-env PORT=5173 vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.electron.json && vite build",
     "build:electron": "electron-builder",
+    "build:electron:win": "electron-builder --win nsis --publish never",
+    "build:electron:mac": "electron-builder --mac dmg --publish never",
+    "build:electron:all": "npm run build && npm run build:electron:win && npm run build:electron:mac",
     "preview": "vite preview",
     "lint": "eslint .",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
@@ -23,7 +26,8 @@
       "dist-electron/**/*"
     ],
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "artifactName": "VCD-Agent-${version}-${arch}.${ext}"
     },
     "win": {
       "target": "nsis",
@@ -34,8 +38,10 @@
     }
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1058.0",
     "@floating-ui/react": "^0.27.19",
     "@github/copilot-language-server": "^1.498.0",
+    "@langchain/aws": "^1.3.9",
     "@langchain/core": "^1.1.30",
     "@langchain/langgraph": "^1.2.0",
     "@langchain/openai": "^1.2.12",

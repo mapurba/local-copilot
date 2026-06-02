@@ -8,6 +8,7 @@
  */
 
 import { tokenManager } from '../../../../main/tokenManager';
+import { getProviderConfig } from '../../../../main/providerConfigStore';
 import https from 'https';
 
 interface LlmCleanResult {
@@ -27,6 +28,36 @@ const CHAT_API_HOST = 'api.githubcopilot.com';
  * Make a direct HTTPS chat completion request to GitHub Copilot
  */
 export async function callLlm(systemPrompt: string, userContent: string, maxTokens = 4096): Promise<string> {
+  const cfg = getProviderConfig();
+
+  // ── Bedrock path ────────────────────────────────────────────────────────────
+  if (cfg.provider === 'bedrock') {
+    const { ChatBedrockConverse } = require('@langchain/aws') as typeof import('@langchain/aws');
+    const { HumanMessage, SystemMessage } = require('@langchain/core/messages') as typeof import('@langchain/core/messages');
+
+    const bedrockCfg = cfg.bedrock;
+    const resolvedRegion = bedrockCfg?.region || 'us-east-1';
+    const modelId = bedrockCfg?.modelId || 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
+    const credentials = bedrockCfg?.accessKeyId && bedrockCfg?.secretAccessKey
+      ? { accessKeyId: bedrockCfg.accessKeyId, secretAccessKey: bedrockCfg.secretAccessKey }
+      : undefined;
+
+    const llm = new ChatBedrockConverse({
+      model: modelId,
+      region: resolvedRegion,
+      credentials,
+      temperature: 0.3,
+      maxTokens,
+    });
+
+    const response = await llm.invoke([
+      new SystemMessage(systemPrompt),
+      new HumanMessage(userContent),
+    ]);
+    return typeof response.content === 'string' ? response.content : '';
+  }
+
+  // ── Copilot (GitHub) path ────────────────────────────────────────────────────
   const token = await tokenManager.getToken();
 
   const body = JSON.stringify({
