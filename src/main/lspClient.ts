@@ -16,6 +16,7 @@ class LspClient extends EventEmitter {
   private requestId = 0;
   private pendingRequests = new Map<number | string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
   private initialized = false;
+  private initializePromise: Promise<unknown> | null = null;
 
   start() {
     const serverPath = require.resolve('@github/copilot-language-server/dist/language-server.js');
@@ -105,8 +106,19 @@ class LspClient extends EventEmitter {
   }
 
   async initialize() {
+    // Prevent concurrent initialization: return existing promise if in-flight
+    if (this.initializePromise) return this.initializePromise;
     if (this.initialized) return;
 
+    this.initializePromise = this._performInitialization();
+    try {
+      return await this.initializePromise;
+    } finally {
+      this.initializePromise = null;
+    }
+  }
+
+  private async _performInitialization(): Promise<unknown> {
     const result = await this.sendRequest('initialize', {
       processId: process.pid,
       clientInfo: { name: 'local-copilot', version: '1.0.0' },
@@ -133,6 +145,8 @@ class LspClient extends EventEmitter {
     console.log('[LSP] Initialized:', JSON.stringify(result)?.substring(0, 200));
     return result;
   }
+
+  // [End of _performInitialization]
 
   async signInInitiate(): Promise<{ userCode: string; verificationUri: string; status: string }> {
     const result = await this.sendRequest('signInInitiate', {}) as { userCode: string; verificationUri: string; status: string };

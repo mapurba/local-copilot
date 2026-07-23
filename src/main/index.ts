@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from 'electron';
+import { app, BrowserWindow, Menu, shell } from 'electron';
 import { checkForUpdates } from './autoUpdater';
 import path from 'path';
 import fs from 'fs';
@@ -6,7 +6,16 @@ import { registerIpcHandlers } from './ipcHandlers';
 import { lspClient } from './lspClient';
 // DISABLED: Terminal functionality disabled to prevent antivirus quarantine
 // import { registerTerminalHandlers } from './terminalManager';
-process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
+
+// SECURITY: Only disable TLS verification in development; never in production builds.
+// This is intentional for development against self-signed certificates.
+if (!app.isPackaged) {
+  console.warn('[Main] Development mode: disabling TLS verification for self-signed certs');
+  process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
+} else {
+  // Production: enforce strict TLS verification
+  process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '1';
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -175,9 +184,18 @@ function createWindow() {
     }
   });
 
-  // Handle external links - open in browser
+  // Handle external links - open in browser (only allow safe web protocols)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    require('electron').shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        shell.openExternal(url);
+      } else {
+        console.warn('[Main] Blocked external open for non-web protocol:', parsed.protocol);
+      }
+    } catch {
+      console.warn('[Main] Blocked external open for invalid URL:', url);
+    }
     return { action: 'deny' };
   });
 

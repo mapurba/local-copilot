@@ -78,7 +78,17 @@ function fetchJson(url: string): Promise<any> {
 function downloadFile(url: string, dest: string, onProgress?: (percent: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    https.get(url, (response) => {
+    
+    const request = https.get(url, (response) => {
+      // Handle HTTP redirects (301, 302, 307, 308)
+      if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        file.close();
+        fs.unlink(dest, () => {
+          downloadFile(response.headers.location!, dest, onProgress).then(resolve).catch(reject);
+        });
+        return;
+      }
+      
       const total = parseInt(response.headers['content-length'] || '0', 10);
       let downloaded = 0;
       response.pipe(file);
@@ -87,7 +97,10 @@ function downloadFile(url: string, dest: string, onProgress?: (percent: number) 
         if (onProgress && total) onProgress(Math.round((downloaded / total) * 100));
       });
       file.on('finish', () => file.close(() => resolve()));
-    }).on('error', (err) => {
+    });
+    
+    request.on('error', (err) => {
+      file.close();
       fs.unlink(dest, () => reject(err));
     });
   });

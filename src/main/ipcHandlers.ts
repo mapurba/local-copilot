@@ -94,9 +94,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
     checkForUpdates(mainWindow);
   });
 
-  // Initialize LSP on startup
+  // Start the LSP process; initialization happens lazily per-handler.
   lspClient.start();
-  lspClient.initialize().catch((e) => console.error('[IPC] LSP init error:', e));
 
   // ============================================================================
   // AUTH HANDLERS
@@ -254,22 +253,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
   });
 
   ipcMain.handle('workflow:readFile', async (_event, filePath: string) => {
-    const outputDir = await getWorkflowOutputDir();
-    if (!outputDir) {
-      return { success: false, error: 'No output folder selected.' };
-    }
-    function isWithin(base: string, target: string) {
-      const rBase = path.resolve(base);
-      const rTarget = path.resolve(target);
-      const rel = path.relative(rBase, rTarget);
-      return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
-    }
+    try {
+      const outputDir = await getWorkflowOutputDir();
+      if (!outputDir) {
+        return { success: false, error: 'No output folder selected.' };
+      }
 
-    if (!filePath || !isWithin(outputDir, filePath)) {
-      return { success: false, error: 'Invalid file path.' };
+      if (!filePath || !isWithin(outputDir, filePath)) {
+        return { success: false, error: 'Invalid file path.' };
+      }
+      const content = await fs.readFile(filePath, 'utf8');
+      return { success: true, content };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
-    const content = await fs.readFile(filePath, 'utf8');
-    return { success: true, content };
   });
 
   ipcMain.handle('workflow:cancelConvertPrd', (_event, requestId: string) => {

@@ -92,10 +92,15 @@ export class WorkspaceContext {
       : path.resolve(this.workspacePath, filePath);
 
     // Security: ensure the resolved path is within the workspace
+    // Use case-insensitive comparison on Windows for path traversal prevention
     const normalized = path.normalize(resolved);
     const workspaceNorm = path.normalize(this.workspacePath);
+    
+    const isWithinWorkspace = process.platform === 'win32'
+      ? normalized.toLowerCase().startsWith(workspaceNorm.toLowerCase())
+      : normalized.startsWith(workspaceNorm);
 
-    if (!normalized.startsWith(workspaceNorm)) {
+    if (!isWithinWorkspace) {
       throw new Error(
         `Path "${filePath}" resolves outside workspace. Workspace: ${workspaceNorm}, Resolved: ${normalized}`
       );

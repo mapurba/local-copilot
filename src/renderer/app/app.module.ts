@@ -1,7 +1,7 @@
 import { NgModule, CUSTOM_ELEMENTS_SCHEMA, SecurityContext } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
-import { HttpClientModule } from '@angular/common/http';
+import { provideHttpClient } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
 import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
@@ -27,10 +27,12 @@ import { DebugPanelComponent } from './components/debug-panel/debug-panel.compon
     FormioBuilderViewerComponent,
     MonacoXmlViewerComponent,
   ],
+  providers: [
+    provideHttpClient(),
+  ],
   imports: [
     BrowserModule,
     BrowserAnimationsModule,
-    HttpClientModule,
     FormsModule,
     RouterModule.forRoot([
       { path: 'convert', loadComponent: () => import('./components/convert-prd/convert-prd.component').then(m => m.ConvertPrdComponent) },
