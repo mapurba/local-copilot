@@ -85,7 +85,9 @@ class Config:
     
     # ILM (Identity Lifecycle Manager) Configuration
     ILM_VERSIONS: dict = {
+        '1.7.0': 'https://orgartifactory.swinfra.net/artifactory/cybent-builder-generic-dev-local/Builds/cybersecurity-enterprise/identity/ilm/ilm-containers/branches-1-2-0-patch7/latest/service-images-parent/compose/target/compose-1.2.0.0700.zip',
         '1.3.0': 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.3.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.3.0.0000/compose-1.3.0.0000.zip',
+        '1.4.0': 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.4.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.4.0.0000/compose-1.4.0.0000.zip',
         '1.2.0': 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.2.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.2.0.0000/compose-1.2.0.0000.zip',
         'default': 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.0.0.0000/compose-1.0.0.0000.zip',
         'latest': 'https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.3.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.3.0.0000/compose-1.3.0.0000.zip',

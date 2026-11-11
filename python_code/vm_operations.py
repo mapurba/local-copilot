@@ -448,24 +448,20 @@ class VMOperations:
         
         # Map version string to actual version numbers and URLs
         if ilm_version == "latest":
-            ilm_version_mapped = "1.3.0"
+            ilm_version_mapped = "1.7.0"
         else:
             ilm_version_mapped = ilm_version
         
         # Define version-specific details
         version_mapping = {
-            "1.3.0": {
+            "1.7.0": {
+                "url": "https://orgartifactory.swinfra.net/artifactory/cybent-builder-generic-dev-local/Builds/cybersecurity-enterprise/identity/ilm/ilm-containers/branches-1-2-0-patch7/latest/service-images-parent/compose/target/compose-1.2.0.0700.zip",
+                "full_version": "1.2.0.0700"
+            },"1.3.0": {
                 "url": "https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.3.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.3.0.0000/compose-1.3.0.0000.zip",
                 "full_version": "1.3.0.0000"
             },
-            "1.2.0": {
-                "url": "https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers-1.2.0/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.2.0.0000/compose-1.2.0.0000.zip",
-                "full_version": "1.2.0.0000"
-            },
-            "1.0.0": {
-                "url": "https://blr-idm-jenkins.labs.blr.novell.com:8443/job/ILM/job/ilm-containers/lastSuccessfulBuild/artifact/com/opentext/ilm/compose/1.0.0.0000/compose-1.0.0.0000.zip",
-                "full_version": "1.0.0.0000"
-            }
+            
         }
         
         ilm_url = version_mapping.get(ilm_version_mapped, version_mapping["1.3.0"])["url"]
@@ -725,9 +721,11 @@ EOF
                 ENV_FILE=".env"
                 if [ -f "$ENV_FILE" ]; then
                     echo "Modifying .env file..." >> "$LOG"
-                    sed -i "s|TENANT_OSP_REDIRECT_URL=.*|TENANT_OSP_REDIRECT_URL=http://lab:9888/ilm/|g" $ENV_FILE
-                    sed -i "s|CALLBACK_SERVER=.*|CALLBACK_SERVER=http://lab:9990|g" $ENV_FILE
-                    sed -i "s|SECRETS_URL=.*|SECRETS_URL=http://lab:4566|g" $ENV_FILE
+                    sed -i "s|HOST=<your machine hostname/ip>=.*|HOST=lab|g" $ENV_FILE
+                    # sed -i "s|TENANT_OSP_REDIRECT_URL=.*|TENANT_OSP_REDIRECT_URL=http://lab:9888/ilm/|g" $ENV_FILE
+                    # sed -i "s|CALLBACK_SERVER=.*|CALLBACK_SERVER=http://lab:9990|g" $ENV_FILE
+                    # sed -i "s|SECRETS_URL=.*|SECRETS_URL=http://lab:4566|g" $ENV_FILE
+                    sed -i "s|HOST=<your machine hostname/ip>=.*|HOST=lab|g" $ENV_FILE
                     echo ".env file modified successfully." >> "$LOG"
                 else
                     echo "ERROR: .env file not found in $WORK_DIR" >> "$LOG"

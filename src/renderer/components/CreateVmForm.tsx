@@ -111,7 +111,7 @@ const CreateVmForm: React.FC<CreateVmFormProps> = ({ onSubmit, onStatusChange })
                   name="ilm_version"
                   value={formData.ilm_version}
                   onValueChange={(v) => setFormData((prev) => ({ ...prev, ilm_version: v }))}
-                  placeholder="e.g., 1.3.0 or latest"
+                  placeholder="e.g., 1.7.0 or latest"
                 />
               </FormField>
               <FormField>

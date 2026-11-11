@@ -80,7 +80,7 @@ function buildWelcomeMessage(vmName: string): string {
     `- "Clone ${vmName}-db to app-vapp"`,
     `- "Resize ${vmName}-web to 4 CPU and 8192 MB RAM"`,
     '- "Show tasks from the last 30 minutes"',
-    `- "Create a new SLES 15SP6 VM with name ${vmName}test and setup ILM 1.3.0"`,
+    `- "Create a new SLES 15SP6 VM with name ${vmName}test and setup ILM 1.7.0"`,
     `- "Create a VM with name ${vmName}test, setup ILM and I will upload a custom .env"`,
     `- "Create a new SLES 15SP6 VM with name ${vmName}test and setup IDM"`,
     `- "Create a VM with name ${vmName}test, setup IDM and I will upload a custom .env"`,

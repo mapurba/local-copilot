@@ -6,6 +6,8 @@ import path from 'path';
 const UPDATE_URL = 'https://164.99.91.32/vcd-agent/latest.json';
 
 export async function checkForUpdates(mainWindow: Electron.BrowserWindow) {
+  // Store builds are updated by the Microsoft Store; self-updating violates Store policy.
+  if (process.windowsStore) return;
   try {
     // 1. Fetch latest.json
     const latest = await fetchJson(UPDATE_URL);

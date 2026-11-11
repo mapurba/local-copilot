@@ -426,7 +426,7 @@ const createVmDraftTool = lcTool(
       storage_profile_id: z.string().optional().describe('Storage profile ID'),
       compute_policy_id: z.string().optional().describe('Compute policy ID'),
       setup_ilm: z.boolean().optional().describe('Install ILM stack'),
-      ilm_version: z.string().optional().describe('ILM version (e.g., latest, 1.3.0)'),
+      ilm_version: z.string().optional().describe('ILM version (e.g., latest, 1.7.0)'),
       setup_idm: z.boolean().optional().describe('Install IDM stack'),
     }),
   }

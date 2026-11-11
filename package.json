@@ -1,20 +1,21 @@
 {
   "name": "vcd-agent",
   "private": true,
-  "version": "0.0.6",
+  "version": "0.0.8",
   "type": "commonjs",
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.electron.json && vite build",
     "build:electron": "electron-builder",
+    "build:store": "electron-builder --win appx",
     "preview": "vite preview",
     "lint": "eslint .",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "build": {
-    "appId": "com.local.vcdagent",
-    "productName": "VCD Agent",
+    "appId": "com.idemo.localcopilot",
+    "productName": "vmware Local Copilot",
     "directories": {
       "output": "release"
     },
@@ -28,6 +29,18 @@
     "win": {
       "target": "nsis",
       "artifactName": "VCD-Agent-${version}.exe"
+    },
+    "appx": {
+      "identityName": "idemo.app.vmwarellmagent",
+      "publisher": "CN=8479939A-507A-4DA6-950F-30B91832207D",
+      "publisherDisplayName": "idemo.app",
+      "applicationId": "LocalCopilot",
+      "displayName": "VMware LLM Agent",
+      "backgroundColor": "transparent",
+      "languages": ["en-US"],
+      "minVersion": "10.0.17763.0",
+      "maxVersionTested": "10.0.22621.0",
+      "artifactName": "LocalCopilot-${version}.msix"
     },
     "linux": {
       "target": "AppImage"
